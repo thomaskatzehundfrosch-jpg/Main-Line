@@ -23,7 +23,6 @@ import type { GeneratorNode, GeneratorSettings } from '../../types/generator';
 import { DEFAULT_GENERATOR_SETTINGS } from '../../types/generator';
 import { useGenerator } from '../../hooks/useGenerator';
 import { useEngine } from '../../hooks/useEngine';
-import { getStoredToken } from '../../utils/lichessAuth';
 import { GeneratorSettingsPanel } from './GeneratorSettings';
 import { GeneratorProgressBar } from './GeneratorProgress';
 import { GeneratorMoveTree } from './GeneratorMoveTree';
@@ -239,8 +238,6 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
   const canGenerate = (() => {
     if (gen.isGenerating) return false;
-    const isLichessMode = settings.analysisMode === 'lichess+stockfish';
-    if (isLichessMode && !getStoredToken()) return false;
     return engine.enabled && engine.workerReady;
   })();
 
