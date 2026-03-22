@@ -55,8 +55,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
       if (error) {
         setError(error.message);
       } else {
-        setInfo('Check your email to confirm your account, then sign in.');
-        setTab('signin');
+        onClose();
       }
     }
     setLoading(false);
