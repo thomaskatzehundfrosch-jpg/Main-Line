@@ -1,6 +1,65 @@
-# Chess Repertoire Explorer
+# Main Line — Chess Repertoire App
 
-A dark-themed, interactive chess opening repertoire explorer with D3 tree visualization, Stockfish engine analysis, and PGN import/export.
+A dark-themed, interactive chess opening repertoire builder with cloud sync, user auth, spaced repetition training, D3 tree visualization, Stockfish engine analysis, and PGN import/export.
+
+---
+
+## Infrastructure
+
+| Service | Details |
+|---|---|
+| Supabase project URL | `https://nxperpauqoylswshsbei.supabase.co` |
+| GitHub repo | `github.com/thomaskatzehundfrosch-jpg/Main-Line` |
+| Vercel project | `Main-Line` — Root Directory set to `chess-repertoire` |
+
+---
+
+## Deploying a New Version
+
+```bash
+git add .
+git commit -m "describe your change"
+git push
+```
+
+Vercel auto-deploys within ~60 seconds. No manual steps needed.
+
+---
+
+## Auth + Cloud Sync
+
+- **Auth:** Supabase (email/password + Google OAuth). Sign In button lives in the TopBar.
+- **Not logged in:** data saves to localStorage only (works offline)
+- **On sign in:** local files push to Supabase, remote files fetched and merged
+- **While logged in:** every save, update, rename, and delete syncs to Supabase automatically
+
+### Supabase Database (3 tables, all with Row Level Security)
+- `repertoire_files` — repertoire files stored as JSONB per user
+- `sr_cards` — spaced repetition cards per user
+- `sr_stats` — lifetime review stats per user
+
+To recreate the schema from scratch, run `supabase-schema.sql` in the Supabase SQL Editor.
+
+### Environment Variables
+Required in `.env` in the project root (never commit this file):
+```
+VITE_SUPABASE_URL=https://nxperpauqoylswshsbei.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon key>
+```
+The same two variables must also be added in the Vercel project dashboard under Environment Variables.
+
+### Key Auth/Sync Files
+- `src/lib/supabase.ts` — Supabase client (gracefully disabled if env vars missing)
+- `src/lib/supabaseSync.ts` — all cloud read/write helpers
+- `src/context/AuthContext.tsx` — auth state + signIn/signUp/signOut/Google
+- `src/components/Auth/AuthModal.tsx` — login/signup modal
+- `src/components/Auth/UserMenu.tsx` — avatar dropdown + sign out
+- `src/context/FileContext.tsx` — repertoire files with Supabase sync baked in
+
+### Known Issues
+Two pre-existing TypeScript errors in `usePgnParser.ts` and `openingNames.ts` — don't affect runtime behaviour. Build command is `vite build` (not `tsc -b && vite build`) to skip the type check on deploy.
+
+---
 
 ## Setup
 
