@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: #ffffff;
+    color: #1a1a2e;
+    font-family: 'Outfit', 'Satoshi', system-ui, sans-serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #f8f9fa;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #ced4da;
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #adb5bd;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-bg-surface border border-border-subtle rounded-lg;
+  }
+
+  .panel-header {
+    @apply px-4 py-2 border-b border-border-subtle font-mono text-xs uppercase tracking-wider text-text-secondary;
+  }
+
+  .btn {
+    @apply px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent-teal/10 text-accent-teal border border-accent-teal/30 hover:bg-accent-teal/20 hover:shadow-glow-sm;
+  }
+
+  .btn-secondary {
+    @apply btn bg-bg-hover text-text-secondary border border-border-subtle hover:text-text-primary hover:border-border-active;
+  }
+
+  .btn-icon {
+    @apply p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors duration-150;
+  }
+
+  .move-good {
+    @apply text-accent-green;
+  }
+
+  .move-bad {
+    @apply text-accent-red;
+  }
+
+  .move-interesting {
+    @apply text-accent-amber;
+  }
+
+  .eval-bar-container {
+    position: relative;
+    width: 24px;
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid #dee2e6;
+  }
+
+  .eval-bar-white {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    background: linear-gradient(to top, #f0f0f0, #d8d8d8);
+    transition: height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .eval-bar-black {
+    position: absolute;
+    top: 0;
+    width: 100%;
+    background: linear-gradient(to bottom, #1a1a1a, #333333);
+    transition: height 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .tree-node-glow {
+    filter: drop-shadow(0 0 6px rgba(59, 98, 160, 0.4));
+  }
+
+  .tree-link {
+    fill: none;
+    stroke: #dee2e6;
+    stroke-width: 1.5;
+  }
+
+  .tree-link-active {
+    stroke: #3b62a0;
+    stroke-width: 2.5;
+  }
+
+  /* Game overlay styles */
+  .tree-link-overlay {
+    stroke: #7a7a92;
+    stroke-width: 1.2;
+  }
+
+  .game-overlay-link {
+    fill: none;
+    stroke: #868e96;
+    stroke-width: 1.2;
+    stroke-dasharray: 5, 4;
+    opacity: 0.6;
+  }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.2s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-pulse-subtle {
+    animation: pulseSub 2s ease-in-out infinite;
+  }
+
+  @keyframes pulseSub {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.6;
+    }
+  }
+}

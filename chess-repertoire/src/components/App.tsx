@@ -1,0 +1,1050 @@
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { Chess } from 'chess.js';
+import { Loader, StopCircle, Cpu, ChevronUp, ChevronDown } from 'lucide-react';
+import { TopBar } from './TopBar';
+import { StatusBar } from './StatusBar';
+import ChessBoard from './Board/ChessBoard';
+import BoardControls from './Board/BoardControls';
+import { OpeningTree } from './Tree/OpeningTree';
+import { MoveList } from './Sidebar/MoveList';
+import { EnginePanel } from './Sidebar/EnginePanel';
+import { NotesPanel } from './Sidebar/NotesPanel';
+import { GameImportPanel } from './GameImportPanel';
+import { MistakePanel } from './MistakePanel';
+import { ErrorBoundary } from './ErrorBoundary';
+import { RepertoireFilesPanel } from './RepertoireFilesPanel';
+import { ImportModal } from './Modals/ImportModal';
+import { ExportModal } from './Modals/ExportModal';
+import { useRepertoireTree } from '../hooks/useRepertoireTree';
+import { useEngine } from '../hooks/useEngine';
+import { usePgnParser } from '../hooks/usePgnParser';
+import { useGames } from '../context/GameContext';
+import { useFiles } from '../context/FileContext';
+import { useRepertoireEval } from '../context/RepertoireEvalContext';
+import { getOpeningForPath } from '../utils/openingNames';
+import { exportTreeToPgn, copyToClipboard, downloadAsFile } from '../utils/pgnExporter';
+import { countNodes } from '../utils/treeBuilder';
+import { findNodeById } from '../utils/treeBuilder';
+import type { TreeNode } from '../types';
+import type { ImportedGame } from '../types/game';
+import { toFigurine } from '../utils/figurineNotation';
+import { ErrorToast } from './ErrorToast';
+import { ErrorLogPanel } from './ErrorLogPanel';
+import { analyzeRepertoire } from '../engine/repertoireAnalyzer';
+import { MISTAKE_THRESHOLDS } from '../types/game';
+import type { MistakeTier } from '../types/game';
+import type { NodeAnnotation } from '../context/RepertoireEvalContext';
+import type { RepertoireEval } from '../types';
+import { GameFetcherPage } from './GameFetcher/GameFetcherPage';
+import { GeneratorPage } from './Generator/GeneratorPage';
+import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
+import { handleOAuthCallback } from '../utils/lichessAuth';
+
+type SidebarTab = 'analysis' | 'games';
+
+export const App: React.FC = () => {
+  const {
+    tree,
+    currentNode,
+    currentPath,
+    orientation,
+    selectedColor,
+    currentMoveNumber,
+    isWhiteToMove,
+    setTree,
+    navigateToNode,
+    navigateForward,
+    navigateBack,
+    navigateToStart,
+    navigateToEnd,
+    flipBoard,
+    setComment,
+    addNag,
+    removeNag,
+    addMove,
+    addMoveToNode,
+    addLineToNode,
+    deleteNode,
+  } = useRepertoireTree();
+
+  const engine = useEngine();
+  const pgnParser = usePgnParser();
+  const games = useGames();
+  const { files, activeFileId, getActiveFile, updateFileGames } = useFiles();
+  const repertoireEval = useRepertoireEval();
+
+  // ─── Folder ↔ Games bidirectional sync ────────────────────────────────
+  // When the active folder changes, load that folder's games into GameContext.
+  // A ref guards against writing the just-loaded games back to the file.
+  const loadingGamesFromFileRef = useRef(false);
+
+  useEffect(() => {
+    loadingGamesFromFileRef.current = true;
+    const activeFile = getActiveFile();
+    games.setGames(activeFile?.importedGames ?? []);
+    // Reset the guard after effects have had a chance to fire
+    const t = setTimeout(() => { loadingGamesFromFileRef.current = false; }, 0);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeFileId]);
+
+  // When games change (e.g. user imports / removes a game), persist them to
+  // the active folder so they survive file-switches and page reloads.
+  useEffect(() => {
+    if (loadingGamesFromFileRef.current) return; // skip echo-back after file load
+    if (activeFileId) {
+      updateFileGames(activeFileId, games.importedGames);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [games.importedGames]);
+  // ──────────────────────────────────────────────────────────────────────
+
+  // Ref so async analysis loop always sees the latest cancellation state
+  const evalCancelledRef = useRef(false);
+  // Tracks the cycling index per annotation tier for badge navigation
+  const annotationNavIndexRef = useRef<Record<string, number>>({});
+
+  const [filesOpen, setFilesOpen] = useState(true);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [gameFetcherOpen, setGameFetcherOpen] = useState(false);
+  const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [trainerOpen, setTrainerOpen] = useState(false);
+  const [exportOptions, setExportOptions] = useState({
+    includeAnnotations: true,
+    filterColor: 'both' as 'white' | 'black' | 'both',
+  });
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('analysis');
+  const [repertoireDepth, setRepertoireDepth] = useState(18);
+  const [thresholds, setThresholds] = useState({
+    inaccuracy: MISTAKE_THRESHOLDS.inaccuracy,
+    mistake:    MISTAKE_THRESHOLDS.mistake,
+    blunder:    MISTAKE_THRESHOLDS.blunder,
+  });
+
+  const classifyWithThresholds = useCallback(
+    (evalDrop: number): MistakeTier | null => {
+      if (evalDrop >= thresholds.blunder)    return 'blunder';
+      if (evalDrop >= thresholds.mistake)    return 'mistake';
+      if (evalDrop >= thresholds.inaccuracy) return 'inaccuracy';
+      return null;
+    },
+    [thresholds]
+  );
+
+  // ─── Game Viewer State ───────────────────────────────────────────────
+  const [viewingGame, setViewingGame] = useState<ImportedGame | null>(null);
+  const [viewingMoveIndex, setViewingMoveIndex] = useState(0);
+
+  // ─── Explore overlay FEN ─────────────────────────────────────────────
+  // Set when clicking a greyed-out overlay node in explore mode.
+  // Cleared automatically whenever currentNode changes (real navigation).
+  const [exploreOverlayFen, setExploreOverlayFen] = useState<string | null>(null);
+  useEffect(() => { setExploreOverlayFen(null); }, [currentNode]);
+
+  /**
+   * Compute all FENs for a game's moves so we can step through them.
+   * Index 0 = starting position, index N = position after Nth move.
+   */
+  const gamePositions = useMemo(() => {
+    if (!viewingGame) return [];
+    const chess = new Chess();
+    const fens: string[] = [chess.fen()];
+    for (const san of viewingGame.moves) {
+      try {
+        chess.move(san);
+        fens.push(chess.fen());
+      } catch {
+        break;
+      }
+    }
+    return fens;
+  }, [viewingGame]);
+
+  const viewingFen = viewingGame && gamePositions.length > 0
+    ? gamePositions[Math.min(viewingMoveIndex, gamePositions.length - 1)]
+    : null;
+
+  const handleViewGame = useCallback((game: ImportedGame) => {
+    if (viewingGame?.id === game.id) {
+      // Toggle off if same game
+      setViewingGame(null);
+      setViewingMoveIndex(0);
+    } else {
+      setViewingGame(game);
+      setViewingMoveIndex(0);
+      setSidebarTab('games');
+    }
+  }, [viewingGame]);
+
+  const handleCloseGameViewer = useCallback(() => {
+    setViewingGame(null);
+    setViewingMoveIndex(0);
+  }, []);
+
+  const gameViewerForward = useCallback(() => {
+    if (viewingGame) {
+      setViewingMoveIndex((i) => Math.min(i + 1, gamePositions.length - 1));
+    }
+  }, [viewingGame, gamePositions.length]);
+
+  const gameViewerBack = useCallback(() => {
+    if (viewingGame) {
+      setViewingMoveIndex((i) => Math.max(i - 1, 0));
+    }
+  }, [viewingGame]);
+
+  const gameViewerStart = useCallback(() => {
+    setViewingMoveIndex(0);
+  }, []);
+
+  const gameViewerEnd = useCallback(() => {
+    if (viewingGame) {
+      setViewingMoveIndex(gamePositions.length - 1);
+    }
+  }, [viewingGame, gamePositions.length]);
+
+  // The FEN to display on the board - game viewer > explore overlay > current node
+  const displayFen = viewingFen || exploreOverlayFen || currentNode.fen;
+
+  // Analyze position when current node or game viewer position changes
+  useEffect(() => {
+    if (engine.enabled && displayFen) {
+      engine.analyze(displayFen);
+    }
+  }, [displayFen, engine.enabled]);
+
+  // Get opening info for current path
+  const openingInfo = getOpeningForPath(currentPath.map((n) => n.fen));
+
+  // Handle piece drop on board
+  const handleBoardMove = useCallback(
+    (from: string, to: string, piece: string): boolean => {
+      // Check if this move exists in the tree
+      const chess = new Chess(currentNode.fen);
+      try {
+        const promotion = piece[1] === 'P' && (to[1] === '8' || to[1] === '1') ? 'q' : undefined;
+        const move = chess.move({ from, to, promotion });
+        if (!move) return false;
+
+        // Check if this move exists as a real child of current node
+        // (skip any overlay nodes that may have leaked from D3 visualization)
+        const existingChild = currentNode.children.find(
+          (c) => c.move === move.san && !(c as any)._isOverlay
+        );
+        if (existingChild) {
+          navigateToNode(existingChild);
+        } else {
+          // Add as new variation
+          addMove(move.san, chess.fen());
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [currentNode, navigateToNode, addMove]
+  );
+
+  // Handle PGN import
+  const handleImportText = useCallback(
+    (text: string) => {
+      pgnParser.parsePgnText(text);
+    },
+    [pgnParser]
+  );
+
+  const handleImportFiles = useCallback(
+    (files: FileList) => {
+      pgnParser.parsePgnFiles(files);
+    },
+    [pgnParser]
+  );
+
+  // Kick off engine analysis across every unique position in the repertoire tree
+  const startRepertoireAnalysis = useCallback(
+    async (treeRoot: TreeNode) => {
+      if (repertoireEval.isAnalyzing) return;
+      repertoireEval.clearEvals();
+      evalCancelledRef.current = false;
+
+      // Count positions upfront so we can show accurate progress
+      let count = 0;
+      const countNodes = (n: TreeNode) => {
+        count++;
+        n.children.forEach(countNodes);
+      };
+      countNodes(treeRoot);
+
+      repertoireEval.startAnalysis(count);
+
+      // Accumulate evals locally so we can compute annotations after the loop
+      // without relying on batched React state updates.
+      const localEvals = new Map<string, RepertoireEval>();
+
+      await analyzeRepertoire(treeRoot, {
+        depth: repertoireDepth,
+        onEval: (fen, evalResult) => {
+          localEvals.set(fen, evalResult);
+          repertoireEval.setEval(fen, evalResult);
+          repertoireEval.incrementProgress();
+        },
+        isCancelled: () => evalCancelledRef.current,
+      });
+
+      // ── Compute eval-drop annotations ──────────────────────────────────
+      // For each non-root node compare parent FEN eval to child FEN eval.
+      // evalDrop > 0 means the side that moved worsened their position.
+      const annotations = new Map<string, NodeAnnotation>();
+
+      function computeAnnotations(node: TreeNode, parentFen: string | null): void {
+        if (parentFen !== null && node.move) {
+          const parentEvalResult = localEvals.get(parentFen);
+          const nodeEvalResult   = localEvals.get(node.fen);
+          if (parentEvalResult && nodeEvalResult) {
+            // Skip positions where either eval is a forced-mate score to avoid
+            // arithmetic overflow (score ±10 000 cp) producing misleading drops.
+            const parentIsMate = Math.abs(parentEvalResult.score) >= 9000;
+            const nodeIsMate   = Math.abs(nodeEvalResult.score)   >= 9000;
+            if (!parentIsMate && !nodeIsMate) {
+              const isWhiteMove = node.depth % 2 === 1;
+              const evalDropCp  = isWhiteMove
+                ? parentEvalResult.score - nodeEvalResult.score   // positive = white lost ground
+                : nodeEvalResult.score   - parentEvalResult.score; // positive = black lost ground
+              const evalDrop = evalDropCp / 100;
+              if (evalDrop > 0) {
+                const tier = classifyWithThresholds(evalDrop);
+                if (tier) {
+                  annotations.set(node.id, {
+                    tier,
+                    evalDrop,
+                    side: isWhiteMove ? 'white' : 'black',
+                  });
+                }
+              }
+            }
+          }
+        }
+        for (const child of node.children) {
+          computeAnnotations(child, node.fen);
+        }
+      }
+      computeAnnotations(treeRoot, null);
+      repertoireEval.setNodeAnnotations(annotations);
+      // ──────────────────────────────────────────────────────────────────
+
+      repertoireEval.finishAnalysis();
+    },
+    [repertoireEval, repertoireDepth, classifyWithThresholds]
+  );
+
+  // When parsing is complete, set the tree
+  useEffect(() => {
+    if (pgnParser.parsedTree) {
+      const captured = pgnParser.parsedTree;
+      setTree(captured);
+      setImportModalOpen(false);
+      pgnParser.clearParsed();
+    }
+  }, [pgnParser.parsedTree]);
+
+  // Cancel an in-progress repertoire analysis
+  const handleCancelRepertoireAnalysis = useCallback(() => {
+    evalCancelledRef.current = true;
+    repertoireEval.cancelAnalysis();
+    repertoireEval.finishAnalysis();
+  }, [repertoireEval]);
+
+  // Manually re-run analysis on the current tree
+  const handleReanalyzeRepertoire = useCallback(() => {
+    startRepertoireAnalysis(tree);
+  }, [startRepertoireAnalysis, tree]);
+
+  // Cycle through annotated nodes of a given tier when a badge is clicked
+  const navigateToAnnotation = useCallback(
+    (tier: string) => {
+      if (!tree) return;
+      const annotations = repertoireEval.nodeAnnotations;
+      if (annotations.size === 0) return;
+
+      // Collect matching nodes in DFS order
+      const matches: TreeNode[] = [];
+      function collectByTier(node: TreeNode): void {
+        if (annotations.get(node.id)?.tier === tier) matches.push(node);
+        for (const child of node.children) collectByTier(child);
+      }
+      collectByTier(tree);
+      if (matches.length === 0) return;
+
+      // Advance cyclic index; start from after the currently selected node
+      const prevIdx = annotationNavIndexRef.current[tier] ?? -1;
+      // If the previously navigated node is still current, advance; otherwise restart
+      const isStillAtPrev = prevIdx >= 0 && matches[prevIdx]?.id === currentNode?.id;
+      const nextIdx = isStillAtPrev
+        ? (prevIdx + 1) % matches.length
+        : 0;
+      annotationNavIndexRef.current[tier] = nextIdx;
+      navigateToNode(matches[nextIdx]);
+    },
+    [tree, repertoireEval.nodeAnnotations, currentNode, navigateToNode]
+  );
+
+  // Generate export PGN
+  const exportPgn = exportTreeToPgn(tree, {
+    includeAnnotations: exportOptions.includeAnnotations,
+    filterColor: exportOptions.filterColor,
+  });
+
+  // Engine arrows for best move
+  const engineArrows: string[] = [];
+  if (engine.lines.length > 0 && engine.lines[0].pvUci.length > 0) {
+    engineArrows.push(engine.lines[0].pvUci[0]);
+    if (engine.lines.length > 1 && engine.lines[1].pvUci.length > 0) {
+      engineArrows.push(engine.lines[1].pvUci[0]);
+    }
+  }
+
+  // Last move
+  const lastMove =
+    currentPath.length >= 2
+      ? undefined // We don't have from/to info in the tree; react-chessboard handles highlighting
+      : undefined;
+
+  // Navigate to a FEN from the mistake panel
+  const handleNavigateToFen = useCallback(
+    (fen: string) => {
+      // Find the node in the tree that has this FEN
+      const findByFen = (node: TreeNode): TreeNode | null => {
+        if (node.fen === fen) return node;
+        for (const child of node.children) {
+          const found = findByFen(child);
+          if (found) return found;
+        }
+        return null;
+      };
+
+      const targetNode = findByFen(tree);
+      if (targetNode) {
+        navigateToNode(targetNode);
+      }
+    },
+    [tree, navigateToNode]
+  );
+
+  // Keyboard navigation — game viewer mode takes priority
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
+
+      if (viewingGame) {
+        switch (e.key) {
+          case 'ArrowLeft':
+            e.preventDefault();
+            gameViewerBack();
+            break;
+          case 'ArrowRight':
+            e.preventDefault();
+            gameViewerForward();
+            break;
+          case 'ArrowUp':
+            e.preventDefault();
+            gameViewerEnd();
+            break;
+          case 'ArrowDown':
+            e.preventDefault();
+            gameViewerStart();
+            break;
+          case 'Home':
+            e.preventDefault();
+            gameViewerStart();
+            break;
+          case 'End':
+            e.preventDefault();
+            gameViewerEnd();
+            break;
+          case 'Escape':
+            e.preventDefault();
+            handleCloseGameViewer();
+            break;
+          case 'f':
+            if (!e.ctrlKey && !e.metaKey) flipBoard();
+            break;
+        }
+        return;
+      }
+
+      switch (e.key) {
+        case 'ArrowLeft':
+          e.preventDefault();
+          navigateBack();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          navigateForward();
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          navigateToEnd();
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          navigateToStart();
+          break;
+        case 'Home':
+          e.preventDefault();
+          navigateToStart();
+          break;
+        case 'End':
+          e.preventDefault();
+          navigateToEnd();
+          break;
+        case 'f':
+          if (!e.ctrlKey && !e.metaKey) {
+            flipBoard();
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [viewingGame, navigateBack, navigateForward, navigateToStart, navigateToEnd, flipBoard, gameViewerBack, gameViewerForward, gameViewerStart, gameViewerEnd, handleCloseGameViewer]);
+
+  // Handle Lichess OAuth2 callback (?code=... in URL after redirect)
+  useEffect(() => {
+    if (window.location.search.includes('code=')) {
+      handleOAuthCallback().catch(console.error);
+    }
+  }, []);
+
+  // Load active file tree on startup
+  const startupLoadedRef = React.useRef(false);
+  useEffect(() => {
+    if (startupLoadedRef.current) return;
+    const activeFile = getActiveFile();
+    if (activeFile) {
+      setTree(activeFile.tree);
+      startupLoadedRef.current = true;
+    }
+  }, [getActiveFile, setTree]);
+
+  const nodeCount = countNodes(tree);
+
+  return (
+    <div className="h-screen flex flex-col bg-bg-primary overflow-hidden">
+      {/* Top Bar */}
+      <TopBar
+        onImport={() => setImportModalOpen(true)}
+        onExport={() => setExportModalOpen(true)}
+        onGameFetcher={() => { setGeneratorOpen(false); setTrainerOpen(false); setGameFetcherOpen(true); }}
+        onGenerator={() => { setGameFetcherOpen(false); setTrainerOpen(false); setGeneratorOpen(true); }}
+        onTrainer={() => { setGameFetcherOpen(false); setGeneratorOpen(false); setTrainerOpen(true); }}
+        activeFileName={getActiveFile()?.name ?? null}
+      />
+
+      {/* Full-Page Views */}
+      {generatorOpen ? (
+        <GeneratorPage
+          onClose={() => setGeneratorOpen(false)}
+          onImportTree={(importedTree) => {
+            setTree(importedTree);
+            setGeneratorOpen(false);
+          }}
+        />
+      ) : gameFetcherOpen ? (
+        <GameFetcherPage onClose={() => setGameFetcherOpen(false)} />
+      ) : trainerOpen ? (
+        <SpacedRepetitionTrainer onClose={() => setTrainerOpen(false)} />
+      ) : (
+      <>
+
+      {/* Repertoire Analysis Progress Banner */}
+      {repertoireEval.isAnalyzing && (
+        <div className="bg-bg-surface border-b border-border-subtle px-4 py-1.5 flex items-center gap-3 flex-shrink-0">
+          <Loader className="w-3.5 h-3.5 text-accent-teal animate-spin flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="flex justify-between text-[11px] text-text-secondary mb-1">
+              <span>
+                Engine analysing repertoire (depth {repertoireDepth})&hellip;{' '}
+                {repertoireEval.progress}/{repertoireEval.total} positions
+              </span>
+              <span>
+                {Math.round(
+                  (repertoireEval.progress / Math.max(1, repertoireEval.total)) * 100
+                )}%
+              </span>
+            </div>
+            <div className="w-full h-1 bg-bg-hover rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent-teal rounded-full transition-all duration-200"
+                style={{
+                  width: `${Math.round(
+                    (repertoireEval.progress / Math.max(1, repertoireEval.total)) * 100
+                  )}%`,
+                }}
+              />
+            </div>
+          </div>
+          <button
+            onClick={handleCancelRepertoireAnalysis}
+            className="btn-icon p-1 text-accent-red flex-shrink-0"
+            title="Cancel analysis"
+          >
+            <StopCircle className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <div className="flex-1 flex min-h-0">
+        {/* Left Panel: Files + Opening Tree */}
+        <div className="flex-1 min-w-[300px] border-r border-border-subtle flex flex-col">
+          {/* Repertoire Files */}
+          <div className="border-b border-border-subtle">
+            <div
+              className="panel-header flex items-center justify-between cursor-pointer select-none"
+              onClick={() => setFilesOpen((o) => !o)}
+            >
+              <span className="flex items-center gap-1.5">
+                <span className={`transition-transform text-[10px] ${filesOpen ? 'rotate-90' : ''}`}>
+                  ▶
+                </span>
+                REPERTOIRE FILES
+                {files.length > 0 && (
+                  <span className="text-[10px] text-text-muted normal-case tracking-normal font-normal">
+                    ({files.length})
+                  </span>
+                )}
+              </span>
+            </div>
+            {filesOpen && (
+              <div className="px-3 pb-2">
+                <RepertoireFilesPanel
+                  currentTree={tree}
+                  onLoadTree={setTree}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Opening Tree */}
+          <div className="panel-header flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span>OPENING TREE</span>
+              {/* Annotation count badges — shown after analysis completes */}
+              {!repertoireEval.isAnalyzing && repertoireEval.nodeAnnotations.size > 0 && (() => {
+                const counts = {
+                  inaccuracy: { total: 0, white: 0, black: 0 },
+                  mistake:    { total: 0, white: 0, black: 0 },
+                  blunder:    { total: 0, white: 0, black: 0 },
+                };
+                for (const ann of repertoireEval.nodeAnnotations.values()) {
+                  const c = counts[ann.tier];
+                  c.total++;
+                  if (ann.side === 'white') c.white++; else c.black++;
+                }
+                const tiers: { tier: 'inaccuracy' | 'mistake' | 'blunder'; symbol: string; color: string }[] = [
+                  { tier: 'inaccuracy', symbol: '?!', color: '#f59e0b' },
+                  { tier: 'mistake',    symbol: '?',  color: '#f97316' },
+                  { tier: 'blunder',    symbol: '??', color: '#ef4444' },
+                ];
+                return (
+                  <div className="flex items-center gap-2">
+                    {tiers.map(({ tier, symbol, color }) => {
+                      const c = counts[tier];
+                      if (c.total === 0) return null;
+                      const label = tier === 'inaccuracy' ? 'inaccuracies' : `${tier}s`;
+                      return (
+                        <div key={tier} className="flex items-center gap-0.5">
+                          {/* White badge */}
+                          {c.white > 0 && (
+                            <button
+                              onClick={() => navigateToAnnotation(tier)}
+                              className="flex items-center gap-0.5 px-1 py-0.5 rounded transition-opacity hover:opacity-100 opacity-85 cursor-pointer"
+                              style={{ backgroundColor: '#ffffffcc', border: `1px solid ${color}66` }}
+                              title={`${c.white} white ${label} — click to cycle`}
+                            >
+                              <span className="font-mono text-[8px] font-bold" style={{ color }}>
+                                {symbol}
+                              </span>
+                              <span className="font-mono text-[8px] font-semibold text-[#1a1a1a]">
+                                ♔{c.white}
+                              </span>
+                            </button>
+                          )}
+                          {/* Black badge */}
+                          {c.black > 0 && (
+                            <button
+                              onClick={() => navigateToAnnotation(tier)}
+                              className="flex items-center gap-0.5 px-1 py-0.5 rounded transition-opacity hover:opacity-100 opacity-85 cursor-pointer"
+                              style={{ backgroundColor: '#1a1a2ecc', border: `1px solid ${color}66` }}
+                              title={`${c.black} black ${label} — click to cycle`}
+                            >
+                              <span className="font-mono text-[8px] font-bold" style={{ color }}>
+                                {symbol}
+                              </span>
+                              <span className="font-mono text-[8px] font-semibold" style={{ color: '#e8e8e8' }}>
+                                ♚{c.black}
+                              </span>
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="flex items-center gap-2">
+              {/* Repertoire analysis controls (only when not running) */}
+              {!repertoireEval.isAnalyzing && (
+                <div className="flex items-center gap-1">
+                  {/* Depth control */}
+                  <div className="flex items-center gap-0.5" title="Analysis depth">
+                    <span className="text-[9px] text-text-muted font-mono">d{repertoireDepth}</span>
+                    <div className="flex flex-col -space-y-0.5">
+                      <button
+                        onClick={() => setRepertoireDepth((d) => Math.min(d + 2, 30))}
+                        className="btn-icon p-0 text-text-muted hover:text-accent-teal leading-none"
+                        title="Increase depth"
+                      >
+                        <ChevronUp className="w-2.5 h-2.5" />
+                      </button>
+                      <button
+                        onClick={() => setRepertoireDepth((d) => Math.max(d - 2, 8))}
+                        className="btn-icon p-0 text-text-muted hover:text-accent-teal leading-none"
+                        title="Decrease depth"
+                      >
+                        <ChevronDown className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  </div>
+                  {/* Threshold controls */}
+                  <div className="flex items-center gap-0.5 ml-1 border-l border-border-subtle pl-1.5">
+                    {(
+                      [
+                        { key: 'inaccuracy', label: '?!', color: '#faff00' },
+                        { key: 'mistake',    label: '?',  color: '#e67e22' },
+                        { key: 'blunder',    label: '??', color: '#e74c3c' },
+                      ] as const
+                    ).map(({ key, label, color }) => (
+                      <div key={key} className="flex items-center gap-0.5" title={`${key} threshold (eval drop in pawns)`}>
+                        <span className="text-[9px] font-mono font-bold" style={{ color }}>{label}</span>
+                        <input
+                          type="number"
+                          step={0.1}
+                          min={0.1}
+                          max={10}
+                          value={thresholds[key]}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            if (!isNaN(val) && val > 0) {
+                              setThresholds((prev) => ({ ...prev, [key]: val }));
+                            }
+                          }}
+                          className="w-10 h-5 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-[9px] outline-none focus:border-accent-teal px-0"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {/* Analyze button */}
+                  <button
+                    onClick={handleReanalyzeRepertoire}
+                    className={`btn-icon p-1 ${
+                      repertoireEval.evals.size > 0
+                        ? 'text-accent-teal/60 hover:text-accent-teal'
+                        : 'text-text-muted hover:text-accent-teal'
+                    }`}
+                    title={
+                      repertoireEval.evals.size > 0
+                        ? `Re-analyse at depth ${repertoireDepth} (${repertoireEval.evals.size} positions cached)`
+                        : `Analyse all positions at depth ${repertoireDepth}`
+                    }
+                  >
+                    <Cpu className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+              {/* Game overlay toggle */}
+              {games.importedGames.length > 0 && (
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={games.showGameOverlay}
+                    onChange={() => games.toggleGameOverlay()}
+                    className="w-3 h-3 rounded border-border-subtle bg-bg-primary accent-accent-teal cursor-pointer"
+                  />
+                  <span className="text-[10px] text-text-muted normal-case tracking-normal">
+                    Show games
+                  </span>
+                </label>
+              )}
+            </div>{/* end flex items-center gap-2 */}
+          </div>
+          <div className="flex-1 min-h-0">
+            <OpeningTree
+              tree={tree}
+              currentNode={currentNode}
+              currentPath={currentPath}
+              onNodeClick={navigateToNode}
+              onDeleteNode={deleteNode}
+              onAddMove={addMoveToNode}
+              onAddLine={addLineToNode}
+              importedGames={games.importedGames}
+              showGameOverlay={games.showGameOverlay}
+              onExploreFen={setExploreOverlayFen}
+            />
+          </div>
+        </div>
+
+        {/* Right Panel: Board + Tabbed Content */}
+        <div className="w-[420px] min-w-[380px] flex flex-col overflow-hidden">
+          {/* Chessboard */}
+          <div className="flex flex-col items-center p-3 gap-1">
+            {/* Game viewer banner */}
+            {viewingGame && (
+              <div className="w-full max-w-[400px] flex items-center justify-between bg-accent-teal/10 border border-accent-teal/30 rounded-md px-3 py-1.5 mb-1">
+                <div className="text-xs text-accent-teal truncate">
+                  <span className="font-semibold">Viewing:</span>{' '}
+                  {viewingGame.white} vs {viewingGame.black}
+                  <span className="text-text-muted ml-2">
+                    Move {viewingMoveIndex}/{gamePositions.length - 1}
+                  </span>
+                </div>
+                <button
+                  onClick={handleCloseGameViewer}
+                  className="btn-icon p-0.5 text-accent-teal hover:text-accent-teal/70 flex-shrink-0"
+                  title="Close game viewer (Esc)"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            <div className="w-full max-w-[400px]">
+              <ChessBoard
+                fen={displayFen}
+                orientation={orientation}
+                onMove={viewingGame ? () => false : handleBoardMove}
+                engineBestMove={engine.enabled ? engineArrows : undefined}
+                score={engine.lines.length > 0 ? engine.lines[0].score : 0}
+                mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
+              />
+            </div>
+            {viewingGame ? (
+              <BoardControls
+                onStart={gameViewerStart}
+                onBack={gameViewerBack}
+                onForward={gameViewerForward}
+                onEnd={gameViewerEnd}
+                onFlip={flipBoard}
+                canGoBack={viewingMoveIndex > 0}
+                canGoForward={viewingMoveIndex < gamePositions.length - 1}
+              />
+            ) : (
+              <BoardControls
+                onStart={navigateToStart}
+                onBack={navigateBack}
+                onForward={navigateForward}
+                onEnd={navigateToEnd}
+                onFlip={flipBoard}
+                canGoBack={currentPath.length > 1}
+                canGoForward={currentNode.children.length > 0}
+              />
+            )}
+          </div>
+
+          {/* Tab Bar */}
+          <div className="flex border-t border-b border-border-subtle">
+            <button
+              onClick={() => setSidebarTab('analysis')}
+              className={`flex-1 px-3 py-1.5 text-xs font-mono uppercase tracking-wider transition-colors ${
+                sidebarTab === 'analysis'
+                  ? 'text-accent-teal border-b-2 border-accent-teal bg-bg-surface/50'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              Analysis
+            </button>
+            <button
+              onClick={() => setSidebarTab('games')}
+              className={`flex-1 px-3 py-1.5 text-xs font-mono uppercase tracking-wider transition-colors relative ${
+                sidebarTab === 'games'
+                  ? 'text-accent-teal border-b-2 border-accent-teal bg-bg-surface/50'
+                  : 'text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              Games & Mistakes
+              {games.totalMistakes > 0 && (
+                <span className="ml-1.5 inline-flex items-center justify-center px-1 min-w-[16px] h-4 rounded-full bg-accent-amber/20 text-accent-amber text-[9px] font-semibold">
+                  {games.totalMistakes}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Tab Content */}
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            {sidebarTab === 'analysis' ? (
+              <>
+                {/* Engine Panel */}
+                <div className="flex-[3] min-h-[140px] flex flex-col overflow-auto">
+                  <EnginePanel
+                    lines={engine.lines}
+                    isThinking={engine.isThinking}
+                    enabled={engine.enabled}
+                    depth={engine.depth}
+                    multiPV={engine.multiPV}
+                    threads={engine.threads}
+                    currentFen={displayFen}
+                    onToggle={engine.toggleEngine}
+                    onDepthChange={engine.setDepth}
+                    onMultiPVChange={engine.setMultiPV}
+                    onThreadsChange={engine.setThreads}
+                  />
+                </div>
+
+                {/* Move List */}
+                <div className="flex-[2] min-h-0 flex flex-col border-t border-border-subtle">
+                  <MoveList
+                    currentPath={currentPath}
+                    currentNode={currentNode}
+                    onNavigateToNode={navigateToNode}
+                    importedGames={games.importedGames}
+                    showGameOverlay={games.showGameOverlay}
+                    onAddMove={addMoveToNode}
+                  />
+                </div>
+
+                {/* Notes Panel */}
+                <div className="flex-[1] min-h-0 flex flex-col overflow-auto border-t border-border-subtle">
+                  <NotesPanel
+                    comment={currentNode.comment}
+                    nags={currentNode.nags}
+                    nodeId={currentNode.id}
+                    onCommentChange={(comment) => setComment(currentNode.id, comment)}
+                    onAddNag={(nag) => addNag(currentNode.id, nag)}
+                    onRemoveNag={(nag) => removeNag(currentNode.id, nag)}
+                  />
+                </div>
+              </>
+            ) : (
+              <ErrorBoundary>
+                <div className="flex-1 min-h-0 overflow-auto">
+                  <div className="p-3 flex flex-col gap-4">
+                    {/* Game Viewer Move List — shown when viewing a game */}
+                    {viewingGame && (
+                      <div className="panel flex flex-col">
+                        <div className="panel-header flex items-center justify-between">
+                          <span>GAME MOVES</span>
+                          <span className="text-[10px] text-text-muted font-normal normal-case tracking-normal">
+                            {viewingGame.white} vs {viewingGame.black}
+                            {viewingGame.result ? ` — ${viewingGame.result}` : ''}
+                          </span>
+                        </div>
+                        <div className="p-3 overflow-auto max-h-[200px]">
+                          <div className="text-sm leading-relaxed flex flex-wrap gap-y-0.5">
+                            {viewingGame.moves.map((san, idx) => {
+                              const moveNum = Math.floor(idx / 2) + 1;
+                              const isWhite = idx % 2 === 0;
+                              const moveIndex = idx + 1; // 1-based position after this move
+                              const isCurrent = moveIndex === viewingMoveIndex;
+                              const figurine = toFigurine(san, isWhite);
+
+                              return (
+                                <React.Fragment key={idx}>
+                                  {isWhite && (
+                                    <span className="text-text-secondary mr-0.5">
+                                      {moveNum}.
+                                    </span>
+                                  )}
+                                  <span
+                                    onClick={() => setViewingMoveIndex(moveIndex)}
+                                    className={`cursor-pointer rounded px-1 transition-colors ${
+                                      isCurrent
+                                        ? 'bg-accent-teal/20 text-accent-teal font-semibold'
+                                        : isWhite
+                                          ? 'text-text-primary font-medium hover:bg-bg-hover'
+                                          : 'text-blue-700 hover:bg-bg-hover'
+                                    }`}
+                                  >
+                                    {figurine}
+                                  </span>
+                                  {!isWhite && <span className="mr-1.5" />}
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Game Import Section */}
+                    <div>
+                      <div className="text-xs text-text-muted uppercase tracking-wider font-mono mb-2">
+                        Import Games
+                      </div>
+                      <GameImportPanel
+                        onViewGame={handleViewGame}
+                        viewingGameId={viewingGame?.id ?? null}
+                      />
+                    </div>
+
+                    {/* Divider */}
+                    {games.importedGames.some((g) => g.analyzed) && (
+                      <div className="border-t border-border-subtle" />
+                    )}
+
+                    {/* Mistake Review Section */}
+                    {games.importedGames.some((g) => g.analyzed) && (
+                      <div>
+                        <div className="text-xs text-text-muted uppercase tracking-wider font-mono mb-2">
+                          Mistake Review
+                        </div>
+                        <MistakePanel onNavigateToFen={handleNavigateToFen} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </ErrorBoundary>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Status Bar */}
+      <StatusBar
+        openingName={openingInfo?.name || null}
+        eco={openingInfo?.eco || null}
+        moveNumber={currentMoveNumber}
+        isWhiteToMove={isWhiteToMove}
+        nodeCount={nodeCount}
+        gameCount={tree.gameCount}
+      />
+
+      {/* Modals */}
+      <ImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImport={handleImportText}
+        onImportFiles={handleImportFiles}
+        isLoading={pgnParser.isLoading}
+        error={pgnParser.error}
+      />
+
+      <ExportModal
+        isOpen={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        pgnText={exportPgn}
+        onCopy={() => copyToClipboard(exportPgn)}
+        onDownload={() => downloadAsFile(exportPgn, 'repertoire.pgn')}
+        onOptionsChange={setExportOptions}
+      />
+
+      {/* Error logging UI */}
+      <ErrorToast />
+      <ErrorLogPanel />
+      </>
+      )}
+    </div>
+  );
+};
