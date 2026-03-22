@@ -9,7 +9,7 @@
     }
   ],
   "rewrites": [
-    { "source": "/chess-api/:path*", "destination": "https://api.chess.com/pub/:path*" },
+    { "source": "/chess-api/:path*", "destination": "https://api.chess.com/:path*" },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
