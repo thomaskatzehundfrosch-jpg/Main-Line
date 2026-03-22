@@ -168,6 +168,9 @@ export function useEngine() {
         return;
       }
 
+      // ── Engine is idle and ready — mark worker as ready ──
+      dispatch({ type: 'SET_WORKER_READY', ready: true });
+
       // ── Engine is idle and ready — start any pending analysis ──
       const fen = pendingFenRef.current;
       if (fen && enabledRef.current) {
@@ -201,6 +204,7 @@ export function useEngine() {
         // Kill the broken worker
         try { worker.terminate(); } catch { /* ignore */ }
         workerRef.current = null;
+        dispatch({ type: 'SET_WORKER_READY', ready: false });
 
         // Re-create after a short cooldown
         setTimeout(() => {

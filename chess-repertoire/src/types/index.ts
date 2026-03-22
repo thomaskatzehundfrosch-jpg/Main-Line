@@ -24,6 +24,7 @@ export interface EngineLine {
 
 export interface EngineState {
   enabled: boolean;
+  workerReady: boolean;
   depth: number;
   maxDepth: number;
   multiPV: number;
@@ -66,7 +67,8 @@ export type EngineAction =
   | { type: 'SET_CURRENT_FEN'; fen: string }
   | { type: 'SET_MULTIPV'; multiPV: number }
   | { type: 'SET_THREADS'; threads: number }
-  | { type: 'CLEAR_LINES' };
+  | { type: 'CLEAR_LINES' }
+  | { type: 'SET_WORKER_READY'; ready: boolean };
 
 export interface OpeningInfo {
   eco: string;

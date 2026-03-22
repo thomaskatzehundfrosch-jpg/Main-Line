@@ -241,7 +241,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
     if (gen.isGenerating) return false;
     const isLichessMode = settings.analysisMode === 'lichess+stockfish';
     if (isLichessMode && !getStoredToken()) return false;
-    return engine.enabled && engine.workerRef.current !== null;
+    return engine.enabled && engine.workerReady;
   })();
 
   const handleGenerate = useCallback(() => {
@@ -340,7 +340,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
             onGenerate={handleGenerate}
             onStop={handleStop}
             isGenerating={gen.isGenerating}
-            sfReady={engine.enabled && engine.workerRef.current !== null}
+            sfReady={engine.enabled && engine.workerReady}
             canGenerate={canGenerate}
             pgnSeeds={pgnSeeds}
             setPgnSeeds={setPgnSeeds}

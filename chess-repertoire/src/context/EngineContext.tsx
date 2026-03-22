@@ -13,6 +13,7 @@ function getInitialState(): EngineState {
   const defaultThreads = Math.max(1, Math.min(16, Math.floor((navigator?.hardwareConcurrency ?? 2) / 2)));
   return {
     enabled: true,
+    workerReady: false,
     depth: 25,
     maxDepth: 40,
     multiPV: 3,
@@ -79,6 +80,13 @@ function engineReducer(state: EngineState, action: EngineAction): EngineState {
       return {
         ...state,
         lines: [],
+      };
+    }
+
+    case 'SET_WORKER_READY': {
+      return {
+        ...state,
+        workerReady: action.ready,
       };
     }
 
