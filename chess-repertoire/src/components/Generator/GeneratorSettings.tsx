@@ -196,54 +196,33 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
 
         {/* Trickyness */}
         {(() => {
-          const tw = settings.trickynessWeight ?? 0;
-          const trickyLabels: Record<number, string> = {
-            0: 'Off',
-            1: 'Subtle',
-            2: 'Mild',
-            3: 'Moderate',
-            4: 'Strong',
-            5: 'Maximum',
-          };
-          const trickyDescriptions: Record<number, string> = {
-            0: 'No trickyness preference — disabled',
-            1: 'Slight bonus for moves that test the opponent',
-            2: 'Mild preference for positions where opponents often err',
-            3: 'Actively seeks moves that trip up opponents',
-            4: 'Strong preference for tricky, error-prone positions',
-            5: 'Maximises opponent difficulty — adds extra SF analysis per candidate',
-          };
-          const trackColor = tw === 0 ? '#6b7280' : '#f59e0b';
+          const on = (settings.trickynessWeight ?? 0) > 0;
           return (
             <div>
-              <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-                Trickyness
-              </label>
-              <div className="flex justify-between text-[10px] font-mono text-text-muted mb-1 px-0.5">
-                {[0, 1, 2, 3, 4, 5].map((v) => (
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
+                  Trickyness
+                </label>
+                <button
+                  role="switch"
+                  aria-checked={on}
+                  disabled={isGenerating}
+                  onClick={() => update('trickynessWeight', on ? 0 : 5)}
+                  className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
+                    isGenerating ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+                  } ${on ? 'bg-amber-400' : 'bg-bg-hover border border-border-active'}`}
+                >
                   <span
-                    key={v}
-                    style={{ color: tw === v ? trackColor : undefined }}
-                  >
-                    {v === 0 ? 'Off' : v === 5 ? 'Max' : String(v)}
-                  </span>
-                ))}
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                      on ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
               </div>
-              <input
-                type="range"
-                min={0}
-                max={5}
-                step={1}
-                value={tw}
-                onChange={(e) => update('trickynessWeight', parseInt(e.target.value))}
-                disabled={isGenerating}
-                style={{ accentColor: trackColor }}
-                className="w-full cursor-pointer"
-              />
-              <p className="text-[10px] mt-1" style={{ color: trackColor }}>
-                <span className="font-semibold">{trickyLabels[tw]}</span>
-                {' — '}
-                <span className="opacity-80">{trickyDescriptions[tw]}</span>
+              <p className="text-[10px] mt-1" style={{ color: on ? '#f59e0b' : '#6b7280' }}>
+                {on
+                  ? 'Maximum — seeks moves that maximise opponent difficulty'
+                  : 'Off — no trickyness preference'}
               </p>
             </div>
           );
