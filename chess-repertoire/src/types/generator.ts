@@ -40,6 +40,16 @@ export interface GeneratorSettings {
   maiaLevel: 1100 | 1300 | 1500 | 1700 | 1900 | 2100; // target human skill level
   maiaApiUrl: string;             // Maia API endpoint (default: maiachess.com)
   maiaSfMaxDrop: number;          // max eval drop vs SF best (pawns) in Maia+SF mode
+  // Trickiness settings
+  /**
+   * How strongly to prefer moves that put the opponent in tricky positions.
+   * Measured as the weighted fraction of opponent play that falls ≥0.5 pawns
+   * below the best response (opponent error rate), computed via Stockfish MultiPV.
+   *   0 = disabled (no trickiness preference)
+   *   1 = subtle bonus for tricky positions
+   *   5 = maximum — may surface lower-eval moves if they're trickier
+   */
+  trickinessWeight: number;       // 0–5
 }
 
 /** Stockfish evaluation attached to a generator node. */
@@ -114,6 +124,10 @@ export interface MoveCandidate {
   _sfDepth?: number;
   _lichess?: GeneratorLichessStats | null;
   _maia?: GeneratorMaiaStats | null;
+  /** Fraction of opponent play (0–1) that falls ≥0.5 pawns below the best
+   *  response in the position reached after this move. Computed on-demand
+   *  when trickinessWeight > 0. */
+  _trickinessErrorRate?: number | null;
 }
 
 /** Default generator settings. */
@@ -141,4 +155,5 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   maiaLevel: 2100,
   maiaApiUrl: 'https://maiachess.com/api/maia_move',
   maiaSfMaxDrop: 1.5,
+  trickinessWeight: 0,
 };

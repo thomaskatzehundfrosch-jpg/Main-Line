@@ -698,3 +698,82 @@ export function reRankByStyle(
     (a, b) => styleScore(b, styleValue, color) - styleScore(a, styleValue, color)
   );
 }
+
+// ============================================================
+// Trickiness: opponent error rate
+// ============================================================
+
+/**
+ * Compute the opponent error rate for a position — the fraction of
+ * practical play where the opponent makes a significant inaccuracy.
+ *
+ * For each candidate opponent move, we compare its eval to the best
+ * available response. Moves that are ≥ errorThreshold pawns worse than
+ * the best are counted as errors.
+ *
+ * Weighting: if _lichess.totalGames is available on candidates, uses
+ * actual game frequency; otherwise falls back to uniform weighting.
+ *
+ * @param candidates      Opponent move candidates with _sfEval set
+ *                        (White's perspective). May include _lichess stats.
+ * @param opponentIsBlack True when the opponent plays Black.
+ * @param errorThreshold  Pawn drop vs best that counts as an error (default 0.5).
+ * @returns 0–1 fraction, or null if not enough data.
+ */
+export function computeOpponentErrorRate(
+  candidates: MoveCandidate[],
+  opponentIsBlack: boolean,
+  errorThreshold: number = 0.5
+): number | null {
+  const valid = candidates.filter((c) => c._sfEval != null);
+  if (valid.length < 2) return null;
+
+  // Best eval for the opponent:
+  //   opponentIsBlack → wants lowest eval (White's perspective)
+  //   opponentIsWhite → wants highest eval
+  const bestEval = opponentIsBlack
+    ? Math.min(...valid.map((c) => c._sfEval!))
+    : Math.max(...valid.map((c) => c._sfEval!));
+
+  let totalWeight = 0;
+  let errorWeight = 0;
+
+  for (const c of valid) {
+    // Use game frequency if available, otherwise uniform weight of 1
+    const w = (c._lichess?.totalGames ?? 0) > 0 ? c._lichess!.totalGames : 1;
+    // How much worse than the best move is this response?
+    // opponentIsBlack: eval going up   = worse for Black
+    // opponentIsWhite: eval going down = worse for White
+    const drop = opponentIsBlack
+      ? c._sfEval! - bestEval
+      : bestEval - c._sfEval!;
+
+    totalWeight += w;
+    if (drop >= errorThreshold) errorWeight += w;
+  }
+
+  return totalWeight > 0 ? errorWeight / totalWeight : null;
+}
+
+/**
+ * Apply a trickiness bonus to a composite move score.
+ *
+ * The bonus scales linearly with both the opponent error rate (0–1) and
+ * the trickiness weight (0–5). At weight=5, a position where the opponent
+ * errs in 100% of games earns a full +1.0 pawn bonus; at weight=1 it caps
+ * at +0.2 pawns. This keeps the bonus meaningful but never overwhelming
+ * compared to the base engine evaluation.
+ *
+ * @param baseScore        Current composite score (pawns, good-for-us positive).
+ * @param errorRate        Opponent error rate 0–1, or null if unavailable.
+ * @param trickinessWeight User setting 0–5 (0 = disabled).
+ */
+export function applyTrickinessBonus(
+  baseScore: number,
+  errorRate: number | null,
+  trickinessWeight: number
+): number {
+  if (!trickinessWeight || errorRate == null) return baseScore;
+  // +1.0 pawn max at weight=5 and errorRate=1.0
+  return baseScore + errorRate * (trickinessWeight / 5);
+}

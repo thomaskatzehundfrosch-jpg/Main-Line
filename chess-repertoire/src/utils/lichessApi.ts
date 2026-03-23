@@ -9,8 +9,10 @@ import { getStoredToken } from './lichessAuth';
 /** Timestamp of last successful request start (for throttling). */
 let _lastRequestTime = 0;
 
-/** Minimum ms between API calls. */
-const THROTTLE_MS = 1100;
+/** Minimum ms between API calls.
+ *  The Opening Explorer endpoint is more permissive than the main API;
+ *  200 ms (≈5 req/s) is safe. The exponential backoff handles any 429s. */
+const THROTTLE_MS = 200;
 
 /** Max retry attempts on 429 / network errors. */
 const MAX_RETRIES = 5;
@@ -264,4 +266,26 @@ export async function getMostPlayedMoves(
   }
 
   return result;
+}
+
+/**
+ * Fetch raw game-count data for all moves in a position, keyed by SAN.
+ * Used by the trickiness system to frequency-weight opponent error rates:
+ * a mistake that 40% of players make is far more relevant than one only
+ * 2% attempt.
+ *
+ * Returns an empty Map (graceful degradation) on any API failure.
+ */
+export async function getLichessMoveCounts(
+  fen: string,
+  settings: GeneratorSettings,
+  logError: LogFn
+): Promise<Map<string, number>> {
+  const data = await fetchLichess(fen, settings, logError);
+  const counts = new Map<string, number>();
+  for (const m of data.moves || []) {
+    const total = m.white + m.draws + m.black;
+    if (total > 0) counts.set(m.san, total);
+  }
+  return counts;
 }

@@ -14,11 +14,12 @@ import type {
 } from '../types/generator';
 import {
   getTopMoves, uciToSan, failsEvalThreshold, isDangerousResponse,
-  selectSignificantMoves, getStyleEvalThreshold, reRankByStyle, analyzePosition,
+  selectSignificantMoves, getStyleEvalThreshold, styleScore,
+  computeOpponentErrorRate, applyTrickinessBonus, analyzePosition,
 } from './analyzer';
 import { getMaiaMoves } from '../utils/maiaApi';
 import type { MaiaLevel } from '../utils/maiaApi';
-import { getMostPlayedMoves } from '../utils/lichessApi';
+import { getMostPlayedMoves, getLichessMoveCounts } from '../utils/lichessApi';
 
 const DEFAULT_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -275,11 +276,17 @@ export async function buildTree(
     // (analyzePosition calls below) still use the full sfAnalysisDepth.
     const multiPvDepth = Math.min(sfAnalysisDepth, 15);
     const styleValue = settings.styleValue ?? 0;
+    const tw = settings.trickinessWeight ?? 0;
 
     // How many candidates we ultimately want
     const targetPV = isOurTurn
       ? (settings.maxBranchesOur || 1)
       : (settings.maxOpponentResponses || 2);
+
+    // When trickiness is active, approve up to 2 extra candidates beyond
+    // targetPV so the combined style+trickiness sort has a real choice to make.
+    const trickExtra = (isOurTurn && tw > 0) ? Math.min(2, targetPV) : 0;
+    const approvalTarget = targetPV + trickExtra;
 
     // Style-adjusted eval threshold (only applies to our moves)
     const effectiveThreshold = isOurTurn
@@ -292,7 +299,8 @@ export async function buildTree(
     // For all other cases, gather SF candidates upfront.
     const skipUpfrontSF = analysisMode === 'lichess+stockfish' && isOurTurn;
 
-    const sfRequestPV = isOurTurn && styleValue !== 0
+    // Request extra SF PVs when style OR trickiness needs a wider candidate pool
+    const sfRequestPV = isOurTurn && (styleValue !== 0 || tw > 0)
       ? Math.min(5, targetPV + 2)
       : targetPV;
 
@@ -388,7 +396,7 @@ export async function buildTree(
         const usedSans = new Set<string>();
 
         for (const lc of lichessCandidates) {
-          if (candidates.length >= targetPV) break;
+          if (candidates.length >= approvalTarget) break;
           if (!sfWorker) break;
 
           // Enforce minGames threshold
@@ -477,9 +485,89 @@ export async function buildTree(
       candidates = sfCandidates;
     }
 
-    // Style re-ranking for our moves (before final slice)
-    if (isOurTurn && styleValue !== 0 && candidates.length > 1) {
-      candidates = reRankByStyle(candidates, styleValue, color);
+    // ── Trickiness: opponent error rate ──────────────────────────────────────
+    // For each of our move candidates, run a quick MultiPV on the resulting
+    // position (opponent's turn) and compute what fraction of the engine's
+    // top moves are significantly worse than the best response.  High error
+    // rate → tricky for the opponent.  Uses a lightweight depth (≤10) to
+    // keep the extra cost manageable.
+    if (isOurTurn && tw > 0 && sfWorker && candidates.length > 0) {
+      const opponentIsBlack = color === 'white';
+      const trickyDepth = Math.min(sfAnalysisDepth, 10);
+      for (const candidate of candidates) {
+        // Skip if already computed (e.g. in a future inline path)
+        if (candidate._trickinessErrorRate !== undefined) continue;
+        try {
+          const chessT = new Chess(fen);
+          const mvT = chessT.move(candidate.san);
+          if (!mvT) continue;
+          const resultFen = chessT.fen();
+
+          // SF MultiPV: get evals for the opponent's top moves
+          const oppTopMoves = await getTopMoves(sfWorker, resultFen, trickyDepth, 5, 12000);
+
+          // Lichess counts: frequency-weight each move so a mistake 40% of
+          // players make counts far more than one only 2% attempt.
+          // Falls back to uniform weights (1 per move) if the call fails.
+          let lichessCounts = new Map<string, number>();
+          if (useLichess) {
+            try {
+              lichessCounts = await getLichessMoveCounts(resultFen, settings, logError);
+              apiCalls++;
+            } catch {
+              // non-fatal — uniform weights used below
+            }
+          }
+
+          const oppCandidates: MoveCandidate[] = oppTopMoves
+            .filter((m) => m.eval != null)
+            .map((m) => {
+              const san = uciToSan(resultFen, m.uci) ?? m.uci;
+              const games = lichessCounts.get(san) ?? 0;
+              return {
+                san,
+                uci: m.uci,
+                _sfEval: m.eval,
+                // Only attach lichess stats when we have a real game count;
+                // computeOpponentErrorRate falls back to uniform weight otherwise
+                _lichess: games > 0
+                  ? { totalGames: games, winRate: 0, lossRate: 0, drawRate: 0, averageRating: null }
+                  : null,
+              };
+            });
+
+          const errorRate = computeOpponentErrorRate(oppCandidates, opponentIsBlack);
+          candidate._trickinessErrorRate = errorRate;
+          if (errorRate !== null) {
+            const weighted = lichessCounts.size > 0 ? ' (freq-weighted)' : ' (uniform)';
+            logError(
+              'info',
+              `Trickiness: ${candidate.san} → opponent error rate ${(errorRate * 100).toFixed(0)}%${weighted}`
+            );
+          }
+        } catch {
+          candidate._trickinessErrorRate = null; // non-fatal — skip for this candidate
+        }
+      }
+    }
+
+    // ── Combined style + trickiness re-ranking ───────────────────────────────
+    // Replaces the old style-only sort; no-op when both are neutral (style=0,
+    // trickiness=0) or only one candidate is available.
+    if (isOurTurn && (styleValue !== 0 || tw > 0) && candidates.length > 1) {
+      candidates = [...candidates].sort((a, b) => {
+        const sA = applyTrickinessBonus(
+          styleScore(a, styleValue, color),
+          a._trickinessErrorRate ?? null,
+          tw
+        );
+        const sB = applyTrickinessBonus(
+          styleScore(b, styleValue, color),
+          b._trickinessErrorRate ?? null,
+          tw
+        );
+        return sB - sA;
+      });
     }
 
     candidates = candidates.slice(0, targetPV);
