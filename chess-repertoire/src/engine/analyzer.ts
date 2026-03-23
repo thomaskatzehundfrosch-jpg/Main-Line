@@ -700,7 +700,7 @@ export function reRankByStyle(
 }
 
 // ============================================================
-// Trickiness: opponent error rate
+// Trickyness: opponent error rate
 // ============================================================
 
 /**
@@ -756,24 +756,24 @@ export function computeOpponentErrorRate(
 }
 
 /**
- * Apply a trickiness bonus to a composite move score.
+ * Apply a trickyness bonus to a composite move score.
  *
  * The bonus scales linearly with both the opponent error rate (0–1) and
- * the trickiness weight (0–5). At weight=5, a position where the opponent
+ * the trickyness weight (0–5). At weight=5, a position where the opponent
  * errs in 100% of games earns a full +1.0 pawn bonus; at weight=1 it caps
  * at +0.2 pawns. This keeps the bonus meaningful but never overwhelming
  * compared to the base engine evaluation.
  *
  * @param baseScore        Current composite score (pawns, good-for-us positive).
  * @param errorRate        Opponent error rate 0–1, or null if unavailable.
- * @param trickinessWeight User setting 0–5 (0 = disabled).
+ * @param trickynessWeight User setting 0–5 (0 = disabled).
  */
-export function applyTrickinessBonus(
+export function applyTrickynessBonus(
   baseScore: number,
   errorRate: number | null,
-  trickinessWeight: number
+  trickynessWeight: number
 ): number {
-  if (!trickinessWeight || errorRate == null) return baseScore;
+  if (!trickynessWeight || errorRate == null) return baseScore;
   // +1.0 pawn max at weight=5 and errorRate=1.0
-  return baseScore + errorRate * (trickinessWeight / 5);
+  return baseScore + errorRate * (trickynessWeight / 5);
 }

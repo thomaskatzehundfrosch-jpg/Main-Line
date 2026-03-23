@@ -270,7 +270,7 @@ export async function getMostPlayedMoves(
 
 /**
  * Fetch raw game-count data for all moves in a position, keyed by SAN.
- * Used by the trickiness system to frequency-weight opponent error rates:
+ * Used by the trickyness system to frequency-weight opponent error rates:
  * a mistake that 40% of players make is far more relevant than one only
  * 2% attempt.
  *

@@ -193,9 +193,9 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
           );
         })()}
 
-        {/* Trickiness */}
+        {/* Trickyness */}
         {(() => {
-          const tw = settings.trickinessWeight ?? 0;
+          const tw = settings.trickynessWeight ?? 0;
           const trickyLabels: Record<number, string> = {
             0: 'Off',
             1: 'Subtle',
@@ -205,7 +205,7 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
             5: 'Maximum',
           };
           const trickyDescriptions: Record<number, string> = {
-            0: 'No trickiness preference — disabled',
+            0: 'No trickyness preference — disabled',
             1: 'Slight bonus for moves that test the opponent',
             2: 'Mild preference for positions where opponents often err',
             3: 'Actively seeks moves that trip up opponents',
@@ -216,7 +216,7 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
           return (
             <div>
               <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-                Trickiness
+                Trickyness
               </label>
               <div className="flex justify-between text-[10px] font-mono text-text-muted mb-1 px-0.5">
                 {[0, 1, 2, 3, 4, 5].map((v) => (
@@ -234,7 +234,7 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                 max={5}
                 step={1}
                 value={tw}
-                onChange={(e) => update('trickinessWeight', parseInt(e.target.value))}
+                onChange={(e) => update('trickynessWeight', parseInt(e.target.value))}
                 disabled={isGenerating}
                 style={{ accentColor: trackColor }}
                 className="w-full cursor-pointer"

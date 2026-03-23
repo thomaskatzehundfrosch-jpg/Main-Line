@@ -15,7 +15,7 @@ import type {
 import {
   getTopMoves, uciToSan, failsEvalThreshold, isDangerousResponse,
   selectSignificantMoves, getStyleEvalThreshold, styleScore,
-  computeOpponentErrorRate, applyTrickinessBonus, analyzePosition,
+  computeOpponentErrorRate, applyTrickynessBonus, analyzePosition,
 } from './analyzer';
 import { getMaiaMoves } from '../utils/maiaApi';
 import type { MaiaLevel } from '../utils/maiaApi';
@@ -276,15 +276,15 @@ export async function buildTree(
     // (analyzePosition calls below) still use the full sfAnalysisDepth.
     const multiPvDepth = Math.min(sfAnalysisDepth, 15);
     const styleValue = settings.styleValue ?? 0;
-    const tw = settings.trickinessWeight ?? 0;
+    const tw = settings.trickynessWeight ?? 0;
 
     // How many candidates we ultimately want
     const targetPV = isOurTurn
       ? (settings.maxBranchesOur || 1)
       : (settings.maxOpponentResponses || 2);
 
-    // When trickiness is active, approve up to 2 extra candidates beyond
-    // targetPV so the combined style+trickiness sort has a real choice to make.
+    // When trickyness is active, approve up to 2 extra candidates beyond
+    // targetPV so the combined style+trickyness sort has a real choice to make.
     const trickExtra = (isOurTurn && tw > 0) ? Math.min(2, targetPV) : 0;
     const approvalTarget = targetPV + trickExtra;
 
@@ -299,7 +299,7 @@ export async function buildTree(
     // For all other cases, gather SF candidates upfront.
     const skipUpfrontSF = analysisMode === 'lichess+stockfish' && isOurTurn;
 
-    // Request extra SF PVs when style OR trickiness needs a wider candidate pool
+    // Request extra SF PVs when style OR trickyness needs a wider candidate pool
     const sfRequestPV = isOurTurn && (styleValue !== 0 || tw > 0)
       ? Math.min(5, targetPV + 2)
       : targetPV;
@@ -485,7 +485,7 @@ export async function buildTree(
       candidates = sfCandidates;
     }
 
-    // ── Trickiness: opponent error rate ──────────────────────────────────────
+    // ── Trickyness: opponent error rate ──────────────────────────────────────
     // For each of our move candidates, run a quick MultiPV on the resulting
     // position (opponent's turn) and compute what fraction of the engine's
     // top moves are significantly worse than the best response.  High error
@@ -496,7 +496,7 @@ export async function buildTree(
       const trickyDepth = Math.min(sfAnalysisDepth, 10);
       for (const candidate of candidates) {
         // Skip if already computed (e.g. in a future inline path)
-        if (candidate._trickinessErrorRate !== undefined) continue;
+        if (candidate._trickynessErrorRate !== undefined) continue;
         try {
           const chessT = new Chess(fen);
           const mvT = chessT.move(candidate.san);
@@ -537,33 +537,33 @@ export async function buildTree(
             });
 
           const errorRate = computeOpponentErrorRate(oppCandidates, opponentIsBlack);
-          candidate._trickinessErrorRate = errorRate;
+          candidate._trickynessErrorRate = errorRate;
           if (errorRate !== null) {
             const weighted = lichessCounts.size > 0 ? ' (freq-weighted)' : ' (uniform)';
             logError(
               'info',
-              `Trickiness: ${candidate.san} → opponent error rate ${(errorRate * 100).toFixed(0)}%${weighted}`
+              `Trickyness: ${candidate.san} → opponent error rate ${(errorRate * 100).toFixed(0)}%${weighted}`
             );
           }
         } catch {
-          candidate._trickinessErrorRate = null; // non-fatal — skip for this candidate
+          candidate._trickynessErrorRate = null; // non-fatal — skip for this candidate
         }
       }
     }
 
-    // ── Combined style + trickiness re-ranking ───────────────────────────────
+    // ── Combined style + trickyness re-ranking ───────────────────────────────
     // Replaces the old style-only sort; no-op when both are neutral (style=0,
-    // trickiness=0) or only one candidate is available.
+    // trickyness=0) or only one candidate is available.
     if (isOurTurn && (styleValue !== 0 || tw > 0) && candidates.length > 1) {
       candidates = [...candidates].sort((a, b) => {
-        const sA = applyTrickinessBonus(
+        const sA = applyTrickynessBonus(
           styleScore(a, styleValue, color),
-          a._trickinessErrorRate ?? null,
+          a._trickynessErrorRate ?? null,
           tw
         );
-        const sB = applyTrickinessBonus(
+        const sB = applyTrickynessBonus(
           styleScore(b, styleValue, color),
-          b._trickinessErrorRate ?? null,
+          b._trickynessErrorRate ?? null,
           tw
         );
         return sB - sA;
