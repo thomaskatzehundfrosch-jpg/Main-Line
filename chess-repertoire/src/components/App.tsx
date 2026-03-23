@@ -15,6 +15,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { RepertoireFilesPanel } from './RepertoireFilesPanel';
 import { ImportModal } from './Modals/ImportModal';
 import { ExportModal } from './Modals/ExportModal';
+import { SettingsModal } from './Modals/SettingsModal';
 import { useRepertoireTree } from '../hooks/useRepertoireTree';
 import { useEngine } from '../hooks/useEngine';
 import { usePgnParser } from '../hooks/usePgnParser';
@@ -107,6 +108,7 @@ export const App: React.FC = () => {
   const [filesOpen, setFilesOpen] = useState(true);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [gameFetcherOpen, setGameFetcherOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [trainerOpen, setTrainerOpen] = useState(false);
@@ -539,8 +541,10 @@ export const App: React.FC = () => {
         onGameFetcher={() => { setGeneratorOpen(false); setTrainerOpen(false); setGameFetcherOpen(true); }}
         onGenerator={() => { setGameFetcherOpen(false); setTrainerOpen(false); setGeneratorOpen(true); }}
         onTrainer={() => { setGameFetcherOpen(false); setGeneratorOpen(false); setTrainerOpen(true); }}
+        onSettings={() => setSettingsOpen(true)}
         activeFileName={getActiveFile()?.name ?? null}
       />
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
 
       {/* GeneratorPage: always mounted so in-progress generation keeps running
           when the user navigates back to the main repertoire view. Hidden via

@@ -10,10 +10,11 @@ interface TopBarProps {
   onGameFetcher?: () => void;
   onGenerator?: () => void;
   onTrainer?: () => void;
+  onSettings?: () => void;
   activeFileName?: string | null;
 }
 
-export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetcher, onGenerator, onTrainer, activeFileName }) => {
+export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetcher, onGenerator, onTrainer, onSettings, activeFileName }) => {
   const { user, loading } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
 
@@ -88,9 +89,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
         <button
           className="btn-icon"
           title="Settings"
-          onClick={() => {
-            // TODO: Open settings
-          }}
+          onClick={onSettings}
         >
           <Settings className="w-4 h-4" />
         </button>
