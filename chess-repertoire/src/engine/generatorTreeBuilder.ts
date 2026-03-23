@@ -125,13 +125,55 @@ function deepCloneTree(node: GeneratorNode): GeneratorNode {
   return clone as GeneratorNode;
 }
 
-/** BFS queue item. */
+/**
+ * Check whether a position is "tactical" (not quiet).
+ * Tactical = side to move is in check OR captures are available.
+ */
+function isPositionTactical(fen: string): boolean {
+  try {
+    const chess = new Chess(fen);
+    if (chess.isCheck()) return true;
+    const moves = chess.moves({ verbose: true });
+    return moves.some((m) => (m as any).captured);
+  } catch {
+    return false;
+  }
+}
+
+/** Standard piece values in pawns. */
+const PIECE_VALUES: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+
+/**
+ * Detect whether a move is a sacrifice — moving side gives away more material
+ * than it captures (e.g. Nxf7 when the knight isn't recaptured cleanly).
+ * Returns the number of extra moves the line should stay alive after the sac,
+ * or 0 if it's a normal capture or non-capture.
+ */
+function sacrificeExtensionMoves(fromFen: string, san: string, baseExtension: number): number {
+  try {
+    const chess = new Chess(fromFen);
+    const result = chess.move(san);
+    if (!result || !result.captured) return 0;                  // not a capture
+    const movingVal  = PIECE_VALUES[result.piece]    ?? 0;
+    const capturedVal = PIECE_VALUES[result.captured] ?? 0;
+    if (movingVal <= capturedVal) return 0;                     // equal or winning trade
+    // Material given away — extend proportionally to how big the sacrifice is
+    const deficit = movingVal - capturedVal;                    // e.g. 2 for N×P
+    return baseExtension + Math.min(deficit * 2, 6);            // cap bonus at 6 extra moves
+  } catch {
+    return 0;
+  }
+}
+
+/** DFS stack item. */
 interface QueueItem {
   node: GeneratorNode;
   isOurTurn: boolean;
   depth: number;
   effectiveMaxDepth: number;
   fullMoveNumber: number;
+  /** Moves still allowed past maxMoveNumber due to a sacrifice earlier in the line. */
+  sacrificeMovesLeft: number;
 }
 
 /**
@@ -639,6 +681,7 @@ export async function buildTree(
         depth: seedDepth,
         effectiveMaxDepth: maxDepth,
         fullMoveNumber: seedFullMove,
+        sacrificeMovesLeft: 0,
       });
     }
   } else {
@@ -648,20 +691,34 @@ export async function buildTree(
       depth: 0,
       effectiveMaxDepth: maxDepth,
       fullMoveNumber: 1,
+      sacrificeMovesLeft: 0,
     });
   }
 
-  // BFS loop
+  // ── DFS expansion ────────────────────────────────────────────────────────
+  // Items are prepended (unshift) so each line goes to full depth before
+  // siblings are explored. BFS would spread the node budget thin and
+  // typically ran out around move 9; DFS reaches maxMoveNumber on every line.
   const sfAnalysisDepth = settings.sfDepth || 12;
+  const tacticalExtension = settings.tacticalExtension ?? 4;
 
   while (queue.length > 0 && totalNodes < maxNodes && !stopRef.current) {
+    // Stack: shift from front — items were prepended (DFS order)
     const item = queue.shift()!;
 
     // Check move number limit
     if (item.fullMoveNumber > maxMoveNumber) {
-      item.node.cappedByMoveLimit = true;
-      logError('info', `Move ${item.fullMoveNumber} exceeds max move limit (${maxMoveNumber}). Branch capped.`);
-      continue;
+      // 1. Sacrifice extension: a sac happened earlier in this line — keep going
+      if (item.sacrificeMovesLeft > 0) {
+        logError('info', `Move ${item.fullMoveNumber}: post-sacrifice extension (${item.sacrificeMovesLeft} moves left).`);
+      // 2. Tactical extension: current position has captures / is in check
+      } else if (item.fullMoveNumber <= maxMoveNumber + tacticalExtension && isPositionTactical(item.node.fen)) {
+        logError('info', `Move ${item.fullMoveNumber}: tactical position — extending past move limit.`);
+      // 3. Hard stop
+      } else {
+        item.node.cappedByMoveLimit = true;
+        continue;
+      }
     }
 
     // Check depth limit
@@ -689,7 +746,9 @@ export async function buildTree(
       continue;
     }
 
-    // Process each candidate
+    // Process each candidate — collect queue items, then prepend (DFS)
+    const newQueueItems: QueueItem[] = [];
+
     for (let ci = 0; ci < candidates.length; ci++) {
       if (stopRef.current) break;
       if (totalNodes >= maxNodes) break;
@@ -755,16 +814,34 @@ export async function buildTree(
         childMaxDepth = Math.max(item.depth + 2, item.effectiveMaxDepth - 4);
       }
 
-      queue.push({
+      // Sacrifice detection: if this move gives away more material than it
+      // captures, the resulting line gets extra moves past maxMoveNumber so
+      // the compensation has room to unfold.
+      const sacMoves = sacrificeExtensionMoves(item.node.fen, candidate.san, tacticalExtension);
+      const childSacrificeMovesLeft = sacMoves > 0
+        ? sacMoves                                    // fresh sacrifice — start countdown
+        : Math.max(0, item.sacrificeMovesLeft - 1);  // carry forward existing countdown
+
+      if (sacMoves > 0) {
+        logError('info', `Sacrifice detected: ${candidate.san} at move ${item.fullMoveNumber} — line extended by ${sacMoves} moves.`);
+      }
+
+      newQueueItems.push({
         node,
         isOurTurn: !item.isOurTurn,
         depth: item.depth + 1,
         effectiveMaxDepth: childMaxDepth,
         fullMoveNumber: nextFullMove,
+        sacrificeMovesLeft: childSacrificeMovesLeft,
       });
 
       // Short delay to keep UI responsive
       await delay(50);
+    }
+
+    // DFS: prepend children so the main line is processed before siblings.
+    if (newQueueItems.length > 0) {
+      queue.unshift(...newQueueItems);
     }
   }
 

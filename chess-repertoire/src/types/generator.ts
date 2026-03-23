@@ -14,7 +14,9 @@ export interface GeneratorSettings {
   maxBranchesOur: number;         // top N of our candidate moves (1–3)
   maxOpponentResponses: number;   // top N opponent responses (1–3)
   maxNodes: number;               // total node limit (10–2000)
-  sfDepth: number;                // Stockfish search depth (8–25)
+  sfDepth: number;                // Stockfish search depth used for all analysis
+  /** Extra moves past maxMoveNumber allowed in tactical positions (captures/check). 0 = disabled. */
+  tacticalExtension: number;
   evalThreshold: number;          // min acceptable eval for our moves (pawns)
   blunderCorrection: boolean;     // run a second-pass blunder correction after generation
   flagDangerousResponses: boolean;
@@ -144,6 +146,7 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   maxOpponentResponses: 2,
   maxNodes: 300,
   sfDepth: 25,
+  tacticalExtension: 4,
   evalThreshold: -0.3,
   blunderCorrection: true,
   flagDangerousResponses: true,
