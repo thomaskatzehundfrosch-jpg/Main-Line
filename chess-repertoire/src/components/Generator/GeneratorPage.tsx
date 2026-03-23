@@ -5,6 +5,7 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   Download,
@@ -32,6 +33,9 @@ import { exportGeneratorPGN } from '../../utils/generatorPgn';
 interface GeneratorPageProps {
   onClose: () => void;
   onImportTree: (tree: TreeNode) => void;
+  /** True when this page is the active visible view. When false (user navigated
+   *  away), generation still runs but a floating portal chip shows progress. */
+  isVisible?: boolean;
 }
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -40,7 +44,7 @@ const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 let _cachedSettings: GeneratorSettings = DEFAULT_GENERATOR_SETTINGS;
 let _cachedPgnSeeds: string[][] = [];
 
-export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree }) => {
+export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, isVisible = true }) => {
   const engine = useEngine();
   const gen = useGenerator();
 
@@ -69,8 +73,9 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
 
-  // Displayed position
-  const displayFen = gen.selectedNode?.fen || START_FEN;
+  // During generation animate to the latest added node; otherwise show selected.
+  const displayNode = gen.isGenerating ? gen.latestNode : gen.selectedNode;
+  const displayFen = displayNode?.fen || START_FEN;
 
   // Clear click-to-move selection whenever position changes
   useEffect(() => {
@@ -185,9 +190,9 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
   const customSquareStyles: Record<string, React.CSSProperties> = {};
 
-  // Highlight the last move played (from parent to this node)
-  if (gen.selectedNode && !gen.selectedNode.isRoot && gen.selectedNode.uci) {
-    const uci = gen.selectedNode.uci;
+  // Highlight the last move played — follows displayNode so it animates during generation
+  if (displayNode && !displayNode.isRoot && displayNode.uci) {
+    const uci = displayNode.uci;
     if (uci.length >= 4) {
       customSquareStyles[uci.substring(0, 2)] = { backgroundColor: 'rgba(59,98,160,0.15)' };
       customSquareStyles[uci.substring(2, 4)] = { backgroundColor: 'rgba(59,98,160,0.15)' };
@@ -486,6 +491,22 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
           />
         </div>
       </div>
+
+      {/* Floating progress chip — shown via portal when generation is running
+          but the user has navigated away from this page (isVisible = false). */}
+      {gen.isGenerating && !isVisible && createPortal(
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5
+          bg-bg-surface border border-accent-teal/60 rounded-full px-4 py-2 shadow-xl
+          font-mono text-xs text-accent-teal select-none pointer-events-none">
+          <span className="w-2 h-2 rounded-full bg-accent-teal animate-pulse flex-shrink-0" />
+          <span>
+            Generating repertoire&hellip;&nbsp;
+            {gen.progress.nodes}/{gen.progress.maxNodes} nodes
+            &nbsp;({Math.round((gen.progress.nodes / Math.max(1, gen.progress.maxNodes)) * 100)}%)
+          </span>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

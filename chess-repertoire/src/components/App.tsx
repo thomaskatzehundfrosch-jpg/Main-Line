@@ -542,16 +542,22 @@ export const App: React.FC = () => {
         activeFileName={getActiveFile()?.name ?? null}
       />
 
-      {/* Full-Page Views */}
-      {generatorOpen ? (
+      {/* GeneratorPage: always mounted so in-progress generation keeps running
+          when the user navigates back to the main repertoire view. Hidden via
+          CSS (not unmounted) so all React state is preserved. */}
+      <div className={generatorOpen ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
         <GeneratorPage
+          isVisible={generatorOpen}
           onClose={() => setGeneratorOpen(false)}
           onImportTree={(importedTree) => {
             setTree(importedTree);
             setGeneratorOpen(false);
           }}
         />
-      ) : gameFetcherOpen ? (
+      </div>
+
+      {/* Other full-page views and main app */}
+      {!generatorOpen && (gameFetcherOpen ? (
         <GameFetcherPage onClose={() => setGameFetcherOpen(false)} />
       ) : trainerOpen ? (
         <SpacedRepetitionTrainer onClose={() => setTrainerOpen(false)} />
@@ -1044,7 +1050,7 @@ export const App: React.FC = () => {
       <ErrorToast />
       <ErrorLogPanel />
       </>
-      )}
+      ))}
     </div>
   );
 };

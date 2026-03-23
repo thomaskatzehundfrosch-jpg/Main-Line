@@ -715,6 +715,11 @@ export async function buildTree(
       item.node.children.push(node);
       totalNodes++;
 
+      // Fire onNewNode with a shallow copy (no children) for live board animation
+      if (callbacks.onNewNode) {
+        callbacks.onNewNode({ ...node, children: [] });
+      }
+
       let statusMsg = `Move ${item.fullMoveNumber}: ${candidate.san} (node ${totalNodes}/${maxNodes})`;
       if (candidate._lichess) {
         statusMsg += ` [${candidate._lichess.totalGames} games]`;
@@ -763,7 +768,11 @@ export async function buildTree(
   // Non-blundering nodes have their stored eval upgraded to the more accurate
   // single-PV result obtained here.
   if (useStockfish && sfWorker && !stopRef.current) {
-    const blunderThreshold = settings.evalThreshold ?? -0.3;
+    // Relax the blunder threshold to match the maximum trickyness bonus.
+    // A trickyness-selected move can be up to (trickynessWeight / 5) pawns
+    // below the base threshold, so we must not flag those as blunders.
+    const trickRelax = (settings.trickynessWeight ?? 0) / 5;
+    const blunderThreshold = (settings.evalThreshold ?? -0.3) - trickRelax;
 
     // Collect {parent, node} for every node that represents one of OUR moves.
     // Seed nodes are user-specified starting moves and are exempt — we don't

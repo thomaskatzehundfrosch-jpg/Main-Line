@@ -106,6 +106,10 @@ export interface GeneratorLogEntry {
 /** Callbacks passed to the tree builder. */
 export interface GeneratorCallbacks {
   onNodeAdded?: (root: GeneratorNode) => void;
+  /** Fired with a shallow copy of each newly-created node (no children).
+   *  Used for live board animation: the node carries the FEN and UCI of the
+   *  move just played so the board can animate to it immediately. */
+  onNewNode?: (node: GeneratorNode) => void;
   onLog?: (entry: GeneratorLogEntry) => void;
   onProgress?: (progress: GeneratorProgress) => void;
   onComplete?: (root: GeneratorNode) => void;

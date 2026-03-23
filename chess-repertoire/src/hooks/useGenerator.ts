@@ -96,6 +96,8 @@ export interface UseGeneratorReturn {
   setTree: React.Dispatch<React.SetStateAction<GeneratorNode | null>>;
   selectedNode: GeneratorNode | null;
   setSelectedNode: React.Dispatch<React.SetStateAction<GeneratorNode | null>>;
+  /** Most recently added node during generation — drives live board animation. */
+  latestNode: GeneratorNode | null;
   isGenerating: boolean;
   progress: GeneratorProgress;
   errorLog: GeneratorLogEntry[];
@@ -133,6 +135,7 @@ export function useGenerator(): UseGeneratorReturn {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<GeneratorProgress>(INITIAL_PROGRESS);
   const [errorLog, setErrorLog] = useState<GeneratorLogEntry[]>([]);
+  const [latestNode, setLatestNode] = useState<GeneratorNode | null>(null);
   const stopRef = useRef(false);
 
   // Wrapped setters that also update the module-level cache
@@ -169,10 +172,14 @@ export function useGenerator(): UseGeneratorReturn {
       });
       setTree(null);
       setSelectedNode(null);
+      setLatestNode(null);
 
       const callbacks = {
         onNodeAdded: (updatedRoot: GeneratorNode) => {
           setTree(updatedRoot);
+        },
+        onNewNode: (node: GeneratorNode) => {
+          setLatestNode(node);
         },
         onLog: (entry: GeneratorLogEntry) => {
           addLogEntry(entry);
@@ -217,6 +224,7 @@ export function useGenerator(): UseGeneratorReturn {
     _cachedSelectedNodeId = null;
     setTree(null);
     setSelectedNode(null);
+    setLatestNode(null);
     setErrorLog([]);
     setProgress(INITIAL_PROGRESS);
   }, [setTree, setSelectedNode]);
@@ -331,6 +339,7 @@ export function useGenerator(): UseGeneratorReturn {
     setTree,
     selectedNode,
     setSelectedNode,
+    latestNode,
     isGenerating,
     progress,
     errorLog,
