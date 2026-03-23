@@ -57,6 +57,23 @@ function getFullMoveNumber(fen: string): number {
 }
 
 /**
+ * Check whether a position is "tactical" (not quiet).
+ * A position is tactical if the side to move is in check OR captures are available.
+ * Used for quiescence-style extension: tactical lines are allowed to continue
+ * a few moves past maxMoveNumber so combinations don't get cut mid-sequence.
+ */
+function isPositionTactical(fen: string): boolean {
+  try {
+    const chess = new Chess(fen);
+    if (chess.isCheck()) return true;
+    const moves = chess.moves({ verbose: true });
+    return moves.some((m) => (m as any).captured);
+  } catch {
+    return false; // assume quiet on error
+  }
+}
+
+/**
  * Create a delay promise.
  */
 function delay(ms: number): Promise<void> {
@@ -271,10 +288,9 @@ export async function buildTree(
     fullMoveNumber: number
   ): Promise<MoveCandidate[]> {
     const sfAnalysisDepth = settings.sfDepth || 12;
-    // MultiPV analysis is much slower than single-PV: cap at depth 15 so we
-    // never time out at complex middlegame positions.  Single-PV evaluations
-    // (analyzePosition calls below) still use the full sfAnalysisDepth.
-    const multiPvDepth = Math.min(sfAnalysisDepth, 15);
+    // MultiPV depth = exactly what's configured in the UI.
+    // The 30 s timeout in getTopMoves is the only safety net for slow positions.
+    const multiPvDepth = sfAnalysisDepth;
     const styleValue = settings.styleValue ?? 0;
     const tw = settings.trickynessWeight ?? 0;
 
@@ -635,17 +651,38 @@ export async function buildTree(
     });
   }
 
-  // BFS loop
+  // ── DFS expansion ────────────────────────────────────────────────────────
+  // We use a stack (LIFO) instead of a queue (FIFO) so each line goes to its
+  // full depth before sidelines are explored.  BFS spread the node budget
+  // evenly across all branches and typically ran out of nodes around move 9.
+  // DFS ensures every started line reaches maxMoveNumber before the next
+  // branch is opened, giving much deeper coverage within the same budget.
   const sfAnalysisDepth = settings.sfDepth || 12;
+  const tacticalExtension = settings.tacticalExtension ?? 4;
 
   while (queue.length > 0 && totalNodes < maxNodes && !stopRef.current) {
+    // Stack: pop from front (items were added with unshift → LIFO/DFS order)
     const item = queue.shift()!;
 
     // Check move number limit
     if (item.fullMoveNumber > maxMoveNumber) {
-      item.node.cappedByMoveLimit = true;
-      logError('info', `Move ${item.fullMoveNumber} exceeds max move limit (${maxMoveNumber}). Branch capped.`);
-      continue;
+      const absoluteMax = maxMoveNumber + tacticalExtension;
+
+      // Hard ceiling — always stop here regardless of position type
+      if (item.fullMoveNumber > absoluteMax) {
+        item.node.cappedByMoveLimit = true;
+        continue;
+      }
+
+      // Within the tactical extension window: only continue when the position
+      // is not quiet (captures available or side to move is in check).
+      if (!isPositionTactical(item.node.fen)) {
+        item.node.cappedByMoveLimit = true;
+        logError('info', `Move ${item.fullMoveNumber}: quiet position — branch capped at move limit (${maxMoveNumber}).`);
+        continue;
+      }
+
+      logError('info', `Move ${item.fullMoveNumber}: tactical position — extending past move limit (${maxMoveNumber}).`);
     }
 
     // Check depth limit
@@ -673,7 +710,10 @@ export async function buildTree(
       continue;
     }
 
-    // Process each candidate
+    // Process each candidate — collect resulting queue items first, then
+    // prepend them all at once (DFS: children are processed before siblings).
+    const newQueueItems: QueueItem[] = [];
+
     for (let ci = 0; ci < candidates.length; ci++) {
       if (stopRef.current) break;
       if (totalNodes >= maxNodes) break;
@@ -739,7 +779,7 @@ export async function buildTree(
         childMaxDepth = Math.max(item.depth + 2, item.effectiveMaxDepth - 4);
       }
 
-      queue.push({
+      newQueueItems.push({
         node,
         isOurTurn: !item.isOurTurn,
         depth: item.depth + 1,
@@ -749,6 +789,14 @@ export async function buildTree(
 
       // Short delay to keep UI responsive
       await delay(50);
+    }
+
+    // DFS: prepend children to the front of the queue so the first child
+    // (main line) is processed next, before any previously-queued siblings.
+    // This guarantees every started line reaches full depth before the
+    // generator moves on to an alternative branch.
+    if (newQueueItems.length > 0) {
+      queue.unshift(...newQueueItems);
     }
   }
 

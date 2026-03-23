@@ -299,6 +299,21 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                 className="w-16 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
               />
             </div>
+            <div className="flex items-center justify-between" title="When the position is tactical (captures available or in check), the line is allowed to continue this many moves past Max move number. Prevents combinations from being cut off mid-sequence.">
+              <span className="text-[11px] text-text-secondary">Tactical extension (moves)</span>
+              <input
+                type="number"
+                min={0}
+                max={8}
+                value={settings.tacticalExtension ?? 4}
+                onChange={(e) => update('tacticalExtension', parseInt(e.target.value) || 0)}
+                disabled={isGenerating}
+                className="w-16 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
+              />
+            </div>
+            <p className="text-[10px] text-text-muted leading-tight">
+              Lines in tactical positions (captures/check) extend up to {(settings.tacticalExtension ?? 4)} moves past the limit. Set to 0 to disable.
+            </p>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -377,7 +392,7 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
               Stockfish
             </label>
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between" title="Stockfish search depth applied to all analysis: move candidate selection (MultiPV), individual evals, and blunder correction. Higher = better quality, slower generation.">
                 <span className="text-[11px] text-text-secondary">Engine depth</span>
                 <select
                   value={settings.sfDepth}
@@ -385,11 +400,16 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                   disabled={isGenerating}
                   className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
                 >
-                  {[8, 12, 16, 20, 25].map((d) => (
+                  {[8, 12, 16, 18, 20, 25].map((d) => (
                     <option key={d} value={d}>{d}</option>
                   ))}
                 </select>
               </div>
+              {settings.sfDepth >= 20 && (
+                <p className="text-[10px] text-accent-amber leading-tight">
+                  Depth {settings.sfDepth} will be slow — generation may take several minutes. The 30 s per-position timeout protects against hangs.
+                </p>
+              )}
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-text-secondary">Eval threshold</span>
                 <input
