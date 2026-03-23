@@ -156,9 +156,9 @@ export async function buildTree(
   resetGenNodeIdCounter();
 
   const color = settings.color || 'white';
-  const maxDepth = settings.targetDepth || 12;
-  const maxNodes = settings.maxNodes || 300;
   const maxMoveNumber = settings.maxMoveNumber || 15;
+  const maxDepth = maxMoveNumber * 2;
+  const maxNodes = settings.maxNodes || 300;
   const analysisMode = settings.analysisMode || 'stockfish';
   const useStockfish = (
     analysisMode === 'stockfish' ||
@@ -767,7 +767,7 @@ export async function buildTree(
   //
   // Non-blundering nodes have their stored eval upgraded to the more accurate
   // single-PV result obtained here.
-  if (useStockfish && sfWorker && !stopRef.current) {
+  if (useStockfish && sfWorker && !stopRef.current && settings.blunderCorrection !== false) {
     // Relax the blunder threshold to match the maximum trickyness bonus.
     // A trickyness-selected move can be up to (trickynessWeight / 5) pawns
     // below the base threshold, so we must not flag those as blunders.

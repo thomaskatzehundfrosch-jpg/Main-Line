@@ -288,18 +288,6 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
           </label>
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-secondary">Target depth (plies)</span>
-              <input
-                type="number"
-                min={4}
-                max={50}
-                value={settings.targetDepth}
-                onChange={(e) => update('targetDepth', parseInt(e.target.value) || 12)}
-                disabled={isGenerating}
-                className="w-16 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-              />
-            </div>
-            <div className="flex items-center justify-between">
               <span className="text-[11px] text-text-secondary">Max move number</span>
               <input
                 type="number"
@@ -415,6 +403,16 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                   className="w-20 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
                 />
               </div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.blunderCorrection}
+                  onChange={(e) => update('blunderCorrection', e.target.checked)}
+                  disabled={isGenerating}
+                  className="accent-accent-teal"
+                />
+                <span className="text-[11px] text-text-secondary">Blunder correction (second pass)</span>
+              </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"

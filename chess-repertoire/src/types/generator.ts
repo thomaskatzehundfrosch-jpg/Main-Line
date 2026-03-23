@@ -9,14 +9,14 @@ export type RepertoireStyle = 'aggressive' | 'solid' | 'balanced';
 export interface GeneratorSettings {
   color: 'white' | 'black';
   analysisMode: AnalysisMode;
-  targetDepth: number;            // max tree depth in plies (4–50)
-  maxMoveNumber: number;          // stop expanding after move N (5–40)
+  maxMoveNumber: number;          // stop expanding after move N (5–40); also drives tree depth (plies = N*2)
   depthDecay: boolean;            // reduce depth for sidelines by 4 plies
   maxBranchesOur: number;         // top N of our candidate moves (1–3)
   maxOpponentResponses: number;   // top N opponent responses (1–3)
   maxNodes: number;               // total node limit (10–2000)
   sfDepth: number;                // Stockfish search depth (8–25)
   evalThreshold: number;          // min acceptable eval for our moves (pawns)
+  blunderCorrection: boolean;     // run a second-pass blunder correction after generation
   flagDangerousResponses: boolean;
   smartFiltering: boolean;         // skip weak opponent responses when eval gap is large
   /**
@@ -138,14 +138,14 @@ export interface MoveCandidate {
 export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   color: 'white',
   analysisMode: 'lichess+stockfish',
-  targetDepth: 30,
   maxMoveNumber: 15,
   depthDecay: false,
   maxBranchesOur: 1,
   maxOpponentResponses: 2,
   maxNodes: 300,
-  sfDepth: 20,
-  evalThreshold: -0.6,
+  sfDepth: 25,
+  evalThreshold: -0.3,
+  blunderCorrection: true,
   flagDangerousResponses: true,
   smartFiltering: true,
   styleValue: -1,
