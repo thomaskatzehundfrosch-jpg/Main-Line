@@ -40,6 +40,7 @@ import { GameFetcherPage } from './GameFetcher/GameFetcherPage';
 import { GeneratorPage } from './Generator/GeneratorPage';
 import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
 import { handleOAuthCallback } from '../utils/lichessAuth';
+import { useResizable } from '../hooks/useResizable';
 
 type SidebarTab = 'analysis' | 'games';
 
@@ -143,6 +144,20 @@ export const App: React.FC = () => {
   // Cleared automatically whenever currentNode changes (real navigation).
   const [exploreOverlayFen, setExploreOverlayFen] = useState<string | null>(null);
   useEffect(() => { setExploreOverlayFen(null); }, [currentNode]);
+
+  // ─── Resizable panels ────────────────────────────────────────────────
+  const [leftWidth, leftDragProps] = useResizable({
+    initial: 480,
+    min: 260,
+    max: 900,
+    storageKey: 'mainline_left_panel_width',
+  });
+  const [rightWidth, rightDragProps] = useResizable({
+    initial: 420,
+    min: 340,
+    max: 700,
+    storageKey: 'mainline_right_panel_width',
+  });
 
   /**
    * Compute all FENs for a game's moves so we can step through them.
@@ -606,9 +621,12 @@ export const App: React.FC = () => {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Left Panel: Files + Opening Tree */}
-        <div className="flex-1 min-w-[300px] border-r border-border-subtle flex flex-col">
+        <div
+          className="flex-shrink-0 border-r border-border-subtle flex flex-col"
+          style={{ width: leftWidth }}
+        >
           {/* Repertoire Files */}
           <div className="border-b border-border-subtle">
             <div
@@ -807,13 +825,23 @@ export const App: React.FC = () => {
           </div>
         </div>
 
+        {/* Drag handle: left ↔ right */}
+        <div
+          {...leftDragProps}
+          className="w-1 flex-shrink-0 bg-border-subtle hover:bg-accent-teal/50 transition-colors duration-150 cursor-col-resize"
+          title="Drag to resize"
+        />
+
         {/* Right Panel: Board + Tabbed Content */}
-        <div className="w-[420px] min-w-[380px] flex flex-col overflow-hidden">
+        <div
+          className="flex-shrink-0 flex flex-col overflow-hidden"
+          style={{ width: rightWidth }}
+        >
           {/* Chessboard */}
           <div className="flex flex-col items-center p-3 gap-1">
             {/* Game viewer banner */}
             {viewingGame && (
-              <div className="w-full max-w-[400px] flex items-center justify-between bg-accent-teal/10 border border-accent-teal/30 rounded-md px-3 py-1.5 mb-1">
+              <div className="w-full flex items-center justify-between bg-accent-teal/10 border border-accent-teal/30 rounded-md px-3 py-1.5 mb-1">
                 <div className="text-xs text-accent-teal truncate">
                   <span className="font-semibold">Viewing:</span>{' '}
                   {viewingGame.white} vs {viewingGame.black}
@@ -830,7 +858,7 @@ export const App: React.FC = () => {
                 </button>
               </div>
             )}
-            <div className="w-full max-w-[400px]">
+            <div className="w-full">
               <ChessBoard
                 fen={displayFen}
                 orientation={orientation}

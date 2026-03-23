@@ -3,6 +3,17 @@ import { Chessboard } from 'react-chessboard';
 import type { Square, Arrow, Piece } from 'react-chessboard/dist/chessboard/types';
 import { Chess } from 'chess.js';
 import EvalBar from './EvalBar';
+import { useSettings } from '../../context/SettingsContext';
+import type { BoardTheme } from '../../context/SettingsContext';
+
+// Colours for each board theme
+const THEME_COLORS: Record<BoardTheme, { light: string; dark: string }> = {
+  classic:  { light: '#e8dcc0', dark: '#4b6fa0' },
+  ocean:    { light: '#d4e8e8', dark: '#2d7d7d' },
+  forest:   { light: '#d9e8c0', dark: '#3d6b3d' },
+  midnight: { light: '#cdd5e0', dark: '#3a4466' },
+  coral:    { light: '#f0d9d0', dark: '#b05050' },
+};
 
 interface ChessBoardProps {
   fen: string;
@@ -28,12 +39,15 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
 
+  const { settings } = useSettings();
+  const themeColors = THEME_COLORS[settings.boardTheme];
+
   // Measure board container width on mount and resize
   useEffect(() => {
     const updateBoardWidth = () => {
       if (boardContainerRef.current) {
         const containerWidth = boardContainerRef.current.offsetWidth;
-        const width = Math.max(300, Math.min(600, containerWidth - 50));
+        const width = Math.max(300, Math.min(700, containerWidth - 50));
         setBoardWidth(width);
       }
     };
@@ -76,7 +90,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
         const chess = new Chess(fen);
         const piece = chess.get(square as any);
         if (!piece) return false;
-        const turn = chess.turn(); // 'w' or 'b'
+        const turn = chess.turn();
         return piece.color === turn;
       } catch {
         return false;
@@ -88,9 +102,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   // Handle square click for click-to-move
   const handleSquareClick = useCallback(
     (square: Square, _piece?: Piece) => {
-      // If we have a selected piece and clicked a legal target
       if (selectedSquare && legalMoves.includes(square)) {
-        // Try to determine the piece for promotion
         try {
           const chess = new Chess(fen);
           const piece = chess.get(selectedSquare as any);
@@ -111,28 +123,23 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
         return;
       }
 
-      // If clicking on own piece, select it (or re-select a different piece)
       if (isOwnPiece(square)) {
         if (selectedSquare === square) {
-          // Deselect
           setSelectedSquare(null);
           setLegalMoves([]);
         } else {
-          // Select new piece
           setSelectedSquare(square);
           setLegalMoves(getLegalMovesForSquare(square));
         }
         return;
       }
 
-      // Clicking on empty square or opponent piece with no selection
       setSelectedSquare(null);
       setLegalMoves([]);
     },
     [selectedSquare, legalMoves, fen, isOwnPiece, getLegalMovesForSquare, onMove]
   );
 
-  // Handle piece click (fired by react-chessboard when clicking on a piece)
   const handlePieceClick = useCallback(
     (piece: Piece, square: Square) => {
       handleSquareClick(square);
@@ -147,52 +154,52 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
         const to = move.substring(2, 4) as Square;
         const color =
           index === 0
-            ? 'rgba(59,98,160,0.7)'  // Blue for best move
-            : 'rgba(240,165,0,0.5)'; // Orange for alternatives
+            ? 'rgba(59,98,160,0.7)'
+            : 'rgba(240,165,0,0.5)';
         return [from, to, color] as Arrow;
       })
     : [];
 
-  // Style for last move highlighting + selection + legal move dots
+  // Square highlight styles
   const customSquareStyles: Record<string, React.CSSProperties> = {};
-  if (lastMove) {
+
+  if (settings.showLastMoveHighlight && lastMove) {
     customSquareStyles[lastMove.from] = {
-      backgroundColor: 'rgba(59,98,160,0.15)',
+      backgroundColor: `${themeColors.dark}30`,
     };
     customSquareStyles[lastMove.to] = {
-      backgroundColor: 'rgba(59,98,160,0.15)',
+      backgroundColor: `${themeColors.dark}30`,
     };
   }
 
-  // Highlight selected square
   if (selectedSquare) {
     customSquareStyles[selectedSquare] = {
-      backgroundColor: 'rgba(59,98,160,0.35)',
+      backgroundColor: `${themeColors.dark}55`,
     };
   }
 
-  // Show legal move indicators
-  for (const sq of legalMoves) {
-    // Check if the target square has a piece (capture)
-    let isCapture = false;
-    try {
-      const chess = new Chess(fen);
-      const targetPiece = chess.get(sq as any);
-      isCapture = !!targetPiece;
-    } catch {
-      // ignore
-    }
+  if (settings.showLegalMoveHints) {
+    for (const sq of legalMoves) {
+      let isCapture = false;
+      try {
+        const chess = new Chess(fen);
+        const targetPiece = chess.get(sq as any);
+        isCapture = !!targetPiece;
+      } catch {
+        // ignore
+      }
 
-    if (isCapture) {
-      customSquareStyles[sq] = {
-        ...customSquareStyles[sq],
-        background: 'radial-gradient(circle, transparent 55%, rgba(59,98,160,0.4) 55%)',
-      };
-    } else {
-      customSquareStyles[sq] = {
-        ...customSquareStyles[sq],
-        background: 'radial-gradient(circle, rgba(59,98,160,0.35) 25%, transparent 25%)',
-      };
+      if (isCapture) {
+        customSquareStyles[sq] = {
+          ...customSquareStyles[sq],
+          background: `radial-gradient(circle, transparent 55%, ${themeColors.dark}60 55%)`,
+        };
+      } else {
+        customSquareStyles[sq] = {
+          ...customSquareStyles[sq],
+          background: `radial-gradient(circle, ${themeColors.dark}55 25%, transparent 25%)`,
+        };
+      }
     }
   }
 
@@ -201,7 +208,6 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     targetSquare: Square,
     piece: Piece
   ): boolean => {
-    // Clear click-to-move selection on drag
     setSelectedSquare(null);
     setLegalMoves([]);
     return onMove(sourceSquare, targetSquare, piece);
@@ -210,15 +216,17 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   return (
     <div
       ref={boardContainerRef}
-      className="flex items-start gap-0 rounded-lg p-2"
+      className="flex items-start gap-0 rounded-lg p-2 w-full"
     >
       {/* Evaluation Bar */}
-      <div className="mr-1">
-        <EvalBar score={score} mate={mate} height={boardWidth} />
-      </div>
+      {settings.showEvalBar && (
+        <div className="mr-1 flex-shrink-0">
+          <EvalBar score={score} mate={mate} height={boardWidth} />
+        </div>
+      )}
 
       {/* Chessboard */}
-      <div className="flex-1">
+      <div className="flex-1 min-w-0">
         <Chessboard
           position={fen}
           onPieceDrop={handlePieceDrop}
@@ -227,14 +235,15 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
           boardWidth={boardWidth}
           boardOrientation={orientation}
           isDraggablePiece={() => true}
-          customDarkSquareStyle={{ backgroundColor: '#4b6fa0' }}
-          customLightSquareStyle={{ backgroundColor: '#e8dcc0' }}
+          customDarkSquareStyle={{ backgroundColor: themeColors.dark }}
+          customLightSquareStyle={{ backgroundColor: themeColors.light }}
           customBoardStyle={{ borderRadius: '4px' }}
           customDropSquareStyle={{
-            boxShadow: 'inset 0 0 1px 6px rgba(59,98,160,0.5)',
+            boxShadow: `inset 0 0 1px 6px ${themeColors.dark}80`,
           }}
           customSquareStyles={customSquareStyles}
-          animationDuration={200}
+          animationDuration={settings.animateMoves ? 200 : 0}
+          showBoardNotation={settings.showCoordinates}
           customArrows={customArrows.length > 0 ? customArrows : undefined}
         />
       </div>
