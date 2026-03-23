@@ -4,6 +4,7 @@
 
 import React, { useCallback, useRef, useState, useEffect } from 'react';
 import type { GeneratorSettings, AnalysisMode } from '../../types/generator';
+import { getStyleEvalThreshold } from '../../engine/analyzer';
 import { parsePGN } from '../../utils/generatorPgn';
 import { getStoredToken, getStoredUsername, clearStoredToken, startOAuthFlow } from '../../utils/lichessAuth';
 
@@ -403,6 +404,15 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                   className="w-20 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
                 />
               </div>
+              {(() => {
+                const effective = getStyleEvalThreshold(settings.evalThreshold ?? -0.3, settings.styleValue ?? 0);
+                const adjusted = Math.abs(effective - (settings.evalThreshold ?? -0.3)) > 0.001;
+                return adjusted ? (
+                  <p className="text-[10px] text-accent-amber leading-tight">
+                    Effective: <span className="font-mono">{effective.toFixed(2)}</span> (style {settings.styleValue > 0 ? '+' : ''}{settings.styleValue} adjusts by {(effective - (settings.evalThreshold ?? -0.3)).toFixed(2)})
+                  </p>
+                ) : null;
+              })()}
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
