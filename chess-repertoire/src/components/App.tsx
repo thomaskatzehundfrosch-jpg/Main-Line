@@ -40,8 +40,10 @@ import { GameFetcherPage } from './GameFetcher/GameFetcherPage';
 import { GeneratorPage } from './Generator/GeneratorPage';
 import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
 import { handleOAuthCallback } from '../utils/lichessAuth';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 type SidebarTab = 'analysis' | 'games';
+type MobileTab = 'tree' | 'analysis' | 'games';
 
 export const App: React.FC = () => {
   const {
@@ -104,6 +106,9 @@ export const App: React.FC = () => {
   const evalCancelledRef = useRef(false);
   // Tracks the cycling index per annotation tier for badge navigation
   const annotationNavIndexRef = useRef<Record<string, number>>({});
+
+  const isMobile = useIsMobile();
+  const [mobileTab, setMobileTab] = useState<MobileTab>('tree');
 
   const [filesOpen, setFilesOpen] = useState(true);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -605,7 +610,236 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Main Content */}
+      {/* Main Content — Mobile or Desktop layout */}
+      {isMobile ? (
+        /* ── Mobile layout ── */
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Board */}
+          <div className="flex flex-col items-center px-2 pt-2 pb-1 flex-shrink-0 border-b border-border-subtle">
+            {viewingGame && (
+              <div className="w-full flex items-center justify-between bg-accent-teal/10 border border-accent-teal/30 rounded-md px-3 py-1.5 mb-1">
+                <div className="text-xs text-accent-teal truncate">
+                  <span className="font-semibold">Viewing:</span>{' '}
+                  {viewingGame.white} vs {viewingGame.black}
+                  <span className="text-text-muted ml-2">
+                    Move {viewingMoveIndex}/{gamePositions.length - 1}
+                  </span>
+                </div>
+                <button
+                  onClick={handleCloseGameViewer}
+                  className="btn-icon p-0.5 text-accent-teal hover:text-accent-teal/70 flex-shrink-0"
+                  title="Close game viewer (Esc)"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            <div className="w-full">
+              <ChessBoard
+                fen={displayFen}
+                orientation={orientation}
+                onMove={viewingGame ? () => false : handleBoardMove}
+                engineBestMove={engine.enabled ? engineArrows : undefined}
+                score={engine.lines.length > 0 ? engine.lines[0].score : 0}
+                mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
+              />
+            </div>
+            {viewingGame ? (
+              <BoardControls
+                onStart={gameViewerStart}
+                onBack={gameViewerBack}
+                onForward={gameViewerForward}
+                onEnd={gameViewerEnd}
+                onFlip={flipBoard}
+                canGoBack={viewingMoveIndex > 0}
+                canGoForward={viewingMoveIndex < gamePositions.length - 1}
+              />
+            ) : (
+              <BoardControls
+                onStart={navigateToStart}
+                onBack={navigateBack}
+                onForward={navigateForward}
+                onEnd={navigateToEnd}
+                onFlip={flipBoard}
+                canGoBack={currentPath.length > 1}
+                canGoForward={currentNode.children.length > 0}
+              />
+            )}
+          </div>
+
+          {/* Mobile Tab Bar */}
+          <div className="flex border-b border-border-subtle flex-shrink-0">
+            {(['tree', 'analysis', 'games'] as MobileTab[]).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setMobileTab(tab)}
+                className={`flex-1 px-2 py-2 text-xs font-mono uppercase tracking-wider transition-colors relative ${
+                  mobileTab === tab
+                    ? 'text-accent-teal border-b-2 border-accent-teal bg-bg-surface/50'
+                    : 'text-text-muted'
+                }`}
+              >
+                {tab === 'tree' ? 'Tree' : tab === 'analysis' ? 'Analysis' : 'Games'}
+                {tab === 'games' && games.totalMistakes > 0 && (
+                  <span className="ml-1 inline-flex items-center justify-center px-1 min-w-[16px] h-4 rounded-full bg-accent-amber/20 text-accent-amber text-[9px] font-semibold">
+                    {games.totalMistakes}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Mobile Tab Content */}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            {/* Tree Tab */}
+            {mobileTab === 'tree' && (
+              <div className="h-full flex flex-col overflow-hidden">
+                <div className="border-b border-border-subtle">
+                  <div
+                    className="panel-header flex items-center justify-between cursor-pointer select-none"
+                    onClick={() => setFilesOpen((o) => !o)}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span className={`transition-transform text-[10px] ${filesOpen ? 'rotate-90' : ''}`}>▶</span>
+                      REPERTOIRE FILES
+                      {files.length > 0 && (
+                        <span className="text-[10px] text-text-muted normal-case tracking-normal font-normal">({files.length})</span>
+                      )}
+                    </span>
+                  </div>
+                  {filesOpen && (
+                    <div className="px-3 pb-2">
+                      <RepertoireFilesPanel currentTree={tree} onLoadTree={setTree} />
+                    </div>
+                  )}
+                </div>
+                <div className="panel-header">OPENING TREE</div>
+                <div className="flex-1 min-h-0">
+                  <OpeningTree
+                    tree={tree}
+                    currentNode={currentNode}
+                    currentPath={currentPath}
+                    onNodeClick={navigateToNode}
+                    onDeleteNode={deleteNode}
+                    onAddMove={addMoveToNode}
+                    onAddLine={addLineToNode}
+                    importedGames={games.importedGames}
+                    showGameOverlay={games.showGameOverlay}
+                    onExploreFen={setExploreOverlayFen}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Analysis Tab */}
+            {mobileTab === 'analysis' && (
+              <div className="h-full flex flex-col overflow-hidden">
+                <div className="flex-[3] min-h-[120px] flex flex-col overflow-auto">
+                  <EnginePanel
+                    lines={engine.lines}
+                    isThinking={engine.isThinking}
+                    enabled={engine.enabled}
+                    depth={engine.depth}
+                    multiPV={engine.multiPV}
+                    threads={engine.threads}
+                    currentFen={displayFen}
+                    onToggle={engine.toggleEngine}
+                    onDepthChange={engine.setDepth}
+                    onMultiPVChange={engine.setMultiPV}
+                    onThreadsChange={engine.setThreads}
+                  />
+                </div>
+                <div className="flex-[2] min-h-0 flex flex-col border-t border-border-subtle">
+                  <MoveList
+                    currentPath={currentPath}
+                    currentNode={currentNode}
+                    onNavigateToNode={navigateToNode}
+                    importedGames={games.importedGames}
+                    showGameOverlay={games.showGameOverlay}
+                    onAddMove={addMoveToNode}
+                  />
+                </div>
+                <div className="flex-[1] min-h-0 flex flex-col overflow-auto border-t border-border-subtle">
+                  <NotesPanel
+                    comment={currentNode.comment}
+                    nags={currentNode.nags}
+                    nodeId={currentNode.id}
+                    onCommentChange={(comment) => setComment(currentNode.id, comment)}
+                    onAddNag={(nag) => addNag(currentNode.id, nag)}
+                    onRemoveNag={(nag) => removeNag(currentNode.id, nag)}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Games Tab */}
+            {mobileTab === 'games' && (
+              <ErrorBoundary>
+                <div className="h-full overflow-auto">
+                  <div className="p-3 flex flex-col gap-4">
+                    {viewingGame && (
+                      <div className="panel flex flex-col">
+                        <div className="panel-header flex items-center justify-between">
+                          <span>GAME MOVES</span>
+                          <span className="text-[10px] text-text-muted font-normal normal-case tracking-normal">
+                            {viewingGame.white} vs {viewingGame.black}
+                            {viewingGame.result ? ` — ${viewingGame.result}` : ''}
+                          </span>
+                        </div>
+                        <div className="p-3 overflow-auto max-h-[200px]">
+                          <div className="text-sm leading-relaxed flex flex-wrap gap-y-0.5">
+                            {viewingGame.moves.map((san, idx) => {
+                              const moveNum = Math.floor(idx / 2) + 1;
+                              const isWhite = idx % 2 === 0;
+                              const moveIndex = idx + 1;
+                              const isCurrent = moveIndex === viewingMoveIndex;
+                              const figurine = toFigurine(san, isWhite);
+                              return (
+                                <React.Fragment key={idx}>
+                                  {isWhite && (
+                                    <span className="text-text-secondary mr-0.5">{moveNum}.</span>
+                                  )}
+                                  <span
+                                    onClick={() => setViewingMoveIndex(moveIndex)}
+                                    className={`cursor-pointer rounded px-1 transition-colors ${
+                                      isCurrent
+                                        ? 'bg-accent-teal/20 text-accent-teal font-semibold'
+                                        : isWhite
+                                          ? 'text-text-primary font-medium hover:bg-bg-hover'
+                                          : 'text-blue-700 hover:bg-bg-hover'
+                                    }`}
+                                  >
+                                    {figurine}
+                                  </span>
+                                  {!isWhite && <span className="mr-1.5" />}
+                                </React.Fragment>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <div className="text-xs text-text-muted uppercase tracking-wider font-mono mb-2">Import Games</div>
+                      <GameImportPanel onViewGame={handleViewGame} viewingGameId={viewingGame?.id ?? null} />
+                    </div>
+                    {games.importedGames.some((g) => g.analyzed) && (
+                      <div className="border-t border-border-subtle" />
+                    )}
+                    {games.importedGames.some((g) => g.analyzed) && (
+                      <div>
+                        <div className="text-xs text-text-muted uppercase tracking-wider font-mono mb-2">Mistake Review</div>
+                        <MistakePanel onNavigateToFen={handleNavigateToFen} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </ErrorBoundary>
+            )}
+          </div>
+        </div>
+      ) : (
+      /* ── Desktop layout ── */
       <div className="flex-1 flex min-h-0">
         {/* Left Panel: Files + Opening Tree */}
         <div className="flex-1 min-w-[300px] border-r border-border-subtle flex flex-col">
@@ -1020,6 +1254,7 @@ export const App: React.FC = () => {
           </div>
         </div>
       </div>
+      )} {/* end isMobile ternary */}
 
       {/* Status Bar */}
       <StatusBar
