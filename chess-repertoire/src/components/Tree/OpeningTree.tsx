@@ -680,7 +680,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         if (mi && d.children) {
           const remaining = mi.mistakes.filter((m: any) => {
             return !d.children.some(
-              (c: any) => c.data._isOverlay && c.data.move === m.movePlayed
+              (c: any) => c.data.move === m.movePlayed
             );
           });
           if (remaining.length === 0) {
