@@ -421,6 +421,10 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   const exploreModeRef = useRef(false);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const transformRef = useRef<d3.ZoomTransform | null>(null);
+  /** Screen-space position (px) of the current node at the last pan/zoom or click. */
+  const pinnedScreenPosRef = useRef<{ x: number; y: number } | null>(null);
+  /** D3-layout position of the current node (y=horizontal, x=vertical in D3 tree coords). */
+  const currentNodeD3PosRef = useRef<{ x: number; y: number } | null>(null);
 
   // When the current path changes (e.g. user adds a move in a different branch),
   // preserve expansion of deep nodes from the previous path so they don't collapse.
@@ -510,17 +514,18 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       .on('zoom', (event) => {
         g.attr('transform', event.transform);
         transformRef.current = event.transform;
+        // Keep pinnedScreenPosRef in sync so re-renders can put the current
+        // node back exactly where the user last saw it.
+        if (currentNodeD3PosRef.current) {
+          pinnedScreenPosRef.current = {
+            x: event.transform.applyX(currentNodeD3PosRef.current.x),
+            y: event.transform.applyY(currentNodeD3PosRef.current.y),
+          };
+        }
       });
 
     svg.call(zoom);
     zoomRef.current = zoom;
-
-    // Restore previous transform or set initial (only reset on first render)
-    if (transformRef.current) {
-      svg.call(zoom.transform, transformRef.current);
-    } else {
-      svg.call(zoom.transform, d3.zoomIdentity.translate(60, height / 2).scale(0.9));
-    }
 
     // Prepare hierarchy data — show the full "current line":
     //   • the path from root → currentNode (backward)
@@ -558,25 +563,38 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
 
     treeLayout(root);
 
-    // After layout we know where every node is. If the current node has
-    // drifted off-screen (e.g. after branch navigation or overlay nodes
-    // reshaping the layout) smoothly pan back to it without disturbing
-    // the user's zoom level.  Only fires when the node is truly off-screen;
-    // small shifts while the node is still visible are left alone.
+    // ── Viewport pinning ─────────────────────────────────────────────────
+    // After the D3 layout re-runs, put the current node back at exactly the
+    // screen position it occupied during the last user pan/zoom or click.
+    // This prevents the tree from jumping when overlay nodes are accepted
+    // (which changes the layout shape), or when branch navigation shifts
+    // the sibling rows around.
     {
       const currentD3 = root.descendants().find((d: any) => d.data.id === currentNode.id) as any;
-      if (currentD3 && transformRef.current) {
-        const t = transformRef.current;
-        // d.y = horizontal (depth) axis, d.x = vertical (sibling) axis
-        const sx = t.applyX(currentD3.y);
-        const sy = t.applyY(currentD3.x);
-        const offScreen = sx < 0 || sx > width || sy < 0 || sy > height;
-        if (offScreen) {
-          const newT = d3.zoomIdentity
-            .translate(width * 0.35 - currentD3.y * t.k, height / 2 - currentD3.x * t.k)
-            .scale(t.k);
-          svg.transition().duration(250).call(zoom.transform, newT);
-        }
+
+      // Save D3 layout coords for the zoom handler (y = horizontal, x = vertical).
+      if (currentD3) {
+        currentNodeD3PosRef.current = { x: currentD3.y, y: currentD3.x };
+      }
+
+      if (!transformRef.current) {
+        // First render — apply the default initial transform.
+        svg.call(zoom.transform, d3.zoomIdentity.translate(60, height / 2).scale(0.9));
+      } else if (currentD3 && pinnedScreenPosRef.current) {
+        // Compute a new transform that places currentNode at the pinned
+        // screen position, preserving the user's current zoom level.
+        const { k } = transformRef.current;
+        const newT = d3.zoomIdentity
+          .translate(
+            pinnedScreenPosRef.current.x - k * currentD3.y,
+            pinnedScreenPosRef.current.y - k * currentD3.x
+          )
+          .scale(k);
+        svg.call(zoom.transform, newT);
+      } else {
+        // No pinned position yet (e.g. first external navigation) — restore
+        // the saved transform as-is.
+        svg.call(zoom.transform, transformRef.current);
       }
     }
 
@@ -611,6 +629,15 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       .attr('transform', (d: any) => `translate(${d.y},${d.x})`)
       .style('cursor', 'pointer')
       .on('click', (_event: any, d: any) => {
+        // Pin the clicked node's screen position so the viewport stays stable
+        // after the tree re-renders (new layout would otherwise jump).
+        if (transformRef.current) {
+          pinnedScreenPosRef.current = {
+            x: transformRef.current.applyX(d.y),
+            y: transformRef.current.applyY(d.x),
+          };
+        }
+
         if (d.data._isOverlay) {
           if (exploreModeRef.current) {
             // Explore mode: show this position on the board without touching the tree
