@@ -192,6 +192,10 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
       const lastNode = addLineToTree(state.tree, action.parentId, action.moves);
       if (lastNode) {
         const updatedTree = { ...state.tree };
+        if (action.noNavigate) {
+          // Structural change only — keep the current position in the tree.
+          return { ...state, tree: updatedTree };
+        }
         const path = getPathToNode(updatedTree, lastNode.id);
         return {
           ...state,

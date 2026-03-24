@@ -17,6 +17,8 @@ interface OpeningTreeProps {
   onAddMove?: (parentId: string, move: string, fen: string) => void;
   /** Callback to add a line of moves to the repertoire tree */
   onAddLine?: (parentId: string, moves: { move: string; fen: string }[]) => void;
+  /** Like onAddLine but does not navigate to the added node (used for overlay additions) */
+  onAddOverlayLine?: (parentId: string, moves: { move: string; fen: string }[]) => void;
   /** Imported games for overlay */
   importedGames?: ImportedGame[];
   /** Whether to show the game overlay */
@@ -393,6 +395,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   onDeleteNode,
   onAddMove,
   onAddLine,
+  onAddOverlayLine,
   importedGames = [],
   showGameOverlay = false,
   onExploreFen,
@@ -594,10 +597,12 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
             // Explore mode: show this position on the board without touching the tree
             onExploreFen?.(d.data.fen);
           } else {
-            // Normal mode: clicking an overlay node adds the entire chain to the repertoire
+            // Normal mode: clicking an overlay node adds the entire chain to the
+            // repertoire WITHOUT navigating away from the current position.
             const chain = collectOverlayChain(d);
-            if (chain && onAddLine) {
-              onAddLine(chain.repertoireParentId, chain.moves);
+            const addLineFn = onAddOverlayLine ?? onAddLine;
+            if (chain && addLineFn) {
+              addLineFn(chain.repertoireParentId, chain.moves);
             } else if (chain && chain.moves.length === 1 && onAddMove) {
               onAddMove(chain.repertoireParentId, chain.moves[0].move, chain.moves[0].fen);
             }
@@ -936,7 +941,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   // to avoid full D3 re-render on every game import / review toggle.
   // The separate useMemo above ensures mistakeMap is current on each render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tree, currentNode, currentPath, expandedNodes, getMaxGameCount, onNodeClick, onAddMove, onAddLine, toggleExpand, showGameOverlay,
+  }, [tree, currentNode, currentPath, expandedNodes, getMaxGameCount, onNodeClick, onAddMove, onAddLine, onAddOverlayLine, toggleExpand, showGameOverlay,
       importedGames.length, importedGames.filter(g => g.analyzed).length,
       importedGames.reduce((s, g) => s + g.mistakes.filter(m => m.reviewed).length, 0),
       dismissedOverlayFens,

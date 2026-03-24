@@ -55,7 +55,7 @@ export type RepertoireAction =
   | { type: 'ADD_NAG'; nodeId: string; nag: number }
   | { type: 'REMOVE_NAG'; nodeId: string; nag: number }
   | { type: 'ADD_MOVE'; parentId: string; move: string; fen: string }
-  | { type: 'ADD_MOVE_LINE'; parentId: string; moves: { move: string; fen: string }[] }
+  | { type: 'ADD_MOVE_LINE'; parentId: string; moves: { move: string; fen: string }[]; noNavigate?: boolean }
   | { type: 'SET_SELECTED_COLOR'; color: 'white' | 'black' | 'both' }
   | { type: 'DELETE_NODE'; nodeId: string };
 

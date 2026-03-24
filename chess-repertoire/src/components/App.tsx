@@ -67,6 +67,7 @@ export const App: React.FC = () => {
     addMove,
     addMoveToNode,
     addLineToNode,
+    addLineToNodeNoNavigate,
     deleteNode,
   } = useRepertoireTree();
 
@@ -723,6 +724,7 @@ export const App: React.FC = () => {
                     onDeleteNode={deleteNode}
                     onAddMove={addMoveToNode}
                     onAddLine={addLineToNode}
+                    onAddOverlayLine={addLineToNodeNoNavigate}
                     importedGames={games.importedGames}
                     showGameOverlay={games.showGameOverlay}
                     onExploreFen={setExploreOverlayFen}
@@ -1034,6 +1036,7 @@ export const App: React.FC = () => {
               onDeleteNode={deleteNode}
               onAddMove={addMoveToNode}
               onAddLine={addLineToNode}
+              onAddOverlayLine={addLineToNodeNoNavigate}
               importedGames={games.importedGames}
               showGameOverlay={games.showGameOverlay}
               onExploreFen={setExploreOverlayFen}
