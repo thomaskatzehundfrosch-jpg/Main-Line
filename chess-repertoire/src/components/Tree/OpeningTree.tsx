@@ -17,8 +17,6 @@ interface OpeningTreeProps {
   onAddMove?: (parentId: string, move: string, fen: string) => void;
   /** Callback to add a line of moves to the repertoire tree */
   onAddLine?: (parentId: string, moves: { move: string; fen: string }[]) => void;
-  /** Like onAddLine but does not navigate to the added node (used for overlay additions) */
-  onAddOverlayLine?: (parentId: string, moves: { move: string; fen: string }[]) => void;
   /** Imported games for overlay */
   importedGames?: ImportedGame[];
   /** Whether to show the game overlay */
@@ -395,7 +393,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   onDeleteNode,
   onAddMove,
   onAddLine,
-  onAddOverlayLine,
   importedGames = [],
   showGameOverlay = false,
   onExploreFen,
@@ -424,9 +421,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   const exploreModeRef = useRef(false);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const transformRef = useRef<d3.ZoomTransform | null>(null);
-  // Tracks the SVG position of the last-rendered currentNode so we can keep
-  // it anchored on screen when the tree layout restructures (e.g. on navigation).
-  const prevCurrentNodePosRef = useRef<{ id: string; svgX: number; svgY: number } | null>(null);
 
   // When the current path changes (e.g. user adds a move in a different branch),
   // preserve expansion of deep nodes from the previous path so they don't collapse.
@@ -521,6 +515,13 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
     svg.call(zoom);
     zoomRef.current = zoom;
 
+    // Restore previous transform or set initial (only reset on first render)
+    if (transformRef.current) {
+      svg.call(zoom.transform, transformRef.current);
+    } else {
+      svg.call(zoom.transform, d3.zoomIdentity.translate(60, height / 2).scale(0.9));
+    }
+
     // Prepare hierarchy data — show the full "current line":
     //   • the path from root → currentNode (backward)
     //   • the continuation from currentNode → end of its variation, following
@@ -557,40 +558,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
 
     treeLayout(root);
 
-    // Restore previous transform, anchored so the current node stays at the
-    // same screen position even when the layout restructures (e.g. on navigation).
-    // Uses prevCurrentNodePosRef to detect layout shifts and compensate.
-    const currentD3Node = root.descendants().find((d: any) => d.data.id === currentNode.id);
-    if (transformRef.current) {
-      const prev = prevCurrentNodePosRef.current;
-      if (prev && prev.id === currentNode.id && currentD3Node) {
-        // The current node's SVG position may have changed due to layout restructuring.
-        // Shift the transform so it stays at the same screen position.
-        const dx = (prev.svgX - currentD3Node.y) * transformRef.current.k;
-        const dy = (prev.svgY - currentD3Node.x) * transformRef.current.k;
-        if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-          const anchored = d3.zoomIdentity
-            .translate(transformRef.current.x + dx, transformRef.current.y + dy)
-            .scale(transformRef.current.k);
-          svg.call(zoom.transform, anchored);
-        } else {
-          svg.call(zoom.transform, transformRef.current);
-        }
-      } else {
-        svg.call(zoom.transform, transformRef.current);
-      }
-    } else {
-      svg.call(zoom.transform, d3.zoomIdentity.translate(60, height / 2).scale(0.9));
-    }
-    // Save the current node's SVG position for the next render.
-    if (currentD3Node) {
-      prevCurrentNodePosRef.current = {
-        id: currentNode.id,
-        svgX: currentD3Node.y, // D3 horizontal tree swaps x/y axes
-        svgY: currentD3Node.x,
-      };
-    }
-
     // ─── Links (repertoire + overlay) ─────────────────────────────────
     g.selectAll('.link')
       .data(root.links())
@@ -621,21 +588,16 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       .attr('class', 'node')
       .attr('transform', (d: any) => `translate(${d.y},${d.x})`)
       .style('cursor', 'pointer')
-      // Prevent mousedown from bubbling to the SVG zoom handler so that
-      // clicking on or near a node never accidentally starts a pan gesture.
-      .on('mousedown.stop', (event: MouseEvent) => event.stopPropagation())
       .on('click', (_event: any, d: any) => {
         if (d.data._isOverlay) {
           if (exploreModeRef.current) {
             // Explore mode: show this position on the board without touching the tree
             onExploreFen?.(d.data.fen);
           } else {
-            // Normal mode: clicking an overlay node adds the entire chain to the
-            // repertoire WITHOUT navigating away from the current position.
+            // Normal mode: clicking an overlay node adds the entire chain to the repertoire
             const chain = collectOverlayChain(d);
-            const addLineFn = onAddOverlayLine ?? onAddLine;
-            if (chain && addLineFn) {
-              addLineFn(chain.repertoireParentId, chain.moves);
+            if (chain && onAddLine) {
+              onAddLine(chain.repertoireParentId, chain.moves);
             } else if (chain && chain.moves.length === 1 && onAddMove) {
               onAddMove(chain.repertoireParentId, chain.moves[0].move, chain.moves[0].fen);
             }
@@ -718,7 +680,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         if (mi && d.children) {
           const remaining = mi.mistakes.filter((m: any) => {
             return !d.children.some(
-              (c: any) => c.data.move === m.movePlayed
+              (c: any) => c.data._isOverlay && c.data.move === m.movePlayed
             );
           });
           if (remaining.length === 0) {
@@ -737,10 +699,10 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
           }
         }
 
-        // For any child node (overlay or real), check if THIS node IS the mistake move:
+        // For overlay nodes, check if THIS node IS the mistake move:
         // look up the parent's FEN in the mistake map and match movePlayed
         // to this node's move, so the ring highlights the actual bad move.
-        if (!mi && d.parent?.data) {
+        if (!mi && d.data._isOverlay && d.parent?.data) {
           const parentMi = mistakeMapRef.current.get(d.parent.data.fen);
           if (parentMi) {
             const relevant = parentMi.mistakes.filter(
@@ -974,7 +936,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   // to avoid full D3 re-render on every game import / review toggle.
   // The separate useMemo above ensures mistakeMap is current on each render.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tree, currentNode, currentPath, expandedNodes, getMaxGameCount, onNodeClick, onAddMove, onAddLine, onAddOverlayLine, toggleExpand, showGameOverlay,
+  }, [tree, currentNode, currentPath, expandedNodes, getMaxGameCount, onNodeClick, onAddMove, onAddLine, toggleExpand, showGameOverlay,
       importedGames.length, importedGames.filter(g => g.analyzed).length,
       importedGames.reduce((s, g) => s + g.mistakes.filter(m => m.reviewed).length, 0),
       dismissedOverlayFens,

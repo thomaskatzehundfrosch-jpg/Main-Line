@@ -92,14 +92,11 @@ export function useRepertoireTree() {
 
   const addLineToNode = useCallback(
     (parentId: string, moves: { move: string; fen: string }[]) => {
-      dispatch({ type: 'ADD_MOVE_LINE', parentId, moves });
-    },
-    [dispatch]
-  );
-
-  const addLineToNodeNoNavigate = useCallback(
-    (parentId: string, moves: { move: string; fen: string }[]) => {
-      dispatch({ type: 'ADD_MOVE_LINE', parentId, moves, noNavigate: true });
+      dispatch({
+        type: 'ADD_MOVE_LINE',
+        parentId,
+        moves,
+      });
     },
     [dispatch]
   );
@@ -168,7 +165,6 @@ export function useRepertoireTree() {
     addMove,
     addMoveToNode,
     addLineToNode,
-    addLineToNodeNoNavigate,
     deleteNode,
     setSelectedColor,
     getNodeStats,
