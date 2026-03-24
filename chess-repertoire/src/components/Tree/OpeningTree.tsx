@@ -558,6 +558,28 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
 
     treeLayout(root);
 
+    // After layout we know where every node is. If the current node has
+    // drifted off-screen (e.g. after branch navigation or overlay nodes
+    // reshaping the layout) smoothly pan back to it without disturbing
+    // the user's zoom level.  Only fires when the node is truly off-screen;
+    // small shifts while the node is still visible are left alone.
+    {
+      const currentD3 = root.descendants().find((d: any) => d.data.id === currentNode.id) as any;
+      if (currentD3 && transformRef.current) {
+        const t = transformRef.current;
+        // d.y = horizontal (depth) axis, d.x = vertical (sibling) axis
+        const sx = t.applyX(currentD3.y);
+        const sy = t.applyY(currentD3.x);
+        const offScreen = sx < 0 || sx > width || sy < 0 || sy > height;
+        if (offScreen) {
+          const newT = d3.zoomIdentity
+            .translate(width * 0.35 - currentD3.y * t.k, height / 2 - currentD3.x * t.k)
+            .scale(t.k);
+          svg.transition().duration(250).call(zoom.transform, newT);
+        }
+      }
+    }
+
     // ─── Links (repertoire + overlay) ─────────────────────────────────
     g.selectAll('.link')
       .data(root.links())
@@ -679,9 +701,10 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         // here so it appears on the overlay move node instead.
         if (mi && d.children) {
           const remaining = mi.mistakes.filter((m: any) => {
-            return !d.children.some(
-              (c: any) => c.data._isOverlay && c.data.move === m.movePlayed
-            );
+            // Suppress ring on parent when the bad move is already shown on
+            // a child node — whether that child is an overlay square or a
+            // real repertoire node added from an imported game.
+            return !d.children.some((c: any) => c.data.move === m.movePlayed);
           });
           if (remaining.length === 0) {
             mi = undefined;
@@ -703,6 +726,29 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         // look up the parent's FEN in the mistake map and match movePlayed
         // to this node's move, so the ring highlights the actual bad move.
         if (!mi && d.data._isOverlay && d.parent?.data) {
+          const parentMi = mistakeMapRef.current.get(d.parent.data.fen);
+          if (parentMi) {
+            const relevant = parentMi.mistakes.filter(
+              (m: any) => m.movePlayed === d.data.move
+            );
+            if (relevant.length > 0) {
+              const sev: Record<string, number> = { inaccuracy: 0, mistake: 1, blunder: 2 };
+              mi = {
+                tier: relevant.reduce(
+                  (w: MistakeTier, m: any) => (sev[m.tier] > sev[w] ? m.tier : w),
+                  relevant[0].tier as MistakeTier
+                ),
+                count: relevant.length,
+                side: parentMi.side,
+                mistakes: relevant,
+              };
+            }
+          }
+        }
+
+        // Same check for real repertoire nodes: once an overlay move is
+        // accepted into the repertoire it loses _isOverlay, so handle it here.
+        if (!mi && !d.data._isOverlay && d.parent?.data) {
           const parentMi = mistakeMapRef.current.get(d.parent.data.fen);
           if (parentMi) {
             const relevant = parentMi.mistakes.filter(
