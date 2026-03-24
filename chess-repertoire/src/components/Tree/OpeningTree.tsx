@@ -449,6 +449,10 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   const mistakeMapRef = useRef(mistakeMap);
   mistakeMapRef.current = mistakeMap;
 
+  // Track FENs that were promoted from overlay → real so the parent ring
+  // stays suppressed even after the node is no longer an overlay.
+  const promotedOverlayFensRef = useRef<Set<string>>(new Set());
+
   // Repertoire eval-drop annotations (inaccuracy / mistake / blunder rings)
   const { nodeAnnotations } = useRepertoireEval();
   const nodeAnnotationsRef = useRef(nodeAnnotations);
@@ -597,8 +601,12 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
             // Normal mode: clicking an overlay node adds the entire chain to the repertoire
             const chain = collectOverlayChain(d);
             if (chain && onAddLine) {
+              for (const m of chain.moves) {
+                promotedOverlayFensRef.current = new Set([...promotedOverlayFensRef.current, m.fen]);
+              }
               onAddLine(chain.repertoireParentId, chain.moves);
             } else if (chain && chain.moves.length === 1 && onAddMove) {
+              promotedOverlayFensRef.current = new Set([...promotedOverlayFensRef.current, chain.moves[0].fen]);
               onAddMove(chain.repertoireParentId, chain.moves[0].move, chain.moves[0].fen);
             }
           }
@@ -680,7 +688,8 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         if (mi && d.children) {
           const remaining = mi.mistakes.filter((m: any) => {
             return !d.children.some(
-              (c: any) => c.data.move === m.movePlayed
+              (c: any) => (c.data._isOverlay || promotedOverlayFensRef.current.has(c.data.fen))
+                && c.data.move === m.movePlayed
             );
           });
           if (remaining.length === 0) {
