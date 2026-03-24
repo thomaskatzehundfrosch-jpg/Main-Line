@@ -695,14 +695,33 @@ export async function buildTree(
     });
   }
 
-  // ── DFS expansion ────────────────────────────────────────────────────────
-  // Items are prepended (unshift) so each line goes to full depth before
-  // siblings are explored. BFS would spread the node budget thin and
-  // typically ran out around move 9; DFS reaches maxMoveNumber on every line.
+  // ── DFS expansion with deferred branch queue ─────────────────────────────
+  // Main line (ci=0) is always prepended (DFS) so it goes to full depth first.
+  // Branch alternatives (ci>0) are placed in deferredBranches, sorted by depth
+  // ascending. When the DFS stack drains, the shallowest deferred branch is
+  // promoted — guaranteeing early branching is always covered before deep sidelines.
   const sfAnalysisDepth = settings.sfDepth || 12;
   const tacticalExtension = settings.tacticalExtension ?? 4;
 
-  while (queue.length > 0 && totalNodes < maxNodes && !stopRef.current) {
+  // Deferred branch items, kept sorted by depth ascending (shallowest first).
+  const deferredBranches: QueueItem[] = [];
+
+  function insertDeferred(newItem: QueueItem): void {
+    // Binary-search insertion to keep array sorted by depth ascending.
+    let lo = 0, hi = deferredBranches.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (deferredBranches[mid].depth <= newItem.depth) lo = mid + 1;
+      else hi = mid;
+    }
+    deferredBranches.splice(lo, 0, newItem);
+  }
+
+  while ((queue.length > 0 || deferredBranches.length > 0) && totalNodes < maxNodes && !stopRef.current) {
+    // If the DFS stack is empty, promote the shallowest deferred branch.
+    if (queue.length === 0 && deferredBranches.length > 0) {
+      queue.unshift(deferredBranches.shift()!);
+    }
     // Stack: shift from front — items were prepended (DFS order)
     const item = queue.shift()!;
 
@@ -826,20 +845,29 @@ export async function buildTree(
         logError('info', `Sacrifice detected: ${candidate.san} at move ${item.fullMoveNumber} — line extended by ${sacMoves} moves.`);
       }
 
-      newQueueItems.push({
+      const newItem: QueueItem = {
         node,
         isOurTurn: !item.isOurTurn,
         depth: item.depth + 1,
         effectiveMaxDepth: childMaxDepth,
         fullMoveNumber: nextFullMove,
         sacrificeMovesLeft: childSacrificeMovesLeft,
-      });
+      };
+
+      if (ci === 0) {
+        // Main line: keep on DFS stack for immediate deep exploration.
+        newQueueItems.push(newItem);
+      } else {
+        // Branch alternative: defer until the current DFS line completes,
+        // then process shallowest-first so early branches are never skipped.
+        insertDeferred(newItem);
+      }
 
       // Short delay to keep UI responsive
       await delay(50);
     }
 
-    // DFS: prepend children so the main line is processed before siblings.
+    // DFS: prepend main-line item so it is processed before any deferred branches.
     if (newQueueItems.length > 0) {
       queue.unshift(...newQueueItems);
     }
