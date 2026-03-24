@@ -327,7 +327,6 @@ function addOverlayNodes(treeData: any, games: ImportedGame[], dismissedFens?: S
  */
 function collectOverlayChain(d3Node: any): {
   repertoireParentId: string;
-  repertoireParentFen: string;
   moves: { move: string; fen: string }[];
 } | null {
   const chain: { move: string; fen: string }[] = [];
@@ -337,7 +336,7 @@ function collectOverlayChain(d3Node: any): {
     node = node.parent;
   }
   if (!node) return null;
-  return { repertoireParentId: node.data.id, repertoireParentFen: node.data.fen, moves: chain };
+  return { repertoireParentId: node.data.id, moves: chain };
 }
 
 function buildMistakeMap(games: ImportedGame[]): Map<string, FenMistakeInfo> {
@@ -449,10 +448,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   );
   const mistakeMapRef = useRef(mistakeMap);
   mistakeMapRef.current = mistakeMap;
-
-  // Track FENs that were promoted from overlay → real so the parent ring
-  // stays suppressed even after the node is no longer an overlay.
-  const promotedOverlayFensRef = useRef<Set<string>>(new Set());
 
   // Repertoire eval-drop annotations (inaccuracy / mistake / blunder rings)
   const { nodeAnnotations } = useRepertoireEval();
@@ -601,15 +596,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
           } else {
             // Normal mode: clicking an overlay node adds the entire chain to the repertoire
             const chain = collectOverlayChain(d);
-            if (chain) {
-              // Record each promoted edge as "parentFen:moveSAN" so the
-              // parent ring stays suppressed even after overlays become real nodes.
-              const newKeys = chain.moves.map((m, i) => {
-                const parentFen = i === 0 ? chain.repertoireParentFen : chain.moves[i - 1].fen;
-                return `${parentFen}:${m.move}`;
-              });
-              promotedOverlayFensRef.current = new Set([...promotedOverlayFensRef.current, ...newKeys]);
-            }
             if (chain && onAddLine) {
               onAddLine(chain.repertoireParentId, chain.moves);
             } else if (chain && chain.moves.length === 1 && onAddMove) {
@@ -694,8 +680,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         if (mi && d.children) {
           const remaining = mi.mistakes.filter((m: any) => {
             return !d.children.some(
-              (c: any) => (c.data._isOverlay || promotedOverlayFensRef.current.has(`${d.data.fen}:${c.data.move}`))
-                && c.data.move === m.movePlayed
+              (c: any) => c.data.move === m.movePlayed
             );
           });
           if (remaining.length === 0) {
@@ -714,10 +699,10 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
           }
         }
 
-        // For overlay nodes, check if THIS node IS the mistake move:
+        // For any child node (overlay or real), check if THIS node IS the mistake move:
         // look up the parent's FEN in the mistake map and match movePlayed
         // to this node's move, so the ring highlights the actual bad move.
-        if (!mi && d.data._isOverlay && d.parent?.data) {
+        if (!mi && d.parent?.data) {
           const parentMi = mistakeMapRef.current.get(d.parent.data.fen);
           if (parentMi) {
             const relevant = parentMi.mistakes.filter(
