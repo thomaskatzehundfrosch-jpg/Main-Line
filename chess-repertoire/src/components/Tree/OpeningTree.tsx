@@ -515,7 +515,12 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
     svg.call(zoom);
     zoomRef.current = zoom;
 
-    // (zoom transform is applied below, after layout, so we know node positions)
+    // Restore previous transform or set initial (only reset on first render)
+    if (transformRef.current) {
+      svg.call(zoom.transform, transformRef.current);
+    } else {
+      svg.call(zoom.transform, d3.zoomIdentity.translate(60, height / 2).scale(0.9));
+    }
 
     // Prepare hierarchy data — show the full "current line":
     //   • the path from root → currentNode (backward)
@@ -552,37 +557,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       });
 
     treeLayout(root);
-
-    // ─── Apply zoom transform ──────────────────────────────────────────
-    // Preserve the user's pan/zoom, but if the current node has moved
-    // off-screen (e.g. after switching to a different branch) quietly
-    // re-centre the viewport on it so the tree never appears blank.
-    {
-      const currentD3 = root.descendants().find((d: any) => d.data.id === currentNode.id) as any;
-      let chosenTransform: d3.ZoomTransform;
-
-      if (transformRef.current && currentD3) {
-        const t = transformRef.current;
-        // D3 tree: d.y = horizontal axis (depth), d.x = vertical axis (siblings)
-        const svgX = t.applyX(currentD3.y);
-        const svgY = t.applyY(currentD3.x);
-        const margin = 80;
-        const inView =
-          svgX > margin && svgX < width - margin &&
-          svgY > margin && svgY < height - margin;
-        chosenTransform = inView
-          ? transformRef.current
-          : d3.zoomIdentity
-              .translate(width / 2 - currentD3.y * t.k, height / 2 - currentD3.x * t.k)
-              .scale(t.k);
-      } else {
-        chosenTransform =
-          transformRef.current ??
-          d3.zoomIdentity.translate(60, height / 2).scale(0.9);
-      }
-
-      svg.call(zoom.transform, chosenTransform);
-    }
 
     // ─── Links (repertoire + overlay) ─────────────────────────────────
     g.selectAll('.link')
@@ -705,10 +679,8 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         // here so it appears on the overlay move node instead.
         if (mi && d.children) {
           const remaining = mi.mistakes.filter((m: any) => {
-            // Suppress the ring on the parent when ANY child (overlay or real
-            // repertoire node added from a game) represents the bad move.
             return !d.children.some(
-              (c: any) => c.data.move === m.movePlayed
+              (c: any) => c.data._isOverlay && c.data.move === m.movePlayed
             );
           });
           if (remaining.length === 0) {
@@ -731,30 +703,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         // look up the parent's FEN in the mistake map and match movePlayed
         // to this node's move, so the ring highlights the actual bad move.
         if (!mi && d.data._isOverlay && d.parent?.data) {
-          const parentMi = mistakeMapRef.current.get(d.parent.data.fen);
-          if (parentMi) {
-            const relevant = parentMi.mistakes.filter(
-              (m: any) => m.movePlayed === d.data.move
-            );
-            if (relevant.length > 0) {
-              const sev: Record<string, number> = { inaccuracy: 0, mistake: 1, blunder: 2 };
-              mi = {
-                tier: relevant.reduce(
-                  (w: MistakeTier, m: any) => (sev[m.tier] > sev[w] ? m.tier : w),
-                  relevant[0].tier as MistakeTier
-                ),
-                count: relevant.length,
-                side: parentMi.side,
-                mistakes: relevant,
-              };
-            }
-          }
-        }
-
-        // Same check for real repertoire nodes that were added from a game
-        // (overlay→repertoire). Once a move is in the repertoire it loses
-        // _isOverlay, so the block above no longer fires — handle it here.
-        if (!mi && !d.data._isOverlay && d.parent?.data) {
           const parentMi = mistakeMapRef.current.get(d.parent.data.fen);
           if (parentMi) {
             const relevant = parentMi.mistakes.filter(
