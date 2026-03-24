@@ -327,6 +327,7 @@ function addOverlayNodes(treeData: any, games: ImportedGame[], dismissedFens?: S
  */
 function collectOverlayChain(d3Node: any): {
   repertoireParentId: string;
+  repertoireParentFen: string;
   moves: { move: string; fen: string }[];
 } | null {
   const chain: { move: string; fen: string }[] = [];
@@ -336,7 +337,7 @@ function collectOverlayChain(d3Node: any): {
     node = node.parent;
   }
   if (!node) return null;
-  return { repertoireParentId: node.data.id, moves: chain };
+  return { repertoireParentId: node.data.id, repertoireParentFen: node.data.fen, moves: chain };
 }
 
 function buildMistakeMap(games: ImportedGame[]): Map<string, FenMistakeInfo> {
@@ -600,13 +601,18 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
           } else {
             // Normal mode: clicking an overlay node adds the entire chain to the repertoire
             const chain = collectOverlayChain(d);
+            if (chain) {
+              // Record each promoted edge as "parentFen:moveSAN" so the
+              // parent ring stays suppressed even after overlays become real nodes.
+              const newKeys = chain.moves.map((m, i) => {
+                const parentFen = i === 0 ? chain.repertoireParentFen : chain.moves[i - 1].fen;
+                return `${parentFen}:${m.move}`;
+              });
+              promotedOverlayFensRef.current = new Set([...promotedOverlayFensRef.current, ...newKeys]);
+            }
             if (chain && onAddLine) {
-              for (const m of chain.moves) {
-                promotedOverlayFensRef.current = new Set([...promotedOverlayFensRef.current, m.fen]);
-              }
               onAddLine(chain.repertoireParentId, chain.moves);
             } else if (chain && chain.moves.length === 1 && onAddMove) {
-              promotedOverlayFensRef.current = new Set([...promotedOverlayFensRef.current, chain.moves[0].fen]);
               onAddMove(chain.repertoireParentId, chain.moves[0].move, chain.moves[0].fen);
             }
           }
@@ -688,7 +694,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         if (mi && d.children) {
           const remaining = mi.mistakes.filter((m: any) => {
             return !d.children.some(
-              (c: any) => (c.data._isOverlay || promotedOverlayFensRef.current.has(c.data.fen))
+              (c: any) => (c.data._isOverlay || promotedOverlayFensRef.current.has(`${d.data.fen}:${c.data.move}`))
                 && c.data.move === m.movePlayed
             );
           });
