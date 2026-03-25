@@ -192,7 +192,8 @@ export async function analyzeGame(
   depth: number = 18,
   onProgress?: AnalysisProgressCallback,
   isCancelled?: CancellationCheck,
-  customThresholds?: CustomThresholds
+  customThresholds?: CustomThresholds,
+  maxMoves?: number
 ): Promise<MistakeRecord[]> {
   const mistakes: MistakeRecord[] = [];
   const chess = new Chess();
@@ -204,9 +205,10 @@ export async function analyzeGame(
   // Step 1: Evaluate the starting position
   const positions: { fen: string; moveSan: string; moveIndex: number }[] = [];
 
-  // Collect all FENs
+  // Collect all FENs, capped at maxMoves if provided
+  const moveLimit = maxMoves && maxMoves > 0 ? Math.min(totalMoves, maxMoves) : totalMoves;
   const fens: string[] = [chess.fen()]; // starting position
-  for (let i = 0; i < totalMoves; i++) {
+  for (let i = 0; i < moveLimit; i++) {
     try {
       chess.move(game.moves[i]);
       fens.push(chess.fen());

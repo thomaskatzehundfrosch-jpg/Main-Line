@@ -12,6 +12,8 @@ interface AnalysisSettings {
   inaccuracyThreshold: number;
   mistakeThreshold: number;
   blunderThreshold: number;
+  /** Max half-moves (plies) to analyse per game. 0 = no limit. */
+  maxMoves: number;
 }
 
 const DEFAULT_SETTINGS: AnalysisSettings = {
@@ -19,6 +21,7 @@ const DEFAULT_SETTINGS: AnalysisSettings = {
   inaccuracyThreshold: 0.5,
   mistakeThreshold: 1.0,
   blunderThreshold: 2.0,
+  maxMoves: 40,
 };
 
 interface GameImportPanelProps {
@@ -173,7 +176,8 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
             inaccuracy: settings.inaccuracyThreshold,
             mistake: settings.mistakeThreshold,
             blunder: settings.blunderThreshold,
-          }
+          },
+          settings.maxMoves > 0 ? settings.maxMoves : undefined
         );
 
         setGameAnalyzed(game.id, mistakes);
@@ -310,6 +314,37 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
               <button
                 onClick={() =>
                   setSettings((s) => ({ ...s, depth: Math.min(30, s.depth + 2) }))
+                }
+                className="w-5 h-5 flex items-center justify-center rounded bg-bg-hover hover:bg-border-subtle text-text-secondary transition-colors text-[11px]"
+              >
+                +
+              </button>
+            </div>
+          </div>
+
+          {/* Max Moves */}
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-xs text-text-secondary">Max Moves</span>
+              <div className="text-[10px] text-text-muted">
+                {settings.maxMoves === 0 ? 'Analyse full game' : `Stop after move ${settings.maxMoves}`}
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() =>
+                  setSettings((s) => ({ ...s, maxMoves: Math.max(0, s.maxMoves - 10) }))
+                }
+                className="w-5 h-5 flex items-center justify-center rounded bg-bg-hover hover:bg-border-subtle text-text-secondary transition-colors text-[11px]"
+              >
+                −
+              </button>
+              <span className="text-xs text-text-primary font-semibold w-8 text-center">
+                {settings.maxMoves === 0 ? '∞' : settings.maxMoves}
+              </span>
+              <button
+                onClick={() =>
+                  setSettings((s) => ({ ...s, maxMoves: s.maxMoves === 0 ? 10 : s.maxMoves + 10 }))
                 }
                 className="w-5 h-5 flex items-center justify-center rounded bg-bg-hover hover:bg-border-subtle text-text-secondary transition-colors text-[11px]"
               >
