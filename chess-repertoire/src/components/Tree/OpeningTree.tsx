@@ -629,15 +629,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       .attr('transform', (d: any) => `translate(${d.y},${d.x})`)
       .style('cursor', 'pointer')
       .on('click', (_event: any, d: any) => {
-        // Pin the clicked node's screen position so the viewport stays stable
-        // after the tree re-renders (new layout would otherwise jump).
-        if (transformRef.current) {
-          pinnedScreenPosRef.current = {
-            x: transformRef.current.applyX(d.y),
-            y: transformRef.current.applyY(d.x),
-          };
-        }
-
         if (d.data._isOverlay) {
           if (exploreModeRef.current) {
             // Explore mode: show this position on the board without touching the tree
@@ -652,6 +643,16 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
             }
           }
           return;
+        }
+        // Pin the clicked node's screen position so the viewport stays stable
+        // after the tree re-renders. Only for repertoire nodes — overlay clicks
+        // don't change currentNode, so we must NOT overwrite the pin with the
+        // overlay node's position (that causes the jump bug).
+        if (transformRef.current) {
+          pinnedScreenPosRef.current = {
+            x: transformRef.current.applyX(d.y),
+            y: transformRef.current.applyY(d.x),
+          };
         }
         onNodeClick(d.data);
       })
