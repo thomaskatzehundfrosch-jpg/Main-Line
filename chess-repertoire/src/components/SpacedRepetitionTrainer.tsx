@@ -724,18 +724,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
         return;
       }
-      const uci = moveResult.from + moveResult.to + (moveResult.promotion || '');
-      const key = `${parentFen}|||${uci}`;
-
-      if (walkSession.sessionPlayed.has(key)) {
-        // Already drilled — play it out automatically
-        const timer = setTimeout(() => {
-          setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
-        }, walkDelays.known);
-        return () => clearTimeout(timer);
-      }
-
-      // New move — hand control to the user
+      // Always hand control to the user for their moves
       setPhase('question');
     } catch {
       setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
