@@ -423,6 +423,8 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   const transformRef = useRef<d3.ZoomTransform | null>(null);
   /** Persistent d3 selection for the <g> inside the SVG so it survives re-renders. */
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  /** Screen position captured in the click handler; consumed once by the next render. */
+  const clickedScreenPosRef = useRef<{ x: number; y: number } | null>(null);
 
   // When the current path changes (e.g. user adds a move in a different branch),
   // preserve expansion of deep nodes from the previous path so they don't collapse.
@@ -597,6 +599,15 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       .attr('transform', (d: any) => `translate(${d.y},${d.x})`)
       .style('cursor', 'pointer')
       .on('click', (_event: any, d: any) => {
+        // Snapshot where this node sits on screen BEFORE the state change
+        // so the next render can put the resulting currentNode back here.
+        if (transformRef.current) {
+          clickedScreenPosRef.current = {
+            x: transformRef.current.applyX(d.y),
+            y: transformRef.current.applyY(d.x),
+          };
+        }
+
         if (d.data._isOverlay) {
           if (exploreModeRef.current) {
             // Explore mode: show this position on the board without touching the tree
@@ -966,21 +977,34 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       });
 
     // ── Viewport correction ──────────────────────────────────────────────
-    // The zoom transform was NOT touched during this re-render (it persists
-    // on the SVG element).  If the tree layout shifted the current node
-    // off-screen, instantly pan to bring it back into view.
+    // Two strategies, checked in order:
+    //  1. Click-pin: if the user just clicked a node (overlay or repertoire),
+    //     place the resulting currentNode at that exact screen position.
+    //  2. Off-screen fallback: if the node drifted out of view for any other
+    //     reason (external navigation, tree import, etc.), pan to show it.
     {
       const currentD3 = root.descendants().find((d: any) => d.data.id === currentNode.id) as any;
       if (currentD3 && transformRef.current) {
-        const t = transformRef.current;
-        const sx = t.applyX(currentD3.y);
-        const sy = t.applyY(currentD3.x);
-        const margin = 80;
-        if (sx < margin || sx > width - margin || sy < margin || sy > height - margin) {
+        const pin = clickedScreenPosRef.current;
+        if (pin) {
+          // Consume the pin so it only fires once.
+          clickedScreenPosRef.current = null;
+          const { k } = transformRef.current;
           const newT = d3.zoomIdentity
-            .translate(width * 0.35 - currentD3.y * t.k, height / 2 - currentD3.x * t.k)
-            .scale(t.k);
+            .translate(pin.x - k * currentD3.y, pin.y - k * currentD3.x)
+            .scale(k);
           svg.call(zoom.transform, newT);
+        } else {
+          const t = transformRef.current;
+          const sx = t.applyX(currentD3.y);
+          const sy = t.applyY(currentD3.x);
+          const margin = 80;
+          if (sx < margin || sx > width - margin || sy < margin || sy > height - margin) {
+            const newT = d3.zoomIdentity
+              .translate(width * 0.35 - currentD3.y * t.k, height / 2 - currentD3.x * t.k)
+              .scale(t.k);
+            svg.call(zoom.transform, newT);
+          }
         }
       }
     }
