@@ -453,98 +453,6 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
   // ── Handlers ────────────────────────────────────────────────────────
 
-  /** Shared move submission – used by both drag-drop and click-to-move. */
-  const submitMove = useCallback(
-    (from: string, to: string, piece?: string): boolean => {
-      if (phase !== 'question') return false;
-      if (showSolution) return false; // solution is showing — no more moves
-      const card = effectiveCard;
-      if (!card) return false;
-
-      try {
-        _chess.load(card.front);
-        const isPromotion =
-          piece
-            ? piece[1] === 'P' && (to[1] === '8' || to[1] === '1')
-            : (() => {
-                const p = _chess.get(from as any);
-                return p?.type === 'p' && (to[1] === '8' || to[1] === '1');
-              })();
-        const promotion = isPromotion ? 'q' : undefined;
-        const move = _chess.move({ from, to, promotion });
-        if (!move) return false;
-
-        const uci = from + to + (promotion || '');
-
-        // Walk mode: wrong move — snap piece back, show "try again", stay in question
-        if (walkSession && uci !== effectiveCard!.back) {
-          if (walkTryAgainRef.current) clearTimeout(walkTryAgainRef.current);
-          setWalkTryAgain(true);
-          walkTryAgainRef.current = setTimeout(() => setWalkTryAgain(false), 800);
-          return false; // snap the piece back
-        }
-
-        setUserMove(uci);
-        setPhase('grading');
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    [phase, effectiveCard, walkSession, showSolution],
-  );
-
-  /** Handle a piece drop on the board (drag-and-drop move). */
-  const handlePieceDrop = useCallback(
-    (sourceSquare: Square, targetSquare: Square, piece: Piece): boolean => {
-      setSelectedSquare(null);
-      setLegalMoves([]);
-      return submitMove(sourceSquare, targetSquare, piece);
-    },
-    [submitMove],
-  );
-
-  /** Handle click-to-move (select piece, then click target). */
-  const handleSquareClick = useCallback(
-    (square: Square) => {
-      if (phase !== 'question' || !effectiveCard || showSolution) {
-        setSelectedSquare(null);
-        setLegalMoves([]);
-        return;
-      }
-
-      if (selectedSquare && legalMoves.includes(square)) {
-        const success = submitMove(selectedSquare, square);
-        setSelectedSquare(null);
-        setLegalMoves([]);
-        if (success) return;
-      }
-
-      if (isOwnPiece(square)) {
-        if (selectedSquare === square) {
-          setSelectedSquare(null);
-          setLegalMoves([]);
-        } else {
-          setSelectedSquare(square);
-          setLegalMoves(getLegalMovesForSquare(square));
-        }
-        return;
-      }
-
-      setSelectedSquare(null);
-      setLegalMoves([]);
-    },
-    [phase, effectiveCard, selectedSquare, legalMoves, isOwnPiece, getLegalMovesForSquare, submitMove, showSolution],
-  );
-
-  /** Forward piece-click events to square-click handler. */
-  const handlePieceClick = useCallback(
-    (_piece: Piece, square: Square) => {
-      handleSquareClick(square);
-    },
-    [handleSquareClick],
-  );
-
   /** Auto-grade, persist, update stats, and advance to next card or complete. */
   const advanceToNext = useCallback(() => {
     // ── Walk mode ─────────────────────────────────────────────────────
@@ -629,6 +537,107 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       setBoardOrientation(activeColor === 'b' ? 'black' : 'white');
     }
   }, [walkSession, walkVirtualCard, userMove, cards, currentCard, stats, currentIndex, sessionCards]);
+
+  /** Shared move submission – used by both drag-drop and click-to-move. */
+  const submitMove = useCallback(
+    (from: string, to: string, piece?: string): boolean => {
+      if (phase !== 'question') return false;
+      const card = effectiveCard;
+      if (!card) return false;
+
+      try {
+        _chess.load(card.front);
+        const isPromotion =
+          piece
+            ? piece[1] === 'P' && (to[1] === '8' || to[1] === '1')
+            : (() => {
+                const p = _chess.get(from as any);
+                return p?.type === 'p' && (to[1] === '8' || to[1] === '1');
+              })();
+        const promotion = isPromotion ? 'q' : undefined;
+        const move = _chess.move({ from, to, promotion });
+        if (!move) return false;
+
+        const uci = from + to + (promotion || '');
+
+        // When solution is shown: only the correct move is accepted.
+        // Playing it advances (counts as incorrect — solution was peeked).
+        if (showSolution) {
+          if (uci === card.back) {
+            advanceToNext();
+            return true;
+          }
+          return false; // snap wrong moves back
+        }
+
+        // Walk mode: wrong move — snap piece back, show "try again", stay in question
+        if (walkSession && uci !== effectiveCard!.back) {
+          if (walkTryAgainRef.current) clearTimeout(walkTryAgainRef.current);
+          setWalkTryAgain(true);
+          walkTryAgainRef.current = setTimeout(() => setWalkTryAgain(false), 800);
+          return false; // snap the piece back
+        }
+
+        setUserMove(uci);
+        setPhase('grading');
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [phase, effectiveCard, walkSession, showSolution, advanceToNext],
+  );
+
+  /** Handle a piece drop on the board (drag-and-drop move). */
+  const handlePieceDrop = useCallback(
+    (sourceSquare: Square, targetSquare: Square, piece: Piece): boolean => {
+      setSelectedSquare(null);
+      setLegalMoves([]);
+      return submitMove(sourceSquare, targetSquare, piece);
+    },
+    [submitMove],
+  );
+
+  /** Handle click-to-move (select piece, then click target). */
+  const handleSquareClick = useCallback(
+    (square: Square) => {
+      if (phase !== 'question' || !effectiveCard) {
+        setSelectedSquare(null);
+        setLegalMoves([]);
+        return;
+      }
+
+      if (selectedSquare && legalMoves.includes(square)) {
+        const success = submitMove(selectedSquare, square);
+        setSelectedSquare(null);
+        setLegalMoves([]);
+        if (success) return;
+      }
+
+      if (isOwnPiece(square)) {
+        if (selectedSquare === square) {
+          setSelectedSquare(null);
+          setLegalMoves([]);
+        } else {
+          setSelectedSquare(square);
+          setLegalMoves(getLegalMovesForSquare(square));
+        }
+        return;
+      }
+
+      setSelectedSquare(null);
+      setLegalMoves([]);
+    },
+    [phase, effectiveCard, selectedSquare, legalMoves, isOwnPiece, getLegalMovesForSquare, submitMove],
+  );
+
+  /** Forward piece-click events to square-click handler. */
+  const handlePieceClick = useCallback(
+    (_piece: Piece, square: Square) => {
+      handleSquareClick(square);
+    },
+    [handleSquareClick],
+  );
 
   // ── Auto-advance after grading ─────────────────────────────────────
   useEffect(() => {
@@ -1029,7 +1038,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                 onPieceClick={handlePieceClick}
                 boardWidth={boardWidth}
                 boardOrientation={boardOrientation}
-                isDraggablePiece={() => phase === 'question' && !showSolution}
+                isDraggablePiece={() => phase === 'question'}
                 customDarkSquareStyle={{ backgroundColor: '#4b6fa0' }}
                 customLightSquareStyle={{ backgroundColor: '#e8dcc0' }}
                 customBoardStyle={{
