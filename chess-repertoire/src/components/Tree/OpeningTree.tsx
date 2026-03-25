@@ -421,10 +421,8 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   const exploreModeRef = useRef(false);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const transformRef = useRef<d3.ZoomTransform | null>(null);
-  /** Screen-space position (px) of the current node at the last pan/zoom or click. */
-  const pinnedScreenPosRef = useRef<{ x: number; y: number } | null>(null);
-  /** D3-layout position of the current node (y=horizontal, x=vertical in D3 tree coords). */
-  const currentNodeD3PosRef = useRef<{ x: number; y: number } | null>(null);
+  /** Persistent d3 selection for the <g> inside the SVG so it survives re-renders. */
+  const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
 
   // When the current path changes (e.g. user adds a move in a different branch),
   // preserve expansion of deep nodes from the previous path so they don't collapse.
@@ -496,36 +494,40 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
     const height = container.clientHeight;
     const maxGameCount = getMaxGameCount(tree);
 
-    // Clear previous render
-    d3.select(svgRef.current).selectAll('*').remove();
-
     const svg = d3
       .select(svgRef.current)
       .attr('width', width)
       .attr('height', height);
 
-    // Create a group for zoom/pan
-    const g = svg.append('g').attr('transform', 'translate(60, 0)');
+    // ── Persistent <g> and zoom ──────────────────────────────────────────
+    // Reuse the same <g> element and zoom behavior across re-renders so the
+    // viewport transform is never destroyed and rebuilt.  Only the CONTENT
+    // inside <g> is cleared; the zoom state on the SVG element persists.
+    let g: d3.Selection<SVGGElement, unknown, null, undefined>;
+    if (gRef.current && !svg.select<SVGGElement>('g.tree-root').empty()) {
+      g = gRef.current;
+    } else {
+      g = svg.append('g').attr('class', 'tree-root');
+      gRef.current = g;
+    }
+    g.selectAll('*').remove();
 
-    // Set up zoom behavior
-    const zoom = d3
-      .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.2, 3])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-        transformRef.current = event.transform;
-        // Keep pinnedScreenPosRef in sync so re-renders can put the current
-        // node back exactly where the user last saw it.
-        if (currentNodeD3PosRef.current) {
-          pinnedScreenPosRef.current = {
-            x: event.transform.applyX(currentNodeD3PosRef.current.x),
-            y: event.transform.applyY(currentNodeD3PosRef.current.y),
-          };
-        }
-      });
-
-    svg.call(zoom);
-    zoomRef.current = zoom;
+    let zoom: d3.ZoomBehavior<SVGSVGElement, unknown>;
+    if (zoomRef.current) {
+      zoom = zoomRef.current;
+    } else {
+      zoom = d3
+        .zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.2, 3])
+        .on('zoom', (event) => {
+          g.attr('transform', event.transform);
+          transformRef.current = event.transform;
+        });
+      svg.call(zoom);
+      zoomRef.current = zoom;
+      // Initial viewport — only on the very first render
+      svg.call(zoom.transform, d3.zoomIdentity.translate(60, height / 2).scale(0.9));
+    }
 
     // Prepare hierarchy data — show the full "current line":
     //   • the path from root → currentNode (backward)
@@ -563,40 +565,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
 
     treeLayout(root);
 
-    // ── Viewport pinning ─────────────────────────────────────────────────
-    // After the D3 layout re-runs, put the current node back at exactly the
-    // screen position it occupied during the last user pan/zoom or click.
-    // This prevents the tree from jumping when overlay nodes are accepted
-    // (which changes the layout shape), or when branch navigation shifts
-    // the sibling rows around.
-    {
-      const currentD3 = root.descendants().find((d: any) => d.data.id === currentNode.id) as any;
-
-      // Save D3 layout coords for the zoom handler (y = horizontal, x = vertical).
-      if (currentD3) {
-        currentNodeD3PosRef.current = { x: currentD3.y, y: currentD3.x };
-      }
-
-      if (!transformRef.current) {
-        // First render — apply the default initial transform.
-        svg.call(zoom.transform, d3.zoomIdentity.translate(60, height / 2).scale(0.9));
-      } else if (currentD3 && pinnedScreenPosRef.current) {
-        // Compute a new transform that places currentNode at the pinned
-        // screen position, preserving the user's current zoom level.
-        const { k } = transformRef.current;
-        const newT = d3.zoomIdentity
-          .translate(
-            pinnedScreenPosRef.current.x - k * currentD3.y,
-            pinnedScreenPosRef.current.y - k * currentD3.x
-          )
-          .scale(k);
-        svg.call(zoom.transform, newT);
-      } else {
-        // No pinned position yet (e.g. first external navigation) — restore
-        // the saved transform as-is.
-        svg.call(zoom.transform, transformRef.current);
-      }
-    }
 
     // ─── Links (repertoire + overlay) ─────────────────────────────────
     g.selectAll('.link')
@@ -643,16 +611,6 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
             }
           }
           return;
-        }
-        // Pin the clicked node's screen position so the viewport stays stable
-        // after the tree re-renders. Only for repertoire nodes — overlay clicks
-        // don't change currentNode, so we must NOT overwrite the pin with the
-        // overlay node's position (that causes the jump bug).
-        if (transformRef.current) {
-          pinnedScreenPosRef.current = {
-            x: transformRef.current.applyX(d.y),
-            y: transformRef.current.applyY(d.x),
-          };
         }
         onNodeClick(d.data);
       })
@@ -1006,6 +964,26 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         if (d.data.gameCount >= 1000) return `${(d.data.gameCount / 1000).toFixed(1)}k`;
         return d.data.gameCount.toString();
       });
+
+    // ── Viewport correction ──────────────────────────────────────────────
+    // The zoom transform was NOT touched during this re-render (it persists
+    // on the SVG element).  If the tree layout shifted the current node
+    // off-screen, instantly pan to bring it back into view.
+    {
+      const currentD3 = root.descendants().find((d: any) => d.data.id === currentNode.id) as any;
+      if (currentD3 && transformRef.current) {
+        const t = transformRef.current;
+        const sx = t.applyX(currentD3.y);
+        const sy = t.applyY(currentD3.x);
+        const margin = 80;
+        if (sx < margin || sx > width - margin || sy < margin || sy > height - margin) {
+          const newT = d3.zoomIdentity
+            .translate(width * 0.35 - currentD3.y * t.k, height / 2 - currentD3.x * t.k)
+            .scale(t.k);
+          svg.call(zoom.transform, newT);
+        }
+      }
+    }
   // Note: We intentionally exclude mistakeMap from deps — it's accessed via ref
   // to avoid full D3 re-render on every game import / review toggle.
   // The separate useMemo above ensures mistakeMap is current on each render.
