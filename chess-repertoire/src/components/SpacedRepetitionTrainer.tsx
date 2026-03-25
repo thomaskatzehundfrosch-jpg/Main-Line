@@ -18,6 +18,7 @@ import {
   Play,
   SkipForward,
   X,
+  ArrowRight,
 } from 'lucide-react';
 import type { Card } from '../lib/srScheduler';
 import { reviewCard, getDueCards } from '../lib/srScheduler';
@@ -456,6 +457,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   const submitMove = useCallback(
     (from: string, to: string, piece?: string): boolean => {
       if (phase !== 'question') return false;
+      if (showSolution) return false; // solution is showing — no more moves
       const card = effectiveCard;
       if (!card) return false;
 
@@ -489,7 +491,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         return false;
       }
     },
-    [phase, effectiveCard, walkSession],
+    [phase, effectiveCard, walkSession, showSolution],
   );
 
   /** Handle a piece drop on the board (drag-and-drop move). */
@@ -505,7 +507,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   /** Handle click-to-move (select piece, then click target). */
   const handleSquareClick = useCallback(
     (square: Square) => {
-      if (phase !== 'question' || !effectiveCard) {
+      if (phase !== 'question' || !effectiveCard || showSolution) {
         setSelectedSquare(null);
         setLegalMoves([]);
         return;
@@ -532,7 +534,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       setSelectedSquare(null);
       setLegalMoves([]);
     },
-    [phase, effectiveCard, selectedSquare, legalMoves, isOwnPiece, getLegalMovesForSquare, submitMove],
+    [phase, effectiveCard, selectedSquare, legalMoves, isOwnPiece, getLegalMovesForSquare, submitMove, showSolution],
   );
 
   /** Forward piece-click events to square-click handler. */
@@ -638,12 +640,13 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       // Always auto-advance after a correct answer
       const delay = walkSession ? walkDelays.correct : 300;
       autoAdvanceRef.current = setTimeout(() => advanceToNext(), delay);
-    } else if (walkSession) {
-      // Walk mode: reveal the solution arrow immediately, then keep going
+    } else if (walkSession && userMove !== null) {
+      // Walk mode wrong move: reveal solution arrow then auto-advance
       setShowSolution(true);
       autoAdvanceRef.current = setTimeout(() => advanceToNext(), walkDelays.incorrect);
     }
-    // Card mode + incorrect: user stays in control (clicks Next manually)
+    // Card mode + incorrect: user stays in control
+    // Walk mode + solution shown manually (userMove === null): user stays in control
 
     return () => {
       if (autoAdvanceRef.current) {
@@ -730,13 +733,27 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
     }
   }, [phase, walkSession, walkDelays]);
 
-  /** Show Solution during question phase – counts as incorrect, enters grading. */
+  /**
+   * Show Solution during question phase — reveals the arrow on the board
+   * so the user can study the move. Does NOT auto-advance; user presses
+   * "Next" manually when ready.
+   */
   const handleShowSolutionFromQuestion = useCallback(() => {
     if (phase !== 'question' || !effectiveCard) return;
     setShowSolution(true);
-    setUserMove(null);
-    setPhase('grading');
+    // Stay in question phase — the arrow is shown, user takes their time,
+    // then clicks the "Next" button that appears.
   }, [phase, effectiveCard]);
+
+  /**
+   * Called when user clicks "Next" after Show Solution (still in question phase).
+   * Counts as incorrect and advances.
+   */
+  const handleSolutionNext = useCallback(() => {
+    if (!showSolution) return;
+    // userMove stays null — advanceToNext treats null as incorrect
+    advanceToNext();
+  }, [showSolution, advanceToNext]);
 
   /** Toggle solution visibility during grading (incorrect). */
   const handleToggleSolution = useCallback(() => {
@@ -781,8 +798,6 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
   /**
    * Start a walk-mode session: play through the repertoire from move 1.
-   * The user only has to find moves they haven't already played this session;
-   * everything else auto-advances so the game flows naturally.
    */
   const handleStartWalk = useCallback(
     (fileId: string, drillColor: 'white' | 'black') => {
@@ -910,37 +925,37 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
   // ── Render ──────────────────────────────────────────────────────────
   return (
-    <div className="flex-1 flex flex-col bg-gray-900 min-h-0">
+    <div className="flex-1 flex flex-col bg-bg-primary min-h-0">
       {/* ─── Header ─────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700 flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-3 bg-bg-surface border-b border-border-subtle flex-shrink-0">
         <div className="flex items-center gap-3">
           {onClose && (
             <button
               onClick={onClose}
-              className="flex items-center gap-1 text-gray-400 hover:text-white transition-colors text-sm"
+              className="btn-icon p-1.5"
+              title="Back to repertoire"
             >
               <ChevronLeft className="w-4 h-4" />
-              Back
             </button>
           )}
-          <Brain className="w-5 h-5 text-blue-400" />
-          <span className="font-mono text-blue-400 text-lg font-semibold">
+          <Brain className="w-4 h-4 text-accent-teal" />
+          <h2 className="font-mono text-sm uppercase tracking-wider text-text-secondary">
             Spaced Repetition Trainer
-          </span>
+          </h2>
         </div>
-        <div className="flex items-center gap-3 text-xs text-gray-400">
+        <div className="flex items-center gap-3 text-xs text-text-muted">
           <span>{dueCount} due</span>
-          <span className="text-gray-600">|</span>
+          <span className="text-border-subtle">|</span>
           <span>{cards.length} total</span>
           {cards.length > 0 && (
             <>
-              <span className="text-gray-600">|</span>
+              <span className="text-border-subtle">|</span>
               <button
                 onClick={handleClearCards}
-                className="text-gray-500 hover:text-red-400 transition-colors"
+                className="btn-icon p-1"
                 title="Clear all cards"
               >
-                <Trash2 className="w-3.5 h-3.5" />
+                <Trash2 className="w-3.5 h-3.5 hover:text-accent-red transition-colors" />
               </button>
             </>
           )}
@@ -949,23 +964,23 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
       {/* ─── Active session banner ──────────────────────────────────── */}
       {walkSession && (
-        <div className="flex items-center justify-between px-4 py-2 bg-blue-900/40 border-b border-blue-700/40 flex-shrink-0">
+        <div className="flex items-center justify-between px-4 py-2 bg-accent-teal/5 border-b border-accent-teal/20 flex-shrink-0">
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-blue-400 font-semibold">
+            <span className="text-accent-teal font-semibold">
               {walkSession.drillColor === 'white' ? '♔' : '♚'}
             </span>
-            <span className="text-blue-300 font-medium truncate">
+            <span className="text-text-primary font-medium truncate">
               {walkSession.fileName}
             </span>
-            <span className="text-blue-500 text-xs">
+            <span className="text-text-muted text-xs">
               — playing as {walkSession.drillColor}
             </span>
           </div>
-          <div className="flex items-center gap-3 text-xs text-blue-400/70">
+          <div className="flex items-center gap-3 text-xs text-text-muted">
             <span>Line {walkSession.pathIdx + 1} / {walkTotalPaths}</span>
             <button
               onClick={handleStopWalk}
-              className="flex items-center gap-1 text-blue-500/60 hover:text-red-400 transition-colors ml-1"
+              className="flex items-center gap-1 text-text-muted hover:text-accent-red transition-colors ml-1"
               title="Stop training session"
             >
               <X className="w-3.5 h-3.5" />
@@ -977,13 +992,13 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
       {/* ─── Import feedback toast ──────────────────────────────────── */}
       {importFeedback && (
-        <div className="mx-4 mt-3 px-3 py-2 bg-blue-900/40 border border-blue-700/50 rounded-lg text-xs text-blue-300 flex items-center gap-2 flex-shrink-0">
+        <div className="mx-4 mt-3 px-3 py-2 bg-accent-teal/5 border border-accent-teal/30 rounded-lg text-xs text-accent-teal flex items-center gap-2 flex-shrink-0">
           <Check className="w-3.5 h-3.5 flex-shrink-0" />
           <span>
             <strong>{importFeedback.fileName}</strong>: {importFeedback.added} card
             {importFeedback.added !== 1 ? 's' : ''} added
             {importFeedback.skipped > 0 && (
-              <span className="text-blue-400/60">
+              <span className="text-text-muted">
                 {' '}({importFeedback.skipped} duplicate{importFeedback.skipped !== 1 ? 's' : ''} skipped)
               </span>
             )}
@@ -1017,7 +1032,10 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                 isDraggablePiece={() => phase === 'question' && !showSolution}
                 customDarkSquareStyle={{ backgroundColor: '#4b6fa0' }}
                 customLightSquareStyle={{ backgroundColor: '#e8dcc0' }}
-                customBoardStyle={{ borderRadius: '4px' }}
+                customBoardStyle={{
+                  borderRadius: '4px',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.10)',
+                }}
                 customDropSquareStyle={{
                   boxShadow: 'inset 0 0 1px 6px rgba(59,98,160,0.5)',
                 }}
@@ -1030,7 +1048,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
           <button
             onClick={flipBoard}
-            className="mt-3 flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded transition-colors"
+            className="btn-secondary mt-3 flex items-center gap-1.5 text-xs py-1.5 px-3"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             Flip Board
@@ -1038,18 +1056,18 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         </div>
 
         {/* Right column — Controls / info */}
-        <div className="lg:w-[400px] lg:min-w-[340px] flex flex-col p-4 gap-4 lg:border-l lg:border-gray-700 overflow-auto">
+        <div className="lg:w-[400px] lg:min-w-[340px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
 
           {/* Walk-mode progress bar + speed control */}
           {walkSession && phase !== 'complete' && (
             <div className="flex flex-col gap-2">
-              <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+              <div className="flex justify-between text-xs text-text-muted mb-1.5">
                 <span>Step {walkStepDisplay} / {walkCurrentPathLength}</span>
-                <span className="text-gray-600">{walkSession.stats.correct}✓ {walkSession.stats.incorrect}✗</span>
+                <span>{walkSession.stats.correct}✓ {walkSession.stats.incorrect}✗</span>
               </div>
-              <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-bg-panel rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-blue-500 rounded-full transition-all duration-200"
+                  className="h-full bg-accent-teal rounded-full transition-all duration-200"
                   style={{
                     width: walkCurrentPathLength > 0
                       ? `${(walkStepDisplay / walkCurrentPathLength) * 100}%`
@@ -1059,15 +1077,15 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
               </div>
               {/* Speed control */}
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-[10px] text-gray-500">Speed:</span>
+                <span className="text-[10px] text-text-muted">Speed:</span>
                 {(['slow', 'normal', 'fast'] as const).map((s) => (
                   <button
                     key={s}
                     onClick={() => setWalkSpeed(s)}
                     className={`px-2 py-0.5 text-[10px] rounded capitalize transition-colors ${
                       walkSpeed === s
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-gray-700 text-gray-400 hover:text-white'
+                        ? 'bg-accent-teal text-white'
+                        : 'bg-bg-panel text-text-muted hover:text-text-primary'
                     }`}
                   >
                     {s}
@@ -1080,16 +1098,16 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
           {/* Card-mode progress bar */}
           {!walkSession && sessionCards.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
             <div>
-              <div className="flex justify-between text-xs text-gray-400 mb-1.5">
+              <div className="flex justify-between text-xs text-text-muted mb-1.5">
                 <span>Session Progress</span>
                 <span>
                   {Math.min(currentIndex + 1, sessionCards.length)} /{' '}
                   {sessionCards.length}
                 </span>
               </div>
-              <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-bg-panel rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                  className="h-full bg-accent-teal rounded-full transition-all duration-300"
                   style={{ width: `${progressPercent}%` }}
                 />
               </div>
@@ -1099,14 +1117,14 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
           {/* ── Phase: idle ─────────────────────────────────────────── */}
           {phase === 'idle' && (
             <div className="flex flex-col items-center justify-center gap-4 py-6">
-              <Brain className="w-12 h-12 text-gray-600" />
-              <p className="text-gray-400 text-center text-sm">
+              <Brain className="w-12 h-12 text-text-muted opacity-40" />
+              <p className="text-text-muted text-center text-sm">
                 {cards.length === 0
                   ? 'No cards yet. Start a repertoire below, or import cards for later review.'
                   : 'No cards due for review right now. Start a repertoire below to keep training!'}
               </p>
               {cards.length > 0 && (
-                <p className="text-gray-500 text-xs">
+                <p className="text-text-muted text-xs">
                   {cards.length} card{cards.length !== 1 ? 's' : ''} in your
                   collection
                 </p>
@@ -1116,11 +1134,11 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
           {/* ── Phase: walking (auto-advancing) ─────────────────────── */}
           {phase === 'walking' && walkSession && (
-            <div className="bg-gray-800 rounded-lg p-4">
-              <p className="text-gray-400 text-sm animate-pulse">
+            <div className="panel p-4">
+              <p className="text-text-secondary text-sm animate-pulse-subtle">
                 Playing through moves…
               </p>
-              <p className="text-gray-600 text-xs mt-1">
+              <p className="text-text-muted text-xs mt-1">
                 You'll be asked when a new move appears
               </p>
             </div>
@@ -1128,41 +1146,53 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
           {/* ── Phase: question ─────────────────────────────────────── */}
           {phase === 'question' && effectiveCard && (
-            <div className="bg-gray-800 rounded-lg p-4">
+            <div className="panel p-4">
               {effectiveCard.lineName && (
-                <div className="text-xs text-blue-400 font-mono mb-2 uppercase tracking-wider">
+                <div className="text-xs text-accent-teal font-mono mb-2 uppercase tracking-wider">
                   {effectiveCard.lineName}
                 </div>
               )}
-              <p className="text-gray-200 text-sm">
+              <p className="text-text-primary text-sm">
                 Find the best move for{' '}
-                <span
-                  className={
-                    isWhiteToMove
-                      ? 'text-white font-semibold'
-                      : 'text-gray-300 font-semibold'
-                  }
-                >
+                <span className="font-semibold">
                   {isWhiteToMove ? 'White' : 'Black'}
                 </span>
               </p>
-              {/* Wrong-move flash (walk mode only) */}
-              {walkTryAgain ? (
-                <p className="text-red-400 text-xs mt-2 font-medium">
-                  Wrong move — try again
-                </p>
+
+              {!showSolution ? (
+                <>
+                  {/* Wrong-move flash (walk mode only) */}
+                  {walkTryAgain ? (
+                    <p className="text-accent-red text-xs mt-2 font-medium">
+                      Wrong move — try again
+                    </p>
+                  ) : (
+                    <p className="text-text-muted text-xs mt-2">
+                      Click or drag a piece to make your move
+                    </p>
+                  )}
+                  <button
+                    onClick={handleShowSolutionFromQuestion}
+                    className="btn-secondary mt-3 flex items-center gap-1.5 text-xs py-1.5 px-3"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Show Solution
+                  </button>
+                </>
               ) : (
-                <p className="text-gray-500 text-xs mt-2">
-                  Click or drag a piece to make your move
-                </p>
+                <>
+                  <p className="text-text-muted text-xs mt-2">
+                    Take your time to memorise the move shown on the board.
+                  </p>
+                  <button
+                    onClick={handleSolutionNext}
+                    className="btn-primary mt-3 flex items-center gap-1.5 text-xs py-1.5 px-3"
+                  >
+                    Got it, Next
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </>
               )}
-              <button
-                onClick={handleShowSolutionFromQuestion}
-                className="mt-3 flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-500 hover:text-yellow-400 bg-gray-700/50 hover:bg-gray-700 rounded transition-colors"
-              >
-                <Eye className="w-3.5 h-3.5" />
-                Show Solution
-              </button>
             </div>
           )}
 
@@ -1170,16 +1200,16 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
           {phase === 'grading' && effectiveCard && (
             <div className="flex flex-col gap-4">
               <div
-                className={`rounded-lg p-4 ${
+                className={`panel p-4 ${
                   isCorrect
-                    ? 'bg-blue-900/30 border border-blue-700/50'
-                    : 'bg-red-900/30 border border-red-700/50'
+                    ? 'border-accent-teal/40 bg-accent-teal/5'
+                    : 'border-accent-red/30 bg-accent-red/5'
                 }`}
               >
                 <div className="flex items-center gap-2 mb-2">
                   <span
                     className={`text-sm font-semibold ${
-                      isCorrect ? 'text-blue-400' : 'text-red-400'
+                      isCorrect ? 'text-accent-teal' : 'text-accent-red'
                     }`}
                   >
                     {isCorrect
@@ -1190,28 +1220,39 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                   </span>
                 </div>
                 {!isCorrect && userMoveSan && (
-                  <p className="text-gray-400 text-xs mb-1">
+                  <p className="text-text-muted text-xs mb-1">
                     Your move:{' '}
-                    <span className="text-gray-200 font-mono">
+                    <span className="text-text-primary font-mono">
                       {userMoveSan}
                     </span>
                   </p>
                 )}
                 {(isCorrect || showSolution) && (
-                  <p className="text-gray-400 text-xs">
+                  <p className="text-text-muted text-xs">
                     Correct move:{' '}
-                    <span className="text-blue-300 font-mono">
+                    <span className="text-accent-teal font-mono">
                       {correctMoveSan}
                     </span>
                   </p>
                 )}
               </div>
 
-              {/* Walk mode incorrect — solution already visible, auto-continuing */}
-              {!isCorrect && walkSession && (
-                <div className="text-center text-xs text-gray-500 animate-pulse">
+              {/* Walk mode wrong move — solution visible, auto-continuing */}
+              {!isCorrect && walkSession && userMove !== null && (
+                <div className="text-center text-xs text-text-muted animate-pulse-subtle">
                   Continuing…
                 </div>
+              )}
+
+              {/* Walk mode manually showed solution — user controls pace */}
+              {!isCorrect && walkSession && userMove === null && (
+                <button
+                  onClick={advanceToNext}
+                  className="btn-primary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+                >
+                  <SkipForward className="w-3.5 h-3.5" />
+                  Next
+                </button>
               )}
 
               {/* Card mode incorrect — user controls pace */}
@@ -1220,7 +1261,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                   {!showSolution && (
                     <button
                       onClick={handleToggleSolution}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-yellow-400 bg-yellow-900/30 hover:bg-yellow-900/50 border border-yellow-700/50 rounded-lg transition-colors"
+                      className="flex-1 btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
                     >
                       <Eye className="w-3.5 h-3.5" />
                       Show Solution
@@ -1228,7 +1269,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                   )}
                   <button
                     onClick={advanceToNext}
-                    className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-white bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+                    className="flex-1 btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
                   >
                     <SkipForward className="w-3.5 h-3.5" />
                     Next
@@ -1237,7 +1278,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
               )}
 
               {isCorrect && (
-                <div className="text-center text-xs text-gray-500">
+                <div className="text-center text-xs text-text-muted animate-pulse-subtle">
                   Advancing…
                 </div>
               )}
@@ -1253,39 +1294,39 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
               : 0;
             return (
               <div className="flex flex-col items-center gap-4 py-8">
-                <Trophy className="w-12 h-12 text-yellow-400" />
-                <h3 className="text-white text-lg font-semibold">
+                <Trophy className="w-12 h-12 text-accent-amber" />
+                <h3 className="text-text-primary text-lg font-semibold">
                   Session Complete!
                 </h3>
 
-                <div className="text-4xl font-bold text-blue-400">
+                <div className="text-4xl font-bold text-accent-teal">
                   {sessionPct}%
                 </div>
-                <p className="text-gray-400 text-xs -mt-2">session accuracy</p>
+                <p className="text-text-muted text-xs -mt-2">session accuracy</p>
 
-                <div className="bg-gray-800 rounded-lg p-4 w-full">
+                <div className="panel p-4 w-full">
                   <div className="grid grid-cols-2 gap-4 text-center">
                     <div>
-                      <div className="text-blue-400 text-2xl font-bold">
+                      <div className="text-accent-teal text-2xl font-bold">
                         {stats.correct}
                       </div>
-                      <div className="text-gray-400 text-xs">Correct</div>
+                      <div className="text-text-muted text-xs">Correct</div>
                     </div>
                     <div>
-                      <div className="text-red-400 text-2xl font-bold">
+                      <div className="text-accent-red text-2xl font-bold">
                         {stats.incorrect}
                       </div>
-                      <div className="text-gray-400 text-xs">Incorrect</div>
+                      <div className="text-text-muted text-xs">Incorrect</div>
                     </div>
                   </div>
                 </div>
 
                 {lifetimeStats.totalReviewed > 0 && (
-                  <div className="bg-gray-800/60 rounded-lg p-3 w-full text-center">
-                    <p className="text-gray-400 text-xs mb-1">Lifetime Accuracy</p>
-                    <p className="text-white text-lg font-semibold">
+                  <div className="panel p-3 w-full text-center">
+                    <p className="text-text-muted text-xs mb-1">Lifetime Accuracy</p>
+                    <p className="text-text-primary text-lg font-semibold">
                       {lifetimePct}%{' '}
-                      <span className="text-gray-500 text-xs font-normal">
+                      <span className="text-text-muted text-xs font-normal">
                         ({lifetimeStats.totalCorrect}/{lifetimeStats.totalReviewed} correct)
                       </span>
                     </p>
@@ -1296,7 +1337,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                   {sessionHistory.length > 0 && (
                     <button
                       onClick={handleStartReplay}
-                      className="flex items-center gap-1.5 px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-lg text-sm font-medium transition-colors"
+                      className="btn-secondary flex items-center gap-1.5 px-4 py-2 text-sm font-medium"
                     >
                       <Play className="w-4 h-4" />
                       Replay Moves
@@ -1304,7 +1345,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                   )}
                   <button
                     onClick={handleNewSession}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+                    className="btn-primary px-4 py-2 text-sm font-medium"
                   >
                     New Session
                   </button>
@@ -1324,20 +1365,20 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
             return (
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-gray-400 font-mono">
+                  <span className="text-xs text-text-muted font-mono">
                     Replay: {replayIndex + 1} / {sessionHistory.length}
                   </span>
                   <button
                     onClick={handleExitReplay}
-                    className="text-xs text-gray-500 hover:text-white transition-colors"
+                    className="text-xs text-text-muted hover:text-text-primary transition-colors"
                   >
                     Back to Summary
                   </button>
                 </div>
 
-                <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                <div className="w-full h-1.5 bg-bg-panel rounded-full overflow-hidden">
                   <div
-                    className="h-full bg-blue-500 rounded-full transition-all duration-200"
+                    className="h-full bg-accent-teal rounded-full transition-all duration-200"
                     style={{
                       width: `${((replayIndex + 1) / sessionHistory.length) * 100}%`,
                     }}
@@ -1345,45 +1386,45 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                 </div>
 
                 <div
-                  className={`rounded-lg p-4 ${
+                  className={`panel p-4 ${
                     entry.correct
-                      ? 'bg-blue-900/20 border border-blue-700/40'
-                      : 'bg-red-900/20 border border-red-700/40'
+                      ? 'border-accent-teal/30 bg-accent-teal/5'
+                      : 'border-accent-red/30 bg-accent-red/5'
                   }`}
                 >
                   {entry.card.lineName && (
-                    <div className="text-xs text-blue-400 font-mono mb-2 uppercase tracking-wider">
+                    <div className="text-xs text-accent-teal font-mono mb-2 uppercase tracking-wider">
                       {entry.card.lineName}
                     </div>
                   )}
-                  <p className="text-gray-300 text-xs mb-1">
+                  <p className="text-text-muted text-xs mb-1">
                     {replayWhite ? 'White' : 'Black'} to move
                   </p>
                   <div className="flex items-center gap-2 mt-2">
                     <span
                       className={`text-xs font-semibold ${
-                        entry.correct ? 'text-blue-400' : 'text-red-400'
+                        entry.correct ? 'text-accent-teal' : 'text-accent-red'
                       }`}
                     >
                       {entry.correct ? 'Correct' : 'Incorrect'}
                     </span>
                   </div>
                   {!entry.correct && replayUserSan && (
-                    <p className="text-gray-400 text-xs mt-1">
+                    <p className="text-text-muted text-xs mt-1">
                       Your move:{' '}
-                      <span className="text-gray-200 font-mono">
+                      <span className="text-text-primary font-mono">
                         {replayUserSan}
                       </span>
                     </p>
                   )}
                   {!entry.correct && !replayUserSan && (
-                    <p className="text-gray-500 text-xs mt-1 italic">
+                    <p className="text-text-muted text-xs mt-1 italic">
                       No attempt — solution revealed
                     </p>
                   )}
-                  <p className="text-gray-400 text-xs mt-1">
+                  <p className="text-text-muted text-xs mt-1">
                     Correct move:{' '}
-                    <span className="text-blue-300 font-mono">{replaySan}</span>
+                    <span className="text-accent-teal font-mono">{replaySan}</span>
                   </p>
                 </div>
 
@@ -1391,7 +1432,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                   <button
                     onClick={() => handleReplayNav('prev')}
                     disabled={replayIndex <= 0}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition-colors"
+                    className="flex-1 btn-secondary flex items-center justify-center gap-1 px-3 py-2 text-xs font-medium disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <ChevronLeft className="w-3.5 h-3.5" />
                     Prev
@@ -1399,7 +1440,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                   <button
                     onClick={() => handleReplayNav('next')}
                     disabled={replayIndex >= sessionHistory.length - 1}
-                    className="flex-1 flex items-center justify-center gap-1 px-3 py-2 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg transition-colors"
+                    className="flex-1 btn-secondary flex items-center justify-center gap-1 px-3 py-2 text-xs font-medium disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     Next
                     <ChevronRight className="w-3.5 h-3.5" />
@@ -1413,7 +1454,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
           <div className="mt-auto pt-4 flex flex-col gap-2">
             <button
               onClick={() => setRepertoireListOpen(!repertoireListOpen)}
-              className="flex items-center justify-between w-full px-3 py-2 text-xs text-gray-300 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+              className="btn-secondary flex items-center justify-between w-full px-3 py-2 text-xs"
             >
               <span className="flex items-center gap-1.5">
                 <FolderOpen className="w-3.5 h-3.5" />
@@ -1427,15 +1468,15 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
             </button>
 
             {repertoireListOpen && (
-              <div className="bg-gray-800 rounded-lg overflow-hidden">
+              <div className="panel overflow-hidden">
                 {files.length === 0 ? (
-                  <div className="px-3 py-4 text-xs text-gray-500 text-center">
+                  <div className="px-3 py-4 text-xs text-text-muted text-center">
                     No saved repertoires yet.
                     <br />
                     Save a repertoire from the main view first.
                   </div>
                 ) : (
-                  <div className="divide-y divide-gray-700/50">
+                  <div className="divide-y divide-border-subtle">
                     {files.map((file) => (
                       <div
                         key={file.id}
@@ -1443,10 +1484,10 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                       >
                         {/* File name */}
                         <div className="min-w-0 flex-1">
-                          <div className="text-xs text-gray-200 font-medium truncate">
+                          <div className="text-xs text-text-primary font-medium truncate">
                             {file.name}
                           </div>
-                          <div className="text-[10px] text-gray-500">
+                          <div className="text-[10px] text-text-muted">
                             {file.nodeCount} position{file.nodeCount !== 1 ? 's' : ''}
                           </div>
                         </div>
@@ -1455,40 +1496,40 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                         <div className="flex items-center gap-1 flex-shrink-0">
                           <button
                             onClick={() => handleStartWalk(file.id, 'white')}
-                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded bg-blue-700 hover:bg-blue-600 text-white transition-colors"
+                            className="btn-primary flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded"
                             title={`Train as White through "${file.name}" from move 1`}
                           >
                             <Play className="w-2.5 h-2.5" />
-                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-white border border-gray-300" />
+                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-white border border-border-active" />
                           </button>
                           <button
                             onClick={() => handleStartWalk(file.id, 'black')}
-                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded bg-blue-700 hover:bg-blue-600 text-white transition-colors"
+                            className="btn-primary flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded"
                             title={`Train as Black through "${file.name}" from move 1`}
                           >
                             <Play className="w-2.5 h-2.5" />
-                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-gray-900 border border-gray-500" />
+                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-text-primary border border-border-subtle" />
                           </button>
 
                           {/* Divider */}
-                          <span className="text-gray-700 text-[10px] mx-0.5">|</span>
+                          <span className="text-border-subtle text-[10px] mx-0.5">|</span>
 
                           {/* Import (card mode) buttons */}
                           <button
                             onClick={() => handleImportRepertoire(file.id, 'white')}
-                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white transition-colors"
+                            className="btn-secondary flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded"
                             title={`Add White cards from "${file.name}" for review`}
                           >
                             <Download className="w-2.5 h-2.5" />
-                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-white border border-gray-400" />
+                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-white border border-border-active" />
                           </button>
                           <button
                             onClick={() => handleImportRepertoire(file.id, 'black')}
-                            className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white transition-colors"
+                            className="btn-secondary flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded"
                             title={`Add Black cards from "${file.name}" for review`}
                           >
                             <Download className="w-2.5 h-2.5" />
-                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-gray-900 border border-gray-500" />
+                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-text-primary border border-border-subtle" />
                           </button>
                         </div>
                       </div>
@@ -1496,9 +1537,9 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                   </div>
                 )}
                 {/* Legend */}
-                <div className="px-3 py-2 border-t border-gray-700/50 flex items-center gap-4 text-[10px] text-gray-600">
+                <div className="px-3 py-2 border-t border-border-subtle flex items-center gap-4 text-[10px] text-text-muted">
                   <span className="flex items-center gap-1">
-                    <Play className="w-2.5 h-2.5 text-blue-500" /> Play from move 1
+                    <Play className="w-2.5 h-2.5 text-accent-teal" /> Play from move 1
                   </span>
                   <span className="flex items-center gap-1">
                     <Download className="w-2.5 h-2.5" /> Add to review deck
@@ -1510,7 +1551,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
             {/* Manual card importer */}
             <button
               onClick={() => setImporterOpen(!importerOpen)}
-              className="flex items-center justify-between w-full px-3 py-2 text-xs text-gray-400 hover:text-white bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+              className="btn-secondary flex items-center justify-between w-full px-3 py-2 text-xs"
             >
               <span>Add Cards Manually</span>
               {importerOpen ? (
