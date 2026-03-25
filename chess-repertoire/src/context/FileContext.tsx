@@ -260,7 +260,7 @@ export function useFiles() {
   const { user } = useAuth();
 
   const saveFile = useCallback(
-    (name: string, tree: TreeNode) => {
+    (name: string, tree: TreeNode, importedGames?: ImportedGame[]) => {
       const now = new Date().toISOString();
       const file: RepertoireFile = {
         id: generateFileId(),
@@ -269,6 +269,7 @@ export function useFiles() {
         updatedAt: now,
         nodeCount: countNodes(tree),
         tree,
+        importedGames: importedGames ?? [],
       };
       dispatch({ type: 'SAVE_FILE', file });
       if (user) upsertRemoteFile(user.id, file);

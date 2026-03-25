@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { Save, FolderOpen, Trash2, Edit3, Check, X, Plus, FileText, FilePlus } from 'lucide-react';
 import { useFiles } from '../context/FileContext';
+import { useGames } from '../context/GameContext';
 import type { TreeNode } from '../types';
 import type { RepertoireFile } from '../types/repertoireFile';
 import { createRootNode } from '../utils/treeBuilder';
@@ -24,6 +25,8 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
     setActive,
   } = useFiles();
 
+  const { importedGames } = useGames();
+
   const handleNewTree = useCallback(() => {
     onLoadTree(createRootNode());
     setActive(null);
@@ -38,10 +41,10 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
   const handleSaveNew = useCallback(() => {
     const name = newFileName.trim();
     if (!name) return;
-    saveFile(name, currentTree);
+    saveFile(name, currentTree, importedGames);
     setNewFileName('');
     setSaveMode(false);
-  }, [newFileName, currentTree, saveFile]);
+  }, [newFileName, currentTree, importedGames, saveFile]);
 
   const handleSaveOver = useCallback(
     (id: string) => {
