@@ -1,6 +1,7 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import { ArrowLeft, Search, Loader, ChevronDown, ChevronRight, Check } from 'lucide-react';
 import { useGames } from '../../context/GameContext';
+import { useAuth } from '../../context/AuthContext';
 import { generateGameId } from '../../types/game';
 import type { ImportedGame } from '../../types/game';
 import {
@@ -74,9 +75,19 @@ function FilterChip<T extends string>({
 
 export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => {
   const games = useGames();
+  const { user } = useAuth();
+
+  // Derive a per-user (or global) localStorage key for the saved chess.com username
+  const usernameStorageKey = user ? `gamefetcher_username_${user.id}` : 'gamefetcher_username';
 
   // Form state
   const [username, setUsername] = useState('');
+
+  // Load saved username on mount / when the signed-in user changes
+  useEffect(() => {
+    const saved = localStorage.getItem(usernameStorageKey);
+    if (saved) setUsername(saved);
+  }, [usernameStorageKey]);
   const [dateFrom, setDateFrom] = useState(() => {
     const now = new Date();
     const from = new Date(now.getFullYear(), now.getMonth() - 2, 1);
@@ -217,6 +228,9 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
       return;
     }
 
+    // Persist the username so it's pre-filled next time
+    localStorage.setItem(usernameStorageKey, user);
+
     setLoading(true);
     setError(null);
     setProgress(null);
@@ -251,7 +265,7 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
     } finally {
       setLoading(false);
     }
-  }, [username, dateFrom, dateTo, applyFiltersAndClassify]);
+  }, [username, dateFrom, dateTo, applyFiltersAndClassify, usernameStorageKey]);
 
   // ─── Selection helpers ───────────────────────────────────────────────────
 

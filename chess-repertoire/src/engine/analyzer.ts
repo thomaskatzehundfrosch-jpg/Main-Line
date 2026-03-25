@@ -598,8 +598,10 @@ export function selectSignificantMoves(
  */
 export const STYLE_WEIGHTS = {
   aggressive: {
-    /** Eval threshold relaxed by this many pawns (more permissive). */
-    evalThresholdAdjust: -0.3,
+    /** Eval threshold relaxed by this many pawns (more permissive).
+     *  Must be POSITIVE: styleValue is negative for aggressive, so the product
+     *  (styleValue/2 × adjust) is negative, correctly lowering the threshold. */
+    evalThresholdAdjust: 0.3,
     /** Bonus per 1 % point of win rate (our perspective). */
     winRateBonus: 0.01,
     /** Penalty per 1 % point of draw rate. */

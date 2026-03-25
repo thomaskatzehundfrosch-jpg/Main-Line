@@ -279,16 +279,6 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                 className="w-16 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
               />
             </div>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={settings.depthDecay}
-                onChange={(e) => update('depthDecay', e.target.checked)}
-                disabled={isGenerating}
-                className="accent-accent-teal"
-              />
-              <span className="text-[11px] text-text-secondary">Depth decay for sidelines</span>
-            </label>
           </div>
         </div>
 
@@ -324,16 +314,6 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                 ))}
               </select>
             </div>
-            <label className="flex items-center gap-2 cursor-pointer" title="When enabled, positions with one clearly dominant opponent response will include fewer alternatives. Uses Stockfish eval gaps to detect 'only moves'.">
-              <input
-                type="checkbox"
-                checked={settings.smartFiltering}
-                onChange={(e) => update('smartFiltering', e.target.checked)}
-                disabled={isGenerating}
-                className="accent-accent-teal"
-              />
-              <span className="text-[11px] text-text-secondary">Smart filtering: skip weak responses</span>
-            </label>
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-text-secondary">Max nodes</span>
               <input
