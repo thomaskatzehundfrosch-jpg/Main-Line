@@ -524,16 +524,20 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Load active file tree on startup
-  const startupLoadedRef = React.useRef(false);
+  // Load active file tree on startup — run exactly once on mount.
+  // FileProvider.getInitialState() loads from localStorage synchronously, so
+  // getActiveFile() already reflects persisted state when this fires.
+  // We intentionally do NOT list getActiveFile / setTree as deps: the effect
+  // must run only once.  If it re-fired whenever state.files changed (e.g.
+  // after a first-ever "Save Current"), it would reset currentNode to the
+  // tree root mid-session — the "tree resets to first move" bug.
   useEffect(() => {
-    if (startupLoadedRef.current) return;
     const activeFile = getActiveFile();
     if (activeFile) {
       setTree(activeFile.tree);
-      startupLoadedRef.current = true;
     }
-  }, [getActiveFile, setTree]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const nodeCount = countNodes(tree);
 
