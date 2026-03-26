@@ -34,6 +34,7 @@ import { useFiles } from '../context/FileContext';
 import { useEngine } from '../hooks/useEngine';
 import EvalBar from './Board/EvalBar';
 import { SRCardImporter } from './SRCardImporter';
+import type { RepertoireFile } from '../types/repertoireFile';
 
 const _chess = new Chess();
 const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -152,6 +153,59 @@ function buildSessionQueue(cards: Card[]): Card[] {
   return getDueCards(cards, cards.length || 20).sort(compareMoveHistory);
 }
 
+function buildHistoryLookup(files: RepertoireFile[]): Map<string, { moveHistorySan: string[]; lineName?: string }> {
+  const lookup = new Map<string, { moveHistorySan: string[]; lineName?: string }>();
+
+  const traverse = (node: RepertoireFile['tree'], path: string[], fileName: string) => {
+    for (const child of node.children) {
+      const nextPath = [...path, child.move];
+      try {
+        const chess = new Chess(node.fen);
+        const move = chess.move(child.move);
+        if (move) {
+          const uci = move.from + move.to + (move.promotion || '');
+          const key = `${node.fen}|||${uci}`;
+          if (!lookup.has(key)) {
+            lookup.set(key, { moveHistorySan: nextPath, lineName: fileName });
+          }
+        }
+      } catch {
+        // Ignore invalid nodes while rebuilding card histories.
+      }
+      traverse(child, nextPath, fileName);
+    }
+  };
+
+  for (const file of files) {
+    traverse(file.tree, [], file.name);
+  }
+
+  return lookup;
+}
+
+function enrichCardsWithHistory(
+  cards: Card[],
+  historyLookup: Map<string, { moveHistorySan: string[]; lineName?: string }>,
+): { cards: Card[]; changed: boolean } {
+  let changed = false;
+
+  const enriched = cards.map((card) => {
+    if (card.moveHistorySan && card.moveHistorySan.length > 0) return card;
+
+    const match = historyLookup.get(`${card.front}|||${card.back}`);
+    if (!match) return card;
+
+    changed = true;
+    return {
+      ...card,
+      moveHistorySan: match.moveHistorySan,
+      lineName: card.lineName ?? match.lineName,
+    };
+  });
+
+  return { cards: enriched, changed };
+}
+
 export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = ({ onClose }) => {
   const { files } = useFiles();
   const engine = useEngine();
@@ -182,12 +236,14 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   const [lineStepIndex, setLineStepIndex] = useState(0);
 
   const pendingSaveRef = useRef<Card[] | null>(null);
+  const historyLookup = useMemo(() => buildHistoryLookup(files), [files]);
 
   // ── Session init ─────────────────────────────────────────────────────────
   const initializeSession = useCallback(() => {
     const loaded = loadCards();
-    const queue = buildSessionQueue(loaded);
-    setCards(loaded);
+    const { cards: rebuiltCards, changed } = enrichCardsWithHistory(loaded, historyLookup);
+    const queue = buildSessionQueue(rebuiltCards);
+    setCards(rebuiltCards);
     setSessionCards(queue);
     setCurrentIndex(0);
     setUserMove(null);
@@ -196,13 +252,14 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
     setReplayIndex(0);
     setLineStepIndex(0);
     setStats({ correct: 0, incorrect: 0 });
+    if (changed) pendingSaveRef.current = rebuiltCards;
     if (queue.length > 0) {
       setPhase('question');
       setBoardOrientation(getCardOrientation(queue[0], buildPreparedLine(queue[0])));
     } else {
       setPhase('idle');
     }
-  }, []);
+  }, [historyLookup]);
 
   useEffect(() => { initializeSession(); }, [initializeSession]);
 
@@ -526,8 +583,12 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
   const handleCardsImported = useCallback(() => {
     const loaded = loadCards();
-    const queue = buildSessionQueue(loaded);
-    setCards(loaded);
+    const { cards: rebuiltCards, changed } = enrichCardsWithHistory(loaded, historyLookup);
+    const queue = buildSessionQueue(rebuiltCards);
+    setCards(rebuiltCards);
+    if (changed) {
+      pendingSaveRef.current = rebuiltCards;
+    }
     if (phase === 'idle') {
       if (queue.length > 0) {
         setSessionCards(queue);
@@ -538,7 +599,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setBoardOrientation(getCardOrientation(queue[0], buildPreparedLine(queue[0])));
       }
     }
-  }, [phase]);
+  }, [phase, historyLookup]);
 
   const handleClearCards = useCallback(() => {
     if (!window.confirm('Remove all spaced-repetition cards? This cannot be undone.')) return;
