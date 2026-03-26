@@ -99,6 +99,25 @@ function compareCards(a: ReplayableCard, b: ReplayableCard): number {
   return a.back.localeCompare(b.back);
 }
 
+function isStrictPrefix(prefix: string[], full: string[]): boolean {
+  if (prefix.length >= full.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (prefix[i] !== full[i]) return false;
+  }
+  return true;
+}
+
+function collapseToDeepestLines(cards: ReplayableCard[]): ReplayableCard[] {
+  return cards.filter((card, index) => {
+    return !cards.some((other, otherIndex) => {
+      if (index === otherIndex) return false;
+      if (card.lineStartFen !== other.lineStartFen) return false;
+      if ((card.lineName ?? '') !== (other.lineName ?? '')) return false;
+      return isStrictPrefix(card.moveHistorySan, other.moveHistorySan);
+    });
+  });
+}
+
 function buildHistoryLookup(files: RepertoireFile[]): Map<string, { moveHistorySan: string[]; lineStartFen: string; lineName: string }> {
   const lookup = new Map<string, { moveHistorySan: string[]; lineStartFen: string; lineName: string }>();
 
@@ -160,7 +179,7 @@ function enrichReplayableCards(cards: Card[], files: RepertoireFile[]): { cards:
   }
 
   replayable.sort(compareCards);
-  return { cards: replayable, changed, skipped };
+  return { cards: collapseToDeepestLines(replayable), changed, skipped };
 }
 
 function buildPreparedLine(card: ReplayableCard | null): PreparedLineStep[] {
