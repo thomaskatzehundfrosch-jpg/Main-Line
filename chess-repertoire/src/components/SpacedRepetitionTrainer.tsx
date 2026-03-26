@@ -88,6 +88,11 @@ interface WalkSession {
   sessionPlayed: Set<string>;
   fileName: string;
   stats: SessionStats;
+  /**
+   * When true, a brief "new line" pause is shown before the first move of a
+   * new path so the user can clearly see they have moved to the next line.
+   */
+  lineStarting: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -671,6 +676,16 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
     const currentPath = walkSession.paths[walkSession.pathIdx];
 
+    // ── Brief "new line" pause at the start of each new path ──────────
+    if (walkSession.lineStarting) {
+      const timer = setTimeout(() => {
+        setWalkSession((prev) =>
+          prev ? { ...prev, lineStarting: false } : null,
+        );
+      }, 1400);
+      return () => clearTimeout(timer);
+    }
+
     // ── Line complete: advance to next path or finish session ──────────
     if (!currentPath || walkSession.stepIdx >= currentPath.length) {
       const nextPathIdx = walkSession.pathIdx + 1;
@@ -685,10 +700,11 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setWalkSession(null);
         setPhase('complete');
       } else {
-        // Move to next path, always starting from move 1 so the user
-        // plays every move from the beginning of each line.
+        // Move to next path, always starting from move 1.
+        // Set lineStarting so the UI shows a brief "new line" notice before
+        // the first move of the next path.
         setWalkSession((prev) =>
-          prev ? { ...prev, pathIdx: nextPathIdx, stepIdx: 1 } : null,
+          prev ? { ...prev, pathIdx: nextPathIdx, stepIdx: 1, lineStarting: true } : null,
         );
         // stay in 'walking' phase — effect re-fires when walkSession changes
       }
@@ -716,7 +732,9 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       return () => clearTimeout(timer);
     }
 
-    // User's turn — hand control to the user
+    // User's turn — check whether this exact move was already drilled earlier
+    // in this session.  If so, auto-advance it (the user sees the move play
+    // out on the board) so they only have to interact for genuinely new moves.
     try {
       _chess.load(parentFen);
       const moveResult = _chess.move(targetNode.move);
@@ -725,6 +743,18 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
         return;
       }
+      const uci = moveResult.from + moveResult.to + (moveResult.promotion || '');
+      const key = `${parentFen}|||${uci}`;
+
+      if (walkSession.sessionPlayed.has(key)) {
+        // Already drilled — auto-play quickly so the board shows context
+        const timer = setTimeout(() => {
+          setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
+        }, walkDelays.known);
+        return () => clearTimeout(timer);
+      }
+
+      // New move — hand control to the user
       setPhase('question');
     } catch {
       setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
@@ -843,6 +873,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         sessionPlayed: new Set(),
         fileName: file.name,
         stats: { correct: 0, incorrect: 0 },
+        lineStarting: false,
       });
 
       setPhase('walking');
@@ -962,7 +993,11 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
       {/* ─── Active session banner ──────────────────────────────────── */}
       {walkSession && (
-        <div className="flex items-center justify-between px-4 py-2 bg-accent-teal/5 border-b border-accent-teal/20 flex-shrink-0">
+        <div className={`flex items-center justify-between px-4 py-2 border-b flex-shrink-0 transition-colors duration-300 ${
+          walkSession.lineStarting
+            ? 'bg-accent-teal/20 border-accent-teal/50'
+            : 'bg-accent-teal/5 border-accent-teal/20'
+        }`}>
           <div className="flex items-center gap-2 text-sm">
             <span className="text-accent-teal font-semibold">
               {walkSession.drillColor === 'white' ? '♔' : '♚'}
@@ -970,12 +1005,20 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
             <span className="text-text-primary font-medium truncate">
               {walkSession.fileName}
             </span>
-            <span className="text-text-muted text-xs">
-              — playing as {walkSession.drillColor}
-            </span>
+            {walkSession.lineStarting ? (
+              <span className="text-accent-teal text-xs font-semibold animate-pulse">
+                ▶ Starting line {walkSession.pathIdx + 1} of {walkTotalPaths}…
+              </span>
+            ) : (
+              <span className="text-text-muted text-xs">
+                — playing as {walkSession.drillColor}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3 text-xs text-text-muted">
-            <span>Line {walkSession.pathIdx + 1} / {walkTotalPaths}</span>
+            <span className={walkSession.lineStarting ? 'text-accent-teal font-semibold' : ''}>
+              Line {walkSession.pathIdx + 1} / {walkTotalPaths}
+            </span>
             <button
               onClick={handleStopWalk}
               className="flex items-center gap-1 text-text-muted hover:text-accent-red transition-colors ml-1"
