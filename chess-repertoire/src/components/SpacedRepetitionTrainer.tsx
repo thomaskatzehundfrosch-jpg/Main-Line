@@ -109,17 +109,18 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   const initializeSession = useCallback(() => {
     const loaded = loadCards();
     setCards(loaded);
-    const due = getDueCards(loaded, 20);
-    setSessionCards(due);
+    // Shuffle all cards so every position in the repertoire gets drilled
+    const shuffled = [...loaded].sort(() => Math.random() - 0.5);
+    setSessionCards(shuffled);
     setCurrentIndex(0);
     setUserMove(null);
     setShowSolution(false);
     setSessionHistory([]);
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
-    if (due.length > 0) {
+    if (shuffled.length > 0) {
       setPhase('question');
-      setBoardOrientation(due[0].front.split(' ')[1] === 'b' ? 'black' : 'white');
+      setBoardOrientation(shuffled[0].front.split(' ')[1] === 'b' ? 'black' : 'white');
     } else {
       setPhase('idle');
     }
@@ -377,13 +378,13 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       const merged = storageAddCards(result.newCards);
       setCards(merged);
       if (phase === 'idle') {
-        const due = getDueCards(merged, 20);
-        if (due.length > 0) {
-          setSessionCards(due);
+        const shuffled = [...merged].sort(() => Math.random() - 0.5);
+        if (shuffled.length > 0) {
+          setSessionCards(shuffled);
           setCurrentIndex(0);
           setUserMove(null);
           setPhase('question');
-          setBoardOrientation(due[0].front.split(' ')[1] === 'b' ? 'black' : 'white');
+          setBoardOrientation(shuffled[0].front.split(' ')[1] === 'b' ? 'black' : 'white');
         }
       }
     }
@@ -395,13 +396,13 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
     const loaded = loadCards();
     setCards(loaded);
     if (phase === 'idle') {
-      const due = getDueCards(loaded, 20);
-      if (due.length > 0) {
-        setSessionCards(due);
+      const shuffled = [...loaded].sort(() => Math.random() - 0.5);
+      if (shuffled.length > 0) {
+        setSessionCards(shuffled);
         setCurrentIndex(0);
         setUserMove(null);
         setPhase('question');
-        setBoardOrientation(due[0].front.split(' ')[1] === 'b' ? 'black' : 'white');
+        setBoardOrientation(shuffled[0].front.split(' ')[1] === 'b' ? 'black' : 'white');
       }
     }
   }, [phase]);
