@@ -574,6 +574,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
           </h2>
         </div>
         <div className="flex items-center gap-3 text-xs text-text-muted">
+          <span className="text-accent-red font-semibold">SR REBUILD V2</span>
           <span>{getDueCards(cards, cards.length || 20).length} due</span>
           {skippedCards > 0 && (
             <>
@@ -600,6 +601,15 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
             </>
           )}
         </div>
+      </div>
+
+      <div className="mx-4 mt-3 px-3 py-2 rounded-lg border border-accent-red/40 bg-accent-red/10 text-[11px] text-accent-red flex flex-wrap gap-x-4 gap-y-1 flex-shrink-0">
+        <span>debug: rebuilt trainer active</span>
+        <span>sessionCards={sessionCards.length}</span>
+        <span>currentIndex={currentIndex}</span>
+        <span>lineStepIndex={lineStepIndex}</span>
+        <span>currentLineLength={preparedLine.length}</span>
+        <span>currentLineName={currentCard?.lineName ?? 'none'}</span>
       </div>
 
       {importFeedback && (
