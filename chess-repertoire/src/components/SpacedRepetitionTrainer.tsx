@@ -134,6 +134,49 @@ function buildAllPaths(root: TreeNode): TreeNode[][] {
   return paths;
 }
 
+/**
+ * Re-order paths so that consecutive paths diverge as early as possible.
+ *
+ * Uses a greedy nearest-neighbour approach: from the remaining pool of paths,
+ * always pick the one whose first differing move from the last selected path
+ * occurs at the shallowest depth.  This way lines that look different come
+ * back-to-back instead of many nearly-identical openings in a row.
+ */
+function sortPathsByDivergence(paths: TreeNode[][]): TreeNode[][] {
+  if (paths.length <= 1) return paths;
+
+  /** Index of the first node (depth ≥ 1) where two paths differ by FEN. */
+  function divergenceDepth(a: TreeNode[], b: TreeNode[]): number {
+    const len = Math.min(a.length, b.length);
+    for (let i = 1; i < len; i++) {
+      if (a[i].fen !== b[i].fen) return i;
+    }
+    // One path is a prefix of the other — treat as diverging at the end
+    return len;
+  }
+
+  const remaining = paths.slice(1);
+  const sorted: TreeNode[][] = [paths[0]];
+
+  while (remaining.length > 0) {
+    const last = sorted[sorted.length - 1];
+    // Pick the path that diverges earliest (smallest depth) from `last`
+    let bestIdx = 0;
+    let bestDepth = divergenceDepth(last, remaining[0]);
+    for (let i = 1; i < remaining.length; i++) {
+      const d = divergenceDepth(last, remaining[i]);
+      if (d < bestDepth) {
+        bestDepth = d;
+        bestIdx = i;
+      }
+    }
+    sorted.push(remaining[bestIdx]);
+    remaining.splice(bestIdx, 1);
+  }
+
+  return sorted;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -844,6 +887,10 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
       if (relevantPaths.length === 0) return;
 
+      // Sort so consecutive lines diverge as early as possible, reducing the
+      // feeling of repetition when many lines share a long common prefix.
+      const sortedPaths = sortPathsByDivergence(relevantPaths);
+
       // ── Reset all interaction state before handing off to the new session ──
       setWalkTryAgain(false);
       setSelectedSquare(null);
@@ -855,7 +902,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       setBoardOrientation(drillColor);
 
       setWalkSession({
-        paths: relevantPaths,
+        paths: sortedPaths,
         pathIdx: 0,
         stepIdx: 1,
         drillColor,
