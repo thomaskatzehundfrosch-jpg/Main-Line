@@ -65,6 +65,7 @@ interface PreparedLineStep {
   fenBefore: string;
   san: string;
   uci: string;
+  color: 'w' | 'b';
 }
 
 interface ReplayableCard extends Card {
@@ -191,12 +192,14 @@ function buildPreparedLine(card: ReplayableCard | null): PreparedLineStep[] {
 
     for (const san of card.moveHistorySan) {
       const fenBefore = chess.fen();
+      const color = chess.turn();
       const move = chess.move(san);
       if (!move) return [];
       steps.push({
         fenBefore,
         san,
         uci: move.from + move.to + (move.promotion || ''),
+        color,
       });
     }
 
@@ -214,6 +217,18 @@ function getOrientation(card: ReplayableCard | null): 'white' | 'black' {
   } catch {
     return 'white';
   }
+}
+
+function getTrainingColor(card: ReplayableCard | null): 'w' | 'b' {
+  if (!card) return 'w';
+  return card.front.split(' ')[1] === 'b' ? 'b' : 'w';
+}
+
+function findNextPlayerStep(steps: PreparedLineStep[], startIndex: number, trainingColor: 'w' | 'b'): number {
+  for (let i = startIndex; i < steps.length; i += 1) {
+    if (steps[i].color === trainingColor) return i;
+  }
+  return -1;
 }
 
 function mergeImportedCards(existing: Card[], file: RepertoireFile, drillColor: 'white' | 'black'): { cards: Card[]; feedback: ImportFeedback } {
@@ -321,6 +336,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
 
   const currentCard = sessionCards[currentIndex] ?? null;
   const preparedLine = useMemo(() => buildPreparedLine(currentCard), [currentCard]);
+  const trainingColor = useMemo(() => getTrainingColor(currentCard), [currentCard]);
   const currentStep = preparedLine[lineStepIndex] ?? null;
   const displayFen = phase === 'replay'
     ? (sessionHistory[replayIndex]?.reviewFen ?? INITIAL_FEN)
@@ -336,6 +352,16 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setLegalMoves([]);
     setShowSolution(false);
   }, [currentIndex, lineStepIndex, phase]);
+
+  useEffect(() => {
+    if (!currentCard) {
+      setLineStepIndex(0);
+      return;
+    }
+
+    const firstPlayerStep = findNextPlayerStep(preparedLine, 0, trainingColor);
+    setLineStepIndex(firstPlayerStep >= 0 ? firstPlayerStep : 0);
+  }, [currentCard?.id, preparedLine, trainingColor]);
 
   useEffect(() => {
     if (engine.enabled && phase !== 'replay' && currentStep) engine.analyze(displayFen);
@@ -495,8 +521,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
         return true;
       }
 
-      const nextStepIndex = lineStepIndex + 1;
-      if (nextStepIndex < preparedLine.length) {
+      const nextStepIndex = findNextPlayerStep(preparedLine, lineStepIndex + 1, trainingColor);
+      if (nextStepIndex >= 0) {
         setLineStepIndex(nextStepIndex);
         return true;
       }
@@ -507,7 +533,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     } catch {
       return false;
     }
-  }, [advanceAfterAnswer, currentStep, displayFen, expectedMove, lineStepIndex, phase, preparedLine.length, showSolution]);
+  }, [advanceAfterAnswer, currentStep, displayFen, expectedMove, lineStepIndex, phase, preparedLine, showSolution, trainingColor]);
 
   const handlePieceDrop = useCallback((source: Square, target: Square, piece: Piece) => {
     setSelectedSquare(null);
@@ -693,10 +719,10 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 </div>
               )}
               <p className="text-text-primary text-sm">
-                Play the line from the start. Next move: <span className="font-semibold">{isWhiteToMove ? 'White' : 'Black'}</span>
+                Play your line from move 1. Next move: <span className="font-semibold">{isWhiteToMove ? 'White' : 'Black'}</span>
               </p>
               <p className="text-text-muted text-xs mt-2">
-                Step {lineStepIndex + 1} of {preparedLine.length}. No positions are skipped.
+                Step {lineStepIndex + 1} of {preparedLine.length}. Opponent replies are played automatically.
               </p>
               {!showSolution ? (
                 <>
