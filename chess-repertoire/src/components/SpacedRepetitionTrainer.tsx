@@ -133,6 +133,25 @@ function findNextUserStepIndex(
   return steps.length - 1;
 }
 
+function compareMoveHistory(a: Card, b: Card): number {
+  const aHistory = a.moveHistorySan ?? [];
+  const bHistory = b.moveHistorySan ?? [];
+  const sharedLength = Math.min(aHistory.length, bHistory.length);
+
+  for (let i = 0; i < sharedLength; i += 1) {
+    if (aHistory[i] !== bHistory[i]) return aHistory[i].localeCompare(bHistory[i]);
+  }
+
+  if (aHistory.length !== bHistory.length) return aHistory.length - bHistory.length;
+  if ((a.lineName ?? '') !== (b.lineName ?? '')) return (a.lineName ?? '').localeCompare(b.lineName ?? '');
+  if (a.front !== b.front) return a.front.localeCompare(b.front);
+  return a.back.localeCompare(b.back);
+}
+
+function buildSessionQueue(cards: Card[]): Card[] {
+  return getDueCards(cards, cards.length || 20).sort(compareMoveHistory);
+}
+
 export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = ({ onClose }) => {
   const { files } = useFiles();
   const engine = useEngine();
@@ -167,10 +186,9 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   // ── Session init ─────────────────────────────────────────────────────────
   const initializeSession = useCallback(() => {
     const loaded = loadCards();
+    const queue = buildSessionQueue(loaded);
     setCards(loaded);
-    // Shuffle all cards so every position in the repertoire gets drilled
-    const shuffled = [...loaded].sort(() => Math.random() - 0.5);
-    setSessionCards(shuffled);
+    setSessionCards(queue);
     setCurrentIndex(0);
     setUserMove(null);
     setShowSolution(false);
@@ -178,9 +196,9 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
     setReplayIndex(0);
     setLineStepIndex(0);
     setStats({ correct: 0, incorrect: 0 });
-    if (shuffled.length > 0) {
+    if (queue.length > 0) {
       setPhase('question');
-      setBoardOrientation(getCardOrientation(shuffled[0], buildPreparedLine(shuffled[0])));
+      setBoardOrientation(getCardOrientation(queue[0], buildPreparedLine(queue[0])));
     } else {
       setPhase('idle');
     }
@@ -483,17 +501,17 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       const merged = result.newCards.length > 0
         ? [...upgradedExisting, ...result.newCards]
         : upgradedExisting;
+      const queue = buildSessionQueue(merged);
       saveCards(merged);
       setCards(merged);
       if (phase === 'idle') {
-        const shuffled = [...merged].sort(() => Math.random() - 0.5);
-        if (shuffled.length > 0) {
-          setSessionCards(shuffled);
+        if (queue.length > 0) {
+          setSessionCards(queue);
           setCurrentIndex(0);
           setLineStepIndex(0);
           setUserMove(null);
           setPhase('question');
-          setBoardOrientation(getCardOrientation(shuffled[0], buildPreparedLine(shuffled[0])));
+          setBoardOrientation(getCardOrientation(queue[0], buildPreparedLine(queue[0])));
         }
       }
     }
@@ -508,16 +526,16 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
   const handleCardsImported = useCallback(() => {
     const loaded = loadCards();
+    const queue = buildSessionQueue(loaded);
     setCards(loaded);
     if (phase === 'idle') {
-      const shuffled = [...loaded].sort(() => Math.random() - 0.5);
-      if (shuffled.length > 0) {
-        setSessionCards(shuffled);
+      if (queue.length > 0) {
+        setSessionCards(queue);
         setCurrentIndex(0);
         setLineStepIndex(0);
         setUserMove(null);
         setPhase('question');
-        setBoardOrientation(getCardOrientation(shuffled[0], buildPreparedLine(shuffled[0])));
+        setBoardOrientation(getCardOrientation(queue[0], buildPreparedLine(queue[0])));
       }
     }
   }, [phase]);
