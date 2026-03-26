@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X } from 'lucide-react';
+import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X, Heart } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './Auth/AuthModal';
 import { UserMenu } from './Auth/UserMenu';
@@ -45,6 +45,15 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
             <button onClick={onImport} className="btn-icon" title="Import PGN">
               <Upload className="w-4 h-4" />
             </button>
+            <a
+              href="https://paypal.me/minecraftweber"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-icon !text-pink-400 hover:!text-pink-300"
+              title="Support this project ♥"
+            >
+              <Heart className="w-4 h-4" />
+            </a>
             <button onClick={onSettings} className="btn-icon" title="Settings">
               <Settings className="w-4 h-4" />
             </button>
@@ -187,6 +196,16 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
             <span>Train</span>
           </button>
         )}
+
+        <a
+          href="https://paypal.me/minecraftweber"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-icon !text-pink-400 hover:!text-pink-300"
+          title="Support this project ♥"
+        >
+          <Heart className="w-4 h-4" />
+        </a>
 
         <button
           className="btn-icon"
