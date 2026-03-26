@@ -10,6 +10,7 @@ export interface Card {
   front: string;              // FEN position
   back: string;               // Correct move in UCI notation (e.g. "e2e4")
   moveHistorySan?: string[];  // Full SAN line from the start position to this card's move
+  lineStartFen?: string;      // Starting FEN for the stored line history
   interval: number;           // Days until next review (default 1)
   repetitions: number;        // Consecutive correct reviews (default 0)
   easeFactor: number;         // Difficulty multiplier (default 2.5)
@@ -95,12 +96,14 @@ export function createCard(
   moveUci: string,
   lineName?: string,
   moveHistorySan?: string[],
+  lineStartFen?: string,
 ): Card {
   return {
     id: crypto.randomUUID(),
     front: fen,
     back: moveUci,
     moveHistorySan,
+    lineStartFen,
     interval: 1,
     repetitions: 0,
     easeFactor: 2.5,

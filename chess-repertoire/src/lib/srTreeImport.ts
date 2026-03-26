@@ -78,6 +78,7 @@ export function treeToCards(
                   ...existingCard,
                   lineName: existingCard.lineName ?? lineName,
                   moveHistorySan: currentPath,
+                  lineStartFen: existingCard.lineStartFen ?? tree.fen,
                 };
                 updatedCards.push(upgradedCard);
                 existingByKey.set(key, upgradedCard);
@@ -85,7 +86,7 @@ export function treeToCards(
                 duplicatesSkipped++;
               }
             } else {
-              const newCard = createCard(parentFen, uci, lineName, currentPath);
+              const newCard = createCard(parentFen, uci, lineName, currentPath, tree.fen);
               existingByKey.set(key, newCard);
               newCards.push(newCard);
             }

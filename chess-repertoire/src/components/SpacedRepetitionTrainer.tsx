@@ -95,7 +95,7 @@ function buildPreparedLine(card: Card | null): PreparedLineStep[] | null {
   if (!card?.moveHistorySan || card.moveHistorySan.length === 0) return null;
 
   try {
-    const chess = new Chess();
+    const chess = new Chess(card.lineStartFen ?? INITIAL_FEN);
     const steps: PreparedLineStep[] = [];
 
     for (const san of card.moveHistorySan) {
@@ -151,8 +151,8 @@ function buildReplayableSessionQueue(cards: Card[]): SessionBuildResult {
   };
 }
 
-function buildHistoryLookup(files: RepertoireFile[]): Map<string, { moveHistorySan: string[]; lineName?: string }> {
-  const lookup = new Map<string, { moveHistorySan: string[]; lineName?: string }>();
+function buildHistoryLookup(files: RepertoireFile[]): Map<string, { moveHistorySan: string[]; lineName?: string; lineStartFen: string }> {
+  const lookup = new Map<string, { moveHistorySan: string[]; lineName?: string; lineStartFen: string }>();
 
   const traverse = (node: RepertoireFile['tree'], path: string[], fileName: string) => {
     for (const child of node.children) {
@@ -164,7 +164,7 @@ function buildHistoryLookup(files: RepertoireFile[]): Map<string, { moveHistoryS
           const uci = move.from + move.to + (move.promotion || '');
           const key = `${node.fen}|||${uci}`;
           if (!lookup.has(key)) {
-            lookup.set(key, { moveHistorySan: nextPath, lineName: fileName });
+            lookup.set(key, { moveHistorySan: nextPath, lineName: fileName, lineStartFen: file.tree.fen });
           }
         }
       } catch {
@@ -183,7 +183,7 @@ function buildHistoryLookup(files: RepertoireFile[]): Map<string, { moveHistoryS
 
 function enrichCardsWithHistory(
   cards: Card[],
-  historyLookup: Map<string, { moveHistorySan: string[]; lineName?: string }>,
+  historyLookup: Map<string, { moveHistorySan: string[]; lineName?: string; lineStartFen: string }>,
 ): { cards: Card[]; changed: boolean } {
   let changed = false;
 
@@ -197,6 +197,7 @@ function enrichCardsWithHistory(
     return {
       ...card,
       moveHistorySan: match.moveHistorySan,
+      lineStartFen: match.lineStartFen,
       lineName: card.lineName ?? match.lineName,
     };
   });
