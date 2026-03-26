@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { Analytics } from '@vercel/analytics/react';
 import { App } from './components/App';
 import { AuthProvider } from './context/AuthContext';
 import { RepertoireProvider } from './context/RepertoireContext';
@@ -26,6 +27,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
                 <GameProvider>
                   <RepertoireEvalProvider>
                     <App />
+                    <Analytics />
                   </RepertoireEvalProvider>
                 </GameProvider>
               </EngineProvider>
