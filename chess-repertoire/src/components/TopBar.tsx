@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Crown, Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X } from 'lucide-react';
+import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './Auth/AuthModal';
 import { UserMenu } from './Auth/UserMenu';
@@ -27,7 +27,11 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
         <div className="bg-bg-primary border-b border-border-subtle px-3 py-2 flex items-center justify-between">
           {/* Logo */}
           <div className="flex items-center gap-2">
-            <Crown className="w-4 h-4 text-accent-teal" />
+            <img
+              src="/app-logo.png"
+              alt="Main Line logo"
+              className="w-6 h-6 rounded-sm object-cover"
+            />
             <span className="font-mono text-accent-teal text-base font-semibold">Main Line</span>
             {activeFileName && (
               <span className="text-[11px] text-text-muted font-normal ml-1 truncate max-w-[100px]">
@@ -116,7 +120,11 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
     <div className="bg-bg-primary border-b border-border-subtle px-4 py-3 flex items-center justify-between">
       {/* Left side: Logo and App name */}
       <div className="flex items-center gap-2">
-        <Crown className="w-5 h-5 text-accent-teal" />
+        <img
+          src="/app-logo.png"
+          alt="Main Line logo"
+          className="w-8 h-8 rounded-md object-cover"
+        />
         <span className="font-mono text-accent-teal text-lg font-semibold">
           Main Line
         </span>
