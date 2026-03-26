@@ -16,6 +16,8 @@ import { createCard } from './srScheduler';
 export interface TreeImportResult {
   /** Cards that were newly created (not already in the existing set). */
   newCards: Card[];
+  /** Existing cards upgraded with full move history. */
+  updatedCards: Card[];
   /** How many tree positions matched the drill colour. */
   totalPositions: number;
   /** How many were skipped because an identical FEN+move already existed. */
@@ -37,17 +39,19 @@ export function treeToCards(
   existingCards: Card[] = [],
 ): TreeImportResult {
   // Build a set of existing (front, back) pairs for fast dedup
-  const existingKeys = new Set(
-    existingCards.map((c) => `${c.front}|||${c.back}`),
+  const existingByKey = new Map(
+    existingCards.map((c) => [`${c.front}|||${c.back}`, c] as const),
   );
 
   const newCards: Card[] = [];
+  const updatedCards: Card[] = [];
   let totalPositions = 0;
   let duplicatesSkipped = 0;
 
-  function traverse(node: TreeNode, parentFen: string | null): void {
+  function traverse(node: TreeNode, parentFen: string | null, path: string[]): void {
     // For every non-root node, check if this move should become a card
     if (node.move !== '' && parentFen !== null) {
+      const currentPath = [...path, node.move];
       // Whose turn was it in the parent position?
       const activeColor = parentFen.split(' ')[1]; // 'w' or 'b'
       const isPlayerMove =
@@ -66,26 +70,44 @@ export function treeToCards(
             const uci = move.from + move.to + (move.promotion || '');
             const key = `${parentFen}|||${uci}`;
 
-            if (existingKeys.has(key)) {
-              duplicatesSkipped++;
+            const existingCard = existingByKey.get(key);
+
+            if (existingCard) {
+              if (!existingCard.moveHistorySan || existingCard.moveHistorySan.length === 0) {
+                const upgradedCard: Card = {
+                  ...existingCard,
+                  lineName: existingCard.lineName ?? lineName,
+                  moveHistorySan: currentPath,
+                };
+                updatedCards.push(upgradedCard);
+                existingByKey.set(key, upgradedCard);
+              } else {
+                duplicatesSkipped++;
+              }
             } else {
-              existingKeys.add(key); // prevent intra-tree duplicates too
-              newCards.push(createCard(parentFen, uci, lineName));
+              const newCard = createCard(parentFen, uci, lineName, currentPath);
+              existingByKey.set(key, newCard);
+              newCards.push(newCard);
             }
           }
         } catch {
           // Skip moves that chess.js can't parse (shouldn't happen in a valid tree)
         }
       }
+
+      for (const child of node.children) {
+        traverse(child, node.fen, currentPath);
+      }
+      return;
     }
 
     // Recurse into children
     for (const child of node.children) {
-      traverse(child, node.fen);
+      traverse(child, node.fen, path);
     }
   }
 
-  traverse(tree, null);
+  traverse(tree, null, []);
 
-  return { newCards, totalPositions, duplicatesSkipped };
+  return { newCards, updatedCards, totalPositions, duplicatesSkipped };
 }
