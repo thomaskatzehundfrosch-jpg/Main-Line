@@ -685,9 +685,37 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setWalkSession(null);
         setPhase('complete');
       } else {
-        // Move to next path
+        // Advance to next path, jumping directly to the first position
+        // the user hasn't drilled yet — silently skips any shared prefix
+        // moves that were already practiced so the board doesn't "run
+        // through" familiar moves.
+        const nextPath = walkSession.paths[nextPathIdx];
+        // Default startStep = path end (skips path entirely if all seen)
+        let startStep = nextPath ? nextPath.length : 1;
+        if (nextPath) {
+          for (let i = 1; i < nextPath.length; i++) {
+            const pFen = nextPath[i - 1].fen;
+            const color = pFen.split(' ')[1];
+            const isUser =
+              (walkSession.drillColor === 'white' && color === 'w') ||
+              (walkSession.drillColor === 'black' && color === 'b');
+            if (!isUser) continue; // opponent move — keep scanning
+            try {
+              _chess.load(pFen);
+              const mv = _chess.move(nextPath[i].move);
+              if (!mv) continue;
+              const uci = mv.from + mv.to + (mv.promotion || '');
+              if (!walkSession.sessionPlayed.has(`${pFen}|||${uci}`)) {
+                startStep = i; // first unseen user move
+                break;
+              }
+            } catch {
+              continue;
+            }
+          }
+        }
         setWalkSession((prev) =>
-          prev ? { ...prev, pathIdx: nextPathIdx, stepIdx: 1 } : null,
+          prev ? { ...prev, pathIdx: nextPathIdx, stepIdx: startStep } : null,
         );
         // stay in 'walking' phase — effect re-fires when walkSession changes
       }
@@ -715,7 +743,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       return () => clearTimeout(timer);
     }
 
-    // User's turn — check if the move was already seen in this session
+    // User's turn — hand control to the user
     try {
       _chess.load(parentFen);
       const moveResult = _chess.move(targetNode.move);
@@ -724,16 +752,6 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
         return;
       }
-      const uci = moveResult.from + moveResult.to + (moveResult.promotion || '');
-      const key = `${parentFen}|||${uci}`;
-      if (walkSession.sessionPlayed.has(key)) {
-        // Already practiced this exact position+move in this session (shared
-        // prefix with a previous line) — auto-advance so we only drill new
-        // branching moves, not the same prefix over and over.
-        setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
-        return;
-      }
-      // New move — hand control to the user
       setPhase('question');
     } catch {
       setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
