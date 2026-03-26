@@ -113,25 +113,9 @@ function buildPreparedLine(card: Card | null): PreparedLineStep[] | null {
   }
 }
 
-function getTrainingColor(card: Card | null, steps: PreparedLineStep[] | null): 'w' | 'b' {
-  if (steps && steps.length > 0) return steps[steps.length - 1].color;
-  return card?.front.split(' ')[1] === 'b' ? 'b' : 'w';
-}
-
 function getCardOrientation(card: Card | null, steps: PreparedLineStep[] | null): 'white' | 'black' {
-  return getTrainingColor(card, steps) === 'b' ? 'black' : 'white';
-}
-
-function findNextUserStepIndex(
-  steps: PreparedLineStep[] | null,
-  startIndex: number,
-  trainingColor: 'w' | 'b',
-): number {
-  if (!steps || steps.length === 0) return 0;
-  for (let i = startIndex; i < steps.length; i += 1) {
-    if (steps[i].color === trainingColor) return i;
-  }
-  return steps.length - 1;
+  if (steps && steps.length > 0) return steps[0].color === 'b' ? 'black' : 'white';
+  return card?.front.split(' ')[1] === 'b' ? 'black' : 'white';
 }
 
 function compareMoveHistory(a: Card, b: Card): number {
@@ -289,7 +273,6 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   // ── Derived values ────────────────────────────────────────────────────────
   const currentCard: Card | null = sessionCards[currentIndex] ?? null;
   const preparedLine = useMemo(() => buildPreparedLine(currentCard), [currentCard]);
-  const trainingColor = useMemo(() => getTrainingColor(currentCard, preparedLine), [currentCard, preparedLine]);
   const currentReviewFen = useMemo(() => {
     if (preparedLine && preparedLine[lineStepIndex]) return preparedLine[lineStepIndex].fenBefore;
     return currentCard?.front ?? INITIAL_FEN;
@@ -308,10 +291,9 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   useEffect(() => {
     if (!currentCard) {
       setLineStepIndex(0);
-      return;
     }
-    setLineStepIndex(findNextUserStepIndex(preparedLine, 0, trainingColor));
-  }, [currentCard?.id, preparedLine, trainingColor]);
+    setLineStepIndex(0);
+  }, [currentCard?.id]);
 
   // Reset click-to-move state when card changes
   useEffect(() => {
@@ -465,9 +447,8 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         return false;
       }
       if (preparedLine && preparedLine[lineStepIndex] && uci === expectedMoveUci) {
-        const nextUserStepIndex = findNextUserStepIndex(preparedLine, lineStepIndex + 1, trainingColor);
-        if (lineStepIndex < preparedLine.length - 1 && nextUserStepIndex > lineStepIndex) {
-          setLineStepIndex(nextUserStepIndex);
+        if (lineStepIndex < preparedLine.length - 1) {
+          setLineStepIndex(lineStepIndex + 1);
           setUserMove(null);
           return true;
         }
@@ -485,7 +466,6 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
     expectedMoveUci,
     preparedLine,
     lineStepIndex,
-    trainingColor,
   ]);
 
   const handlePieceDrop = useCallback((src: Square, tgt: Square, piece: Piece): boolean => {
@@ -745,12 +725,12 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                 </div>
               )}
               <p className="text-text-primary text-sm">
-                Find the best move for{' '}
+                Play the next move in the line for{' '}
                 <span className="font-semibold">{isWhiteToMove ? 'White' : 'Black'}</span>
               </p>
               {preparedLine && preparedLine.length > 1 && (
                 <p className="text-text-muted text-xs mt-2">
-                  Play the line from move 1. Opponent replies are filled in automatically.
+                  Replay the full line from move 1. No moves are skipped.
                 </p>
               )}
               {!showSolution ? (
