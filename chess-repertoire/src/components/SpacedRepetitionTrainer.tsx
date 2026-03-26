@@ -724,7 +724,16 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
         return;
       }
-      // Always hand control to the user for their moves
+      const uci = moveResult.from + moveResult.to + (moveResult.promotion || '');
+      const key = `${parentFen}|||${uci}`;
+      if (walkSession.sessionPlayed.has(key)) {
+        // Already practiced this exact position+move in this session (shared
+        // prefix with a previous line) — auto-advance so we only drill new
+        // branching moves, not the same prefix over and over.
+        setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
+        return;
+      }
+      // New move — hand control to the user
       setPhase('question');
     } catch {
       setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
