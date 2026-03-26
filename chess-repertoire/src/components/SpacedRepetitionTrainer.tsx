@@ -777,8 +777,9 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       return () => clearTimeout(timer);
     }
 
-    // User's turn — hand control to the user (they play every move from the
-    // beginning of each line, including shared prefix moves).
+    // User's turn — check if we already drilled this exact position+move
+    // earlier in the session (shared prefix). If so, auto-advance instead
+    // of asking the user the same question again.
     try {
       _chess.load(parentFen);
       const moveResult = _chess.move(targetNode.move);
@@ -787,6 +788,18 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
         return;
       }
+
+      const uci = moveResult.from + moveResult.to + (moveResult.promotion || '');
+      const key = `${parentFen}|||${uci}`;
+
+      if (walkSession.sessionPlayed.has(key)) {
+        // Already answered this position — auto-advance through it
+        const timer = setTimeout(() => {
+          setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
+        }, walkDelays.known);
+        return () => clearTimeout(timer);
+      }
+
       setPhase('question');
     } catch {
       setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
