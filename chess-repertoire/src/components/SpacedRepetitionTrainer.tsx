@@ -65,6 +65,11 @@ interface ImportFeedback {
   skipped: number;
 }
 
+interface SessionBuildResult {
+  queue: Card[];
+  skippedWithoutHistory: number;
+}
+
 interface PreparedLineStep {
   fenBefore: string;
   fenAfter: string;
@@ -137,6 +142,15 @@ function buildSessionQueue(cards: Card[]): Card[] {
   return getDueCards(cards, cards.length || 20).sort(compareMoveHistory);
 }
 
+function buildReplayableSessionQueue(cards: Card[]): SessionBuildResult {
+  const dueCards = buildSessionQueue(cards);
+  const queue = dueCards.filter((card) => (card.moveHistorySan?.length ?? 0) > 0);
+  return {
+    queue,
+    skippedWithoutHistory: dueCards.length - queue.length,
+  };
+}
+
 function buildHistoryLookup(files: RepertoireFile[]): Map<string, { moveHistorySan: string[]; lineName?: string }> {
   const lookup = new Map<string, { moveHistorySan: string[]; lineName?: string }>();
 
@@ -206,6 +220,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   const [repertoireListOpen, setRepertoireListOpen] = useState(true);
   const [importerOpen, setImporterOpen] = useState(false);
   const [importFeedback, setImportFeedback] = useState<ImportFeedback | null>(null);
+  const [skippedCardsWithoutHistory, setSkippedCardsWithoutHistory] = useState(0);
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [boardWidth, setBoardWidth] = useState(400);
@@ -226,9 +241,10 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   const initializeSession = useCallback(() => {
     const loaded = loadCards();
     const { cards: rebuiltCards, changed } = enrichCardsWithHistory(loaded, historyLookup);
-    const queue = buildSessionQueue(rebuiltCards);
+    const { queue, skippedWithoutHistory } = buildReplayableSessionQueue(rebuiltCards);
     setCards(rebuiltCards);
     setSessionCards(queue);
+    setSkippedCardsWithoutHistory(skippedWithoutHistory);
     setCurrentIndex(0);
     setUserMove(null);
     setShowSolution(false);
@@ -538,9 +554,10 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       const merged = result.newCards.length > 0
         ? [...upgradedExisting, ...result.newCards]
         : upgradedExisting;
-      const queue = buildSessionQueue(merged);
+      const { queue, skippedWithoutHistory } = buildReplayableSessionQueue(merged);
       saveCards(merged);
       setCards(merged);
+      setSkippedCardsWithoutHistory(skippedWithoutHistory);
       if (phase === 'idle') {
         if (queue.length > 0) {
           setSessionCards(queue);
@@ -564,8 +581,9 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
   const handleCardsImported = useCallback(() => {
     const loaded = loadCards();
     const { cards: rebuiltCards, changed } = enrichCardsWithHistory(loaded, historyLookup);
-    const queue = buildSessionQueue(rebuiltCards);
+    const { queue, skippedWithoutHistory } = buildReplayableSessionQueue(rebuiltCards);
     setCards(rebuiltCards);
+    setSkippedCardsWithoutHistory(skippedWithoutHistory);
     if (changed) {
       pendingSaveRef.current = rebuiltCards;
     }
@@ -610,6 +628,12 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         </div>
         <div className="flex items-center gap-3 text-xs text-text-muted">
           <span>{dueCount} due</span>
+          {skippedCardsWithoutHistory > 0 && (
+            <>
+              <span className="text-border-subtle">|</span>
+              <span>{skippedCardsWithoutHistory} need re-import</span>
+            </>
+          )}
           <span className="text-border-subtle">|</span>
           <span>{cards.length} total</span>
           {cards.length > 0 && (
@@ -706,7 +730,9 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
               <p className="text-text-muted text-center text-sm">
                 {cards.length === 0
                   ? 'No cards yet. Import a repertoire below to get started.'
-                  : 'No cards due for review. Import more lines to keep training!'}
+                  : skippedCardsWithoutHistory > 0
+                    ? 'No replayable cards due yet. Re-import the repertoire so training can start from move 1.'
+                    : 'No cards due for review. Import more lines to keep training!'}
               </p>
               {cards.length > 0 && (
                 <p className="text-text-muted text-xs">
