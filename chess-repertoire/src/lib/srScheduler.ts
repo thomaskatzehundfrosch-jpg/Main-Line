@@ -9,6 +9,7 @@ export interface Card {
   id: string;
   front: string;              // FEN position
   back: string;               // Correct move in UCI notation (e.g. "e2e4")
+  moveHistorySan?: string[];  // Full SAN line from the start position to this card's move
   interval: number;           // Days until next review (default 1)
   repetitions: number;        // Consecutive correct reviews (default 0)
   easeFactor: number;         // Difficulty multiplier (default 2.5)
@@ -87,12 +88,19 @@ export function getDueCards(cards: Card[], limit: number = 20): Card[] {
  * @param fen     The FEN string of the position to drill
  * @param moveUci The correct response in UCI notation (e.g. "e2e4")
  * @param lineName Optional label for the opening line
+ * @param moveHistorySan Optional SAN line from the initial position to this move
  */
-export function createCard(fen: string, moveUci: string, lineName?: string): Card {
+export function createCard(
+  fen: string,
+  moveUci: string,
+  lineName?: string,
+  moveHistorySan?: string[],
+): Card {
   return {
     id: crypto.randomUUID(),
     front: fen,
     back: moveUci,
+    moveHistorySan,
     interval: 1,
     repetitions: 0,
     easeFactor: 2.5,
