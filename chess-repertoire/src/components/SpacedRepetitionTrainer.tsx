@@ -676,13 +676,15 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
 
     const currentPath = walkSession.paths[walkSession.pathIdx];
 
-    // ── Brief "new line" pause at the start of each new path ──────────
+    // ── "New line" pause at the start of each new path ────────────────
+    // Give the user a clear 2.5 s visual break so they know the next line
+    // is starting, even when the opening moves are identical.
     if (walkSession.lineStarting) {
       const timer = setTimeout(() => {
         setWalkSession((prev) =>
           prev ? { ...prev, lineStarting: false } : null,
         );
-      }, 1400);
+      }, 2500);
       return () => clearTimeout(timer);
     }
 
@@ -732,9 +734,8 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
       return () => clearTimeout(timer);
     }
 
-    // User's turn — check whether this exact move was already drilled earlier
-    // in this session.  If so, auto-advance it (the user sees the move play
-    // out on the board) so they only have to interact for genuinely new moves.
+    // User's turn — hand control to the user (they play every move from the
+    // beginning of each line, including shared prefix moves).
     try {
       _chess.load(parentFen);
       const moveResult = _chess.move(targetNode.move);
@@ -743,18 +744,6 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
         return;
       }
-      const uci = moveResult.from + moveResult.to + (moveResult.promotion || '');
-      const key = `${parentFen}|||${uci}`;
-
-      if (walkSession.sessionPlayed.has(key)) {
-        // Already drilled — auto-play quickly so the board shows context
-        const timer = setTimeout(() => {
-          setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
-        }, walkDelays.known);
-        return () => clearTimeout(timer);
-      }
-
-      // New move — hand control to the user
       setPhase('question');
     } catch {
       setWalkSession((prev) => (prev ? { ...prev, stepIdx: prev.stepIdx + 1 } : null));
@@ -1062,7 +1051,7 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                 height={boardWidth}
               />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 relative">
               <Chessboard
                 position={displayFen}
                 onPieceDrop={handlePieceDrop}
@@ -1084,6 +1073,23 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
                 animationDuration={100}
                 customArrows={customArrows.length > 0 ? customArrows : undefined}
               />
+              {/* New-line overlay — shown for 2.5 s when advancing to the next path */}
+              {walkSession?.lineStarting && (
+                <div
+                  className="absolute inset-0 flex flex-col items-center justify-center rounded"
+                  style={{ backgroundColor: 'rgba(0,0,0,0.72)' }}
+                >
+                  <span className="text-white text-2xl font-bold mb-1">
+                    Line {walkSession.pathIdx + 1} / {walkTotalPaths}
+                  </span>
+                  <span className="text-accent-teal text-sm font-semibold animate-pulse">
+                    New line starting…
+                  </span>
+                  <span className="text-text-muted text-xs mt-2">
+                    Play every move from the beginning
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
