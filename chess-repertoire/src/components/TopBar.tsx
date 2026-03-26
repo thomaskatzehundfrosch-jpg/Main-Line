@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X, Heart } from 'lucide-react';
+import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X, Heart, Youtube } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './Auth/AuthModal';
 import { UserMenu } from './Auth/UserMenu';
@@ -53,6 +53,15 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
               title="Support this project ♥"
             >
               <Heart className="w-4 h-4" />
+            </a>
+            <a
+              href="https://www.youtube.com/watch?v=GVZkeb9-uaM&t=101s"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-icon !text-red-500 hover:!text-red-400"
+              title="Watch tutorial on YouTube"
+            >
+              <Youtube className="w-4 h-4" />
             </a>
             <button onClick={onSettings} className="btn-icon" title="Settings">
               <Settings className="w-4 h-4" />
@@ -205,6 +214,16 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
           title="Support this project ♥"
         >
           <Heart className="w-4 h-4" />
+        </a>
+
+        <a
+          href="https://www.youtube.com/watch?v=GVZkeb9-uaM&t=101s"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-icon !text-red-500 hover:!text-red-400"
+          title="Watch tutorial on YouTube"
+        >
+          <Youtube className="w-4 h-4" />
         </a>
 
         <button
