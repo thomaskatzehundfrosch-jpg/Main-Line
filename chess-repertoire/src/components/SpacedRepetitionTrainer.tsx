@@ -40,6 +40,7 @@ const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const sharedChess = new Chess();
 
 type Phase = 'idle' | 'question' | 'grading' | 'complete' | 'replay';
+type OpponentSpeed = 'slow' | 'normal' | 'fast';
 
 interface ImportFeedback {
   fileName: string;
@@ -60,6 +61,12 @@ interface SessionEntry {
   userMove: string | null;
   correct: boolean;
 }
+
+const OPPONENT_SPEED_MS: Record<OpponentSpeed, number> = {
+  slow: 900,
+  normal: 500,
+  fast: 180,
+};
 
 interface PreparedLineStep {
   fenBefore: string;
@@ -258,12 +265,14 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const [lineStepIndex, setLineStepIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('idle');
   const [userMove, setUserMove] = useState<string | null>(null);
+  const [cardHadMistake, setCardHadMistake] = useState(false);
   const [showSolution, setShowSolution] = useState(false);
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white');
   const [stats, setStats] = useState<SessionStats>({ correct: 0, incorrect: 0 });
   const [lifetimeStats, setLifetimeStats] = useState<SRLifetimeStats>(loadStats);
+  const [opponentSpeed, setOpponentSpeed] = useState<OpponentSpeed>('normal');
   const [importFeedback, setImportFeedback] = useState<ImportFeedback | null>(null);
   const [repertoireListOpen, setRepertoireListOpen] = useState(true);
   const [importerOpen, setImporterOpen] = useState(false);
@@ -274,6 +283,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [boardWidth, setBoardWidth] = useState(400);
   const autoAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const opponentAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef<Card[] | null>(null);
 
   const rebuildSession = useCallback((sourceCards?: Card[]) => {
@@ -291,6 +301,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setCurrentIndex(0);
     setLineStepIndex(0);
     setUserMove(null);
+    setCardHadMistake(false);
     setShowSolution(false);
     setSelectedSquare(null);
     setLegalMoves([]);
@@ -345,7 +356,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const isWhiteToMove = displayFen.split(' ')[1] === 'w';
   const correctMoveSan = expectedMove ? uciToSan(displayFen, expectedMove) : '';
   const userMoveSan = userMove ? uciToSan(displayFen, userMove) : '';
-  const isCorrect = userMove !== null && userMove === expectedMove;
+  const isCorrect = !cardHadMistake && userMove !== null && userMove === expectedMove;
 
   useEffect(() => {
     setSelectedSquare(null);
@@ -366,6 +377,22 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   useEffect(() => {
     if (engine.enabled && phase !== 'replay' && currentStep) engine.analyze(displayFen);
   }, [displayFen, currentStep, engine.enabled, phase]);
+
+  useEffect(() => {
+    if (phase !== 'question' || !currentStep) return;
+    if (currentStep.color === trainingColor) return;
+
+    opponentAdvanceRef.current = setTimeout(() => {
+      const nextPlayerStep = findNextPlayerStep(preparedLine, lineStepIndex + 1, trainingColor);
+      if (nextPlayerStep >= 0) {
+        setLineStepIndex(nextPlayerStep);
+      }
+    }, OPPONENT_SPEED_MS[opponentSpeed]);
+
+    return () => {
+      if (opponentAdvanceRef.current) clearTimeout(opponentAdvanceRef.current);
+    };
+  }, [currentStep, lineStepIndex, opponentSpeed, phase, preparedLine, trainingColor]);
 
   useEffect(() => {
     if (phase !== 'grading' || !isCorrect) return;
@@ -451,7 +478,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const advanceAfterAnswer = useCallback(() => {
     if (!currentCard || !expectedMove) return;
 
-    const correct = userMove !== null && userMove === expectedMove;
+    const correct = !cardHadMistake && userMove !== null && userMove === expectedMove;
 
     setSessionHistory((prev) => [...prev, {
       card: currentCard,
@@ -479,15 +506,30 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       return;
     }
 
-    setCurrentIndex(nextCardIndex);
-    setLineStepIndex(0);
-    setUserMove(null);
-    setBoardOrientation(getOrientation(sessionCards[nextCardIndex]));
+      setCurrentIndex(nextCardIndex);
+      setLineStepIndex(0);
+      setUserMove(null);
+      setCardHadMistake(false);
+      setBoardOrientation(getOrientation(sessionCards[nextCardIndex]));
     setPhase('question');
-  }, [cards, currentCard, currentIndex, displayFen, expectedMove, sessionCards, stats, userMove]);
+  }, [cardHadMistake, cards, currentCard, currentIndex, displayFen, expectedMove, sessionCards, stats, userMove]);
+
+  const continueAfterCorrectMove = useCallback(() => {
+    const nextStepIndex = findNextPlayerStep(preparedLine, lineStepIndex + 1, trainingColor);
+    if (nextStepIndex >= 0) {
+      setLineStepIndex(nextStepIndex);
+      setPhase('question');
+      setShowSolution(false);
+      setSelectedSquare(null);
+      setLegalMoves([]);
+      return;
+    }
+
+    advanceAfterAnswer();
+  }, [advanceAfterAnswer, lineStepIndex, preparedLine, trainingColor]);
 
   const submitMove = useCallback((from: string, to: string, piece?: string) => {
-    if (phase !== 'question' || !currentStep) return false;
+    if ((phase !== 'question' && phase !== 'grading') || !currentStep) return false;
 
     try {
       sharedChess.load(displayFen);
@@ -509,21 +551,28 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       const uci = from + to + (isPromotion ? 'q' : '');
       if (showSolution) {
         if (uci === expectedMove) {
-          advanceAfterAnswer();
+          continueAfterCorrectMove();
           return true;
         }
         return false;
       }
 
       if (uci !== expectedMove) {
-        setUserMove(uci);
+        setUserMove((prev) => prev ?? uci);
+        setCardHadMistake(true);
         setPhase('grading');
+        return true;
+      }
+
+      if (cardHadMistake) {
+        continueAfterCorrectMove();
         return true;
       }
 
       const nextStepIndex = findNextPlayerStep(preparedLine, lineStepIndex + 1, trainingColor);
       if (nextStepIndex >= 0) {
-        setLineStepIndex(nextStepIndex);
+        const immediateNextIndex = lineStepIndex + 1;
+        setLineStepIndex(immediateNextIndex);
         return true;
       }
 
@@ -533,7 +582,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     } catch {
       return false;
     }
-  }, [advanceAfterAnswer, currentStep, displayFen, expectedMove, lineStepIndex, phase, preparedLine, showSolution, trainingColor]);
+  }, [cardHadMistake, continueAfterCorrectMove, currentStep, displayFen, expectedMove, lineStepIndex, phase, preparedLine, showSolution, trainingColor]);
 
   const handlePieceDrop = useCallback((source: Square, target: Square, piece: Piece) => {
     setSelectedSquare(null);
@@ -600,7 +649,6 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
           </h2>
         </div>
         <div className="flex items-center gap-3 text-xs text-text-muted">
-          <span className="text-accent-red font-semibold">SR REBUILD V2</span>
           <span>{getDueCards(cards, cards.length || 20).length} due</span>
           {skippedCards > 0 && (
             <>
@@ -627,15 +675,6 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
             </>
           )}
         </div>
-      </div>
-
-      <div className="mx-4 mt-3 px-3 py-2 rounded-lg border border-accent-red/40 bg-accent-red/10 text-[11px] text-accent-red flex flex-wrap gap-x-4 gap-y-1 flex-shrink-0">
-        <span>debug: rebuilt trainer active</span>
-        <span>sessionCards={sessionCards.length}</span>
-        <span>currentIndex={currentIndex}</span>
-        <span>lineStepIndex={lineStepIndex}</span>
-        <span>currentLineLength={preparedLine.length}</span>
-        <span>currentLineName={currentCard?.lineName ?? 'none'}</span>
       </div>
 
       {importFeedback && (
@@ -667,7 +706,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 onPieceDrop={handlePieceDrop}
                 onSquareClick={handleSquareClick}
                 onPieceClick={(_piece, square) => handleSquareClick(square)}
-                isDraggablePiece={() => phase === 'question'}
+                isDraggablePiece={() => phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution))}
                 customDarkSquareStyle={{ backgroundColor: '#4b6fa0' }}
                 customLightSquareStyle={{ backgroundColor: '#e8dcc0' }}
                 customBoardStyle={{ borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)' }}
@@ -688,6 +727,27 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
         </div>
 
         <div className="lg:w-[400px] lg:min-w-[340px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
+          <div className="panel p-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-text-muted">Opponent move speed</span>
+              <div className="flex items-center gap-1">
+                {(['slow', 'normal', 'fast'] as OpponentSpeed[]).map((speed) => (
+                  <button
+                    key={speed}
+                    onClick={() => setOpponentSpeed(speed)}
+                    className={`px-2.5 py-1 rounded text-[10px] font-medium uppercase tracking-wide transition-colors ${
+                      opponentSpeed === speed
+                        ? 'bg-accent-teal text-white'
+                        : 'bg-bg-panel text-text-muted hover:text-text-primary'
+                    }`}
+                  >
+                    {speed}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {sessionCards.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
             <div>
               <div className="flex justify-between text-xs text-text-muted mb-1.5">
@@ -770,7 +830,11 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
               {isCorrect ? (
                 <div className="text-center text-xs text-text-muted animate-pulse-subtle">Advancing…</div>
               ) : (
-                <div className="flex items-center gap-2">
+                <div className="flex flex-col gap-2">
+                  <p className="text-text-muted text-xs">
+                    Play the correct move on the board to continue this line. This card will still count as incorrect.
+                  </p>
+                  <div className="flex items-center gap-2">
                   {!showSolution && (
                     <button
                       onClick={() => setShowSolution(true)}
@@ -785,6 +849,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                   >
                     <SkipForward className="w-3.5 h-3.5" /> Next Card
                   </button>
+                  </div>
                 </div>
               )}
             </div>
