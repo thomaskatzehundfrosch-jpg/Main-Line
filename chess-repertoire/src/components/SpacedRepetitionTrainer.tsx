@@ -685,37 +685,10 @@ export const SpacedRepetitionTrainer: React.FC<SpacedRepetitionTrainerProps> = (
         setWalkSession(null);
         setPhase('complete');
       } else {
-        // Advance to next path, jumping directly to the first position
-        // the user hasn't drilled yet — silently skips any shared prefix
-        // moves that were already practiced so the board doesn't "run
-        // through" familiar moves.
-        const nextPath = walkSession.paths[nextPathIdx];
-        // Default startStep = path end (skips path entirely if all seen)
-        let startStep = nextPath ? nextPath.length : 1;
-        if (nextPath) {
-          for (let i = 1; i < nextPath.length; i++) {
-            const pFen = nextPath[i - 1].fen;
-            const color = pFen.split(' ')[1];
-            const isUser =
-              (walkSession.drillColor === 'white' && color === 'w') ||
-              (walkSession.drillColor === 'black' && color === 'b');
-            if (!isUser) continue; // opponent move — keep scanning
-            try {
-              _chess.load(pFen);
-              const mv = _chess.move(nextPath[i].move);
-              if (!mv) continue;
-              const uci = mv.from + mv.to + (mv.promotion || '');
-              if (!walkSession.sessionPlayed.has(`${pFen}|||${uci}`)) {
-                startStep = i; // first unseen user move
-                break;
-              }
-            } catch {
-              continue;
-            }
-          }
-        }
+        // Move to next path, always starting from move 1 so the user
+        // plays every move from the beginning of each line.
         setWalkSession((prev) =>
-          prev ? { ...prev, pathIdx: nextPathIdx, stepIdx: startStep } : null,
+          prev ? { ...prev, pathIdx: nextPathIdx, stepIdx: 1 } : null,
         );
         // stay in 'walking' phase — effect re-fires when walkSession changes
       }
