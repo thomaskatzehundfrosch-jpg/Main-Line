@@ -1,7 +1,7 @@
 {
   "name": "Main Line",
   "short_name": "Main Line",
-  "description": "Free chess repertoire generator and tree analyser.",
+  "description": "generate custom chess repertoires, grow your opening tree and find your diviations from your games.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
