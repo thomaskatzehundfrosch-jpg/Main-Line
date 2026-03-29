@@ -177,6 +177,15 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
         // (the tree was mutated in place by addMoveToTree, but React compares
         // by reference — without this, the D3 useEffect may not re-render)
         const updatedTree = { ...state.tree };
+        if (action.navigateToNewNode === false) {
+          const refreshedPath = getPathToNode(updatedTree, state.currentNode.id);
+          return {
+            ...state,
+            tree: updatedTree,
+            currentNode: refreshedPath?.[refreshedPath.length - 1] ?? state.currentNode,
+            currentPath: refreshedPath ?? state.currentPath,
+          };
+        }
         const path = getPathToNode(updatedTree, newNode.id);
         return {
           ...state,
@@ -192,6 +201,15 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
       const lastNode = addLineToTree(state.tree, action.parentId, action.moves);
       if (lastNode) {
         const updatedTree = { ...state.tree };
+        if (action.navigateToNewNode === false) {
+          const refreshedPath = getPathToNode(updatedTree, state.currentNode.id);
+          return {
+            ...state,
+            tree: updatedTree,
+            currentNode: refreshedPath?.[refreshedPath.length - 1] ?? state.currentNode,
+            currentPath: refreshedPath ?? state.currentPath,
+          };
+        }
         const path = getPathToNode(updatedTree, lastNode.id);
         return {
           ...state,
