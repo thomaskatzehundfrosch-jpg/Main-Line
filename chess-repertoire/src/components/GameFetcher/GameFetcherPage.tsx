@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect } from 'react';
-import { ArrowLeft, Search, Loader, ChevronDown, ChevronRight, Check } from 'lucide-react';
+import { ArrowLeft, Search, Loader, ChevronDown, ChevronRight, Check, Globe, BookOpen } from 'lucide-react';
 import { useGames } from '../../context/GameContext';
 import { useAuth } from '../../context/AuthContext';
 import { generateGameId } from '../../types/game';
@@ -12,6 +12,9 @@ import {
   type FetchProgress,
 } from '../../utils/chessComFetcher';
 import { classifyOpening, classifyTimeControl } from '../../utils/ecoClassifier';
+import { RepertoireGameFetcherTab } from './RepertoireGameFetcherTab';
+
+type FetcherMode = 'standard' | 'repertoire';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -76,6 +79,7 @@ function FilterChip<T extends string>({
 export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => {
   const games = useGames();
   const { user } = useAuth();
+  const [mode, setMode] = useState<FetcherMode>('standard');
 
   // Derive a per-user (or global) localStorage key for the saved chess.com username
   const usernameStorageKey = user ? `gamefetcher_username_${user.id}` : 'gamefetcher_username';
@@ -407,13 +411,47 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
         <h2 className="font-mono text-sm uppercase tracking-wider text-text-secondary">
           Game Fetcher
         </h2>
-        <span className="text-xs text-text-muted">
-          Fetch games from chess.com and import as overlay
+
+        {/* Mode tabs */}
+        <div className="flex items-center gap-1 ml-4 bg-bg-panel rounded border border-border-subtle p-0.5">
+          <button
+            onClick={() => setMode('standard')}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-mono transition-all ${
+              mode === 'standard'
+                ? 'bg-bg-surface text-text-primary border border-border-active'
+                : 'text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            <Globe className="w-3 h-3" />
+            Standard
+          </button>
+          <button
+            onClick={() => setMode('repertoire')}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs font-mono transition-all ${
+              mode === 'repertoire'
+                ? 'bg-bg-surface text-accent-teal border border-accent-teal/40'
+                : 'text-text-muted hover:text-text-secondary'
+            }`}
+          >
+            <BookOpen className="w-3 h-3" />
+            From Repertoire
+          </button>
+        </div>
+
+        <span className="text-xs text-text-muted ml-1">
+          {mode === 'standard'
+            ? 'Fetch games from chess.com and import as overlay'
+            : 'Find games that reached a specific line in your repertoire'}
         </span>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-auto">
+      {/* Repertoire mode — delegate entirely to dedicated component */}
+      {mode === 'repertoire' && (
+        <RepertoireGameFetcherTab onClose={onClose} />
+      )}
+
+      {/* Content (standard mode only) */}
+      {mode === 'standard' && <div className="flex-1 overflow-auto">
         <div className="max-w-[900px] mx-auto p-6">
           {/* ─── Fetch Form ─────────────────────────────────────────── */}
           <div className="panel mb-6">
@@ -850,7 +888,7 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
             </div>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 };
