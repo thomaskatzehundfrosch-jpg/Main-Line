@@ -66,13 +66,6 @@ function buildAncestorsOfPinnedFens(
   return hasBelow;
 }
 
-function cloneTreeForDisplay(node: TreeNode): any {
-  return {
-    ...node,
-    children: node.children.map(cloneTreeForDisplay),
-  };
-}
-
 /**
  * Build the visible subset of the tree:
  *  - The full current path (root → currentNode) is always shown.
@@ -571,10 +564,34 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       svg.call(zoom.transform, d3.zoomIdentity.translate(60, height / 2).scale(0.9));
     }
 
-    // Prepare hierarchy data as the full tree. This disables the path-driven
-    // collapse behavior so adding moves cannot snap the view back to a
-    // reduced "current line" representation.
-    const treeData = cloneTreeForDisplay(tree);
+    // Prepare hierarchy data — show the full "current line":
+    //   • the path from root → currentNode (backward)
+    //   • the continuation from currentNode → end of its variation, following
+    //     the first child at each step (forward)
+    // Branch siblings at any point on this line appear as collapsed stubs.
+    // Mistake-NAG nodes (?, ??, ?!, !?) and their full subtrees are always shown.
+    const pathIds = new Set(currentPath.map((n) => n.id));
+
+    // Extend forward: follow first children from currentNode to the leaf.
+    let fwdNode: TreeNode = currentNode;
+    while (fwdNode.children.length > 0) {
+      fwdNode = fwdNode.children[0];
+      pathIds.add(fwdNode.id);
+    }
+
+    const ancestorsOfMistakesSet = new Set<string>();
+    buildAncestorsOfMistakes(tree, ancestorsOfMistakesSet);
+    const ancestorsOfPinnedFensSet = new Set<string>();
+    if (pinnedOverlayFens.size > 0) {
+      buildAncestorsOfPinnedFens(tree, pinnedOverlayFens, ancestorsOfPinnedFensSet);
+    }
+    const treeData = buildVisibleTree(
+      tree,
+      pathIds,
+      ancestorsOfMistakesSet,
+      ancestorsOfPinnedFensSet,
+      expandedNodes
+    );
 
     // Add overlay nodes from imported games (full lines, not just first divergence)
     if (showGameOverlay && importedGames.length > 0) {

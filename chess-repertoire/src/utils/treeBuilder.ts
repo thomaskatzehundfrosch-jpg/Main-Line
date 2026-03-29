@@ -11,6 +11,23 @@ export function resetNodeIdCounter(): void {
   nodeIdCounter = 0;
 }
 
+export function syncNodeIdCounterToTree(tree: TreeNode): void {
+  let maxId = nodeIdCounter;
+
+  const visit = (node: TreeNode) => {
+    const match = /^node_(\d+)$/.exec(node.id);
+    if (match) {
+      maxId = Math.max(maxId, Number(match[1]));
+    }
+    for (const child of node.children) {
+      visit(child);
+    }
+  };
+
+  visit(tree);
+  nodeIdCounter = maxId;
+}
+
 export function createRootNode(): TreeNode {
   const chess = new Chess();
   return {
@@ -234,6 +251,7 @@ export function addMoveToTree(
   move: string,
   fen: string
 ): TreeNode | null {
+  syncNodeIdCounterToTree(tree);
   const parent = findNodeById(tree, parentId);
   if (!parent) return null;
 

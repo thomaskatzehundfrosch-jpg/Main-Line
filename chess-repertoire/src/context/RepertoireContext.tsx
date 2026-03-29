@@ -7,6 +7,7 @@ import {
   addLineToTree,
   removeNodeImmutable,
   createRootNode,
+  syncNodeIdCounterToTree,
 } from '../utils/treeBuilder';
 
 // Create context
@@ -31,6 +32,7 @@ function getInitialState(): RepertoireState {
 function repertoireReducer(state: RepertoireState, action: RepertoireAction): RepertoireState {
   switch (action.type) {
     case 'SET_TREE': {
+      syncNodeIdCounterToTree(action.tree);
       return {
         ...state,
         tree: action.tree,
