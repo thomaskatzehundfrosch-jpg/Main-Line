@@ -205,11 +205,13 @@ const RepertoirePathPicker: React.FC<PathPickerProps> = ({
       </div>
 
       {moves.length > 0 && (
-        <div className="flex items-center gap-1.5 text-xs text-accent-teal/80 font-mono">
-          <Milestone className="w-3 h-3" />
-          <span>
-            Will fetch games that play your first {moves.length} move{moves.length !== 1 ? 's' : ''} — grouped by where the opponent deviates
-          </span>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5 text-xs text-accent-teal/80 font-mono">
+            <Milestone className="w-3 h-3" />
+            <span>
+              Will fetch games that play your first {moves.length} move{moves.length !== 1 ? 's' : ''} — grouped by where the opponent deviates
+            </span>
+          </div>
         </div>
       )}
     </div>
@@ -268,6 +270,16 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
   }, [repertoire.currentPath]);
 
   const selectedMoves = useMemo(() => pathToMoves(selectedPath), [selectedPath]);
+
+  // ─── Min-depth filter ─────────────────────────────────────────────────────
+  // Only include games that followed at least this many moves of the selected line.
+  // Default to the full line length so results are focused on the chosen opening.
+  const [minDepth, setMinDepth] = useState(0);
+
+  // When the selected line changes, default minDepth to the full line length
+  useEffect(() => {
+    setMinDepth(selectedMoves.length > 0 ? selectedMoves.length : 0);
+  }, [selectedMoves.length]);
 
   // ─── Fetch state ──────────────────────────────────────────────────────────
   const [loading, setLoading] = useState(false);
@@ -330,9 +342,10 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
           }
         }
 
-        // Only include games that follow at least the first move of the selected line
-        // (games that deviate before any move was even played are irrelevant)
-        if (deviationIndex === 0) continue;
+        // Only include games that followed at least `minDepth` moves of the line.
+        // deviationIndex === -1 means the full line was followed (always include).
+        const followedMoves = deviationIndex === -1 ? selectedMoves.length : deviationIndex;
+        if (followedMoves < minDepth) continue;
 
         classified.push({
           id: `rep_${gameIndex++}_${g.end_time}`,
@@ -384,7 +397,7 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
 
       return [...map.values()];
     },
-    [filters, selectedMoves]
+    [filters, selectedMoves, minDepth]
   );
 
   // ─── Fetch ────────────────────────────────────────────────────────────────
@@ -613,6 +626,31 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
                 <span>{loading ? 'FETCHING...' : 'FETCH GAMES'}</span>
               </button>
             </div>
+
+            {/* Min depth filter */}
+            {selectedMoves.length > 1 && (
+              <div className="flex items-center gap-3 py-2 border-t border-border-subtle">
+                <span className="text-[10px] font-mono text-text-muted uppercase tracking-wider whitespace-nowrap">
+                  Min. moves matched
+                </span>
+                <input
+                  type="range"
+                  min={1}
+                  max={selectedMoves.length}
+                  value={minDepth}
+                  onChange={(e) => setMinDepth(Number(e.target.value))}
+                  className="w-32 accent-teal-400"
+                />
+                <span className="font-mono text-sm text-accent-teal min-w-[20px]">{minDepth}</span>
+                <span className="text-[11px] font-mono text-text-muted">
+                  {minDepth === selectedMoves.length
+                    ? '— only games that played your full line'
+                    : minDepth === 1
+                    ? '— all games (even 1-move deviations)'
+                    : `— games that followed ≥ ${minDepth} of your ${selectedMoves.length} moves`}
+                </span>
+              </div>
+            )}
 
             {/* Filters */}
             <div className="flex gap-6 flex-wrap">
