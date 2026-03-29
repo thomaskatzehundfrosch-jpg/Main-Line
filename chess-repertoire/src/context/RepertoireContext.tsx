@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useReducer, ReactNode } from 'react';
+import React, { createContext, useContext, useReducer, useEffect, ReactNode } from 'react';
 import type { TreeNode, RepertoireState, RepertoireAction } from '../types';
 import {
   findNodeById,
@@ -8,6 +8,7 @@ import {
   removeNodeImmutable,
   createRootNode,
   cloneTreeWithFreshIds,
+  findDuplicateNodeIds,
   syncNodeIdCounterToTree,
 } from '../utils/treeBuilder';
 
@@ -282,6 +283,18 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
 // Provider component
 export function RepertoireProvider({ children }: { children: ReactNode }): JSX.Element {
   const [state, dispatch] = useReducer(repertoireReducer, undefined, getInitialState);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+
+    const duplicates = findDuplicateNodeIds(state.tree);
+    if (duplicates.length > 0) {
+      console.warn(
+        '[main-line] Duplicate node IDs detected in live repertoire tree.',
+        duplicates
+      );
+    }
+  }, [state.tree]);
 
   return (
     <RepertoireContext.Provider value={{ state, dispatch }}>

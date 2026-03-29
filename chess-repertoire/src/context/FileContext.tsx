@@ -3,7 +3,7 @@ import type { RepertoireFile } from '../types/repertoireFile';
 import type { TreeNode } from '../types';
 import type { ImportedGame } from '../types/game';
 import { generateFileId } from '../types/repertoireFile';
-import { cloneTreeWithFreshIds, countNodes } from '../utils/treeBuilder';
+import { cloneTreeWithFreshIds, countNodes, findDuplicateNodeIds } from '../utils/treeBuilder';
 import { safePersist, logger } from '../utils/errorLogger';
 import { useAuth } from './AuthContext';
 import {
@@ -116,6 +116,16 @@ function loadFiles(): RepertoireFile[] {
     if (raw) {
       const files = JSON.parse(raw) as RepertoireFile[];
       return files.map((file) => {
+        if (import.meta.env.DEV) {
+          const duplicates = findDuplicateNodeIds(file.tree);
+          if (duplicates.length > 0) {
+            console.warn(
+              `[main-line] Repaired duplicate node IDs while loading "${file.name}".`,
+              duplicates
+            );
+          }
+        }
+
         const tree = cloneTreeWithFreshIds(file.tree);
         return {
           ...file,

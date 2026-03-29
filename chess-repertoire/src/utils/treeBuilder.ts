@@ -89,6 +89,29 @@ export function cloneTreeWithFreshIds(node: TreeNode): TreeNode {
 }
 
 /**
+ * Collect duplicate node IDs in a tree, along with how many times each ID
+ * appears. Useful for dev-time integrity checks.
+ */
+export function findDuplicateNodeIds(tree: TreeNode): Array<{ id: string; count: number }> {
+  const counts = new Map<string, number>();
+
+  const visit = (node: TreeNode) => {
+    counts.set(node.id, (counts.get(node.id) ?? 0) + 1);
+    for (const child of node.children) {
+      if ((child as any)._isOverlay) continue;
+      visit(child);
+    }
+  };
+
+  visit(tree);
+
+  return Array.from(counts.entries())
+    .filter(([, count]) => count > 1)
+    .map(([id, count]) => ({ id, count }))
+    .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
+}
+
+/**
  * Find or create a child node with the given move from a parent node.
  */
 function findOrCreateChild(parent: TreeNode, move: string, fen: string, depth: number): TreeNode {
