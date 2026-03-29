@@ -24,7 +24,7 @@ import { useFiles } from '../context/FileContext';
 import { useRepertoireEval } from '../context/RepertoireEvalContext';
 import { getOpeningForPath } from '../utils/openingNames';
 import { exportTreeToPgn, copyToClipboard, downloadAsFile } from '../utils/pgnExporter';
-import { countNodes } from '../utils/treeBuilder';
+import { cloneTree, countNodes } from '../utils/treeBuilder';
 import { findNodeById } from '../utils/treeBuilder';
 import type { TreeNode } from '../types';
 import type { ImportedGame } from '../types/game';
@@ -73,7 +73,7 @@ export const App: React.FC = () => {
   const engine = useEngine();
   const pgnParser = usePgnParser();
   const games = useGames();
-  const { files, activeFileId, getActiveFile, updateFileGames } = useFiles();
+  const { files, activeFileId, getActiveFile } = useFiles();
   const repertoireEval = useRepertoireEval();
 
   // ─── Folder ↔ Games bidirectional sync ────────────────────────────────
@@ -91,15 +91,6 @@ export const App: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFileId]);
 
-  // When games change (e.g. user imports / removes a game), persist them to
-  // the active folder so they survive file-switches and page reloads.
-  useEffect(() => {
-    if (loadingGamesFromFileRef.current) return; // skip echo-back after file load
-    if (activeFileId) {
-      updateFileGames(activeFileId, games.importedGames);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [games.importedGames]);
   // ──────────────────────────────────────────────────────────────────────
 
   // Ref so async analysis loop always sees the latest cancellation state
@@ -538,7 +529,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const activeFile = getActiveFile();
     if (activeFile) {
-      setTree(activeFile.tree);
+      setTree(cloneTree(activeFile.tree));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

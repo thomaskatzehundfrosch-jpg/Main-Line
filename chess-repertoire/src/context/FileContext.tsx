@@ -3,7 +3,7 @@ import type { RepertoireFile } from '../types/repertoireFile';
 import type { TreeNode } from '../types';
 import type { ImportedGame } from '../types/game';
 import { generateFileId } from '../types/repertoireFile';
-import { countNodes } from '../utils/treeBuilder';
+import { cloneTree, countNodes } from '../utils/treeBuilder';
 import { safePersist, logger } from '../utils/errorLogger';
 import { useAuth } from './AuthContext';
 import {
@@ -268,7 +268,7 @@ export function useFiles() {
         createdAt: now,
         updatedAt: now,
         nodeCount: countNodes(tree),
-        tree,
+        tree: cloneTree(tree),
         importedGames: importedGames ?? [],
       };
       dispatch({ type: 'SAVE_FILE', file });
@@ -280,14 +280,15 @@ export function useFiles() {
 
   const updateFile = useCallback(
     (id: string, tree: TreeNode) => {
-      dispatch({ type: 'UPDATE_FILE', id, tree });
+      const clonedTree = cloneTree(tree);
+      dispatch({ type: 'UPDATE_FILE', id, tree: clonedTree });
       if (user) {
         // Build the updated file for cloud sync
         const existing = state.files.find((f) => f.id === id);
         if (existing) {
           const updated = {
             ...existing,
-            tree,
+            tree: clonedTree,
             nodeCount: countNodes(tree),
             updatedAt: new Date().toISOString(),
           };

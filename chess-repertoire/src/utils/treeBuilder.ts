@@ -30,6 +30,17 @@ export function createRootNode(): TreeNode {
 }
 
 /**
+ * Deep-clone a repertoire tree so editor state is detached from saved files.
+ */
+export function cloneTree(node: TreeNode): TreeNode {
+  return {
+    ...node,
+    nags: [...node.nags],
+    children: node.children.map(cloneTree),
+  };
+}
+
+/**
  * Find or create a child node with the given move from a parent node.
  */
 function findOrCreateChild(parent: TreeNode, move: string, fen: string, depth: number): TreeNode {

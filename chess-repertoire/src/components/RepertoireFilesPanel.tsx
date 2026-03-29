@@ -4,7 +4,7 @@ import { useFiles } from '../context/FileContext';
 import { useGames } from '../context/GameContext';
 import type { TreeNode } from '../types';
 import type { RepertoireFile } from '../types/repertoireFile';
-import { createRootNode } from '../utils/treeBuilder';
+import { cloneTree, createRootNode } from '../utils/treeBuilder';
 
 interface RepertoireFilesPanelProps {
   currentTree: TreeNode;
@@ -55,7 +55,7 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
 
   const handleLoad = useCallback(
     (file: RepertoireFile) => {
-      onLoadTree(file.tree);
+      onLoadTree(cloneTree(file.tree));
       setActive(file.id);
     },
     [onLoadTree, setActive]
