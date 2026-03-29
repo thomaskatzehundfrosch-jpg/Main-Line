@@ -17,11 +17,11 @@ interface AnalysisSettings {
 }
 
 const DEFAULT_SETTINGS: AnalysisSettings = {
-  depth: 18,
+  depth: 22,
   inaccuracyThreshold: 0.5,
   mistakeThreshold: 1.0,
   blunderThreshold: 2.0,
-  maxMoves: 40,
+  maxMoves: 20,
 };
 
 interface GameImportPanelProps {
