@@ -7,6 +7,7 @@ import {
   addLineToTree,
   removeNodeImmutable,
   createRootNode,
+  cloneTreeWithFreshIds,
   syncNodeIdCounterToTree,
 } from '../utils/treeBuilder';
 
@@ -40,11 +41,12 @@ function getInitialState(): RepertoireState {
 function repertoireReducer(state: RepertoireState, action: RepertoireAction): RepertoireState {
   switch (action.type) {
     case 'SET_TREE': {
-      syncNodeIdCounterToTree(action.tree);
+      const normalizedTree = cloneTreeWithFreshIds(action.tree);
+      syncNodeIdCounterToTree(normalizedTree);
       return {
         ...state,
-        tree: action.tree,
-        ...resolveSelection(action.tree, action.tree.id),
+        tree: normalizedTree,
+        ...resolveSelection(normalizedTree, normalizedTree.id),
       };
     }
 

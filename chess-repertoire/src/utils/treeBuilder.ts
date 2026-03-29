@@ -58,6 +58,37 @@ export function cloneTree(node: TreeNode): TreeNode {
 }
 
 /**
+ * Deep-clone a tree while assigning fresh node IDs and rebuilding parent/depth
+ * metadata. This repairs older saved repertoires that may contain duplicate
+ * IDs from previous sessions.
+ */
+export function cloneTreeWithFreshIds(node: TreeNode): TreeNode {
+  let counter = 0;
+
+  const rebuild = (
+    current: TreeNode,
+    parentId: string | null,
+    depth: number
+  ): TreeNode => {
+    const id = `node_${++counter}`;
+    const children = current.children
+      .filter((child) => !(child as any)._isOverlay)
+      .map((child) => rebuild(child, id, depth + 1));
+
+    return {
+      ...current,
+      id,
+      parentId,
+      depth,
+      nags: [...current.nags],
+      children,
+    };
+  };
+
+  return rebuild(node, null, 0);
+}
+
+/**
  * Find or create a child node with the given move from a parent node.
  */
 function findOrCreateChild(parent: TreeNode, move: string, fen: string, depth: number): TreeNode {

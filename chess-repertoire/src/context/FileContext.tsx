@@ -3,7 +3,7 @@ import type { RepertoireFile } from '../types/repertoireFile';
 import type { TreeNode } from '../types';
 import type { ImportedGame } from '../types/game';
 import { generateFileId } from '../types/repertoireFile';
-import { cloneTree, countNodes } from '../utils/treeBuilder';
+import { cloneTreeWithFreshIds, countNodes } from '../utils/treeBuilder';
 import { safePersist, logger } from '../utils/errorLogger';
 import { useAuth } from './AuthContext';
 import {
@@ -110,27 +110,19 @@ function fileReducer(state: FileState, action: FileAction): FileState {
 
 // ─── Persistence ──────────────────────────────────────────────────────
 
-/**
- * Strip any overlay nodes that were accidentally persisted in the tree.
- * This cleans up trees saved before the prepareTreeData fix that
- * prevented overlay leaks.
- */
-function stripOverlayNodes(node: any): void {
-  if (!node || !Array.isArray(node.children)) return;
-  node.children = node.children.filter((c: any) => !c._isOverlay);
-  for (const child of node.children) stripOverlayNodes(child);
-}
-
 function loadFiles(): RepertoireFile[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const files = JSON.parse(raw) as RepertoireFile[];
-      // Clean up any overlay nodes that leaked into persisted trees
-      for (const file of files) {
-        if (file.tree) stripOverlayNodes(file.tree);
-      }
-      return files;
+      return files.map((file) => {
+        const tree = cloneTreeWithFreshIds(file.tree);
+        return {
+          ...file,
+          tree,
+          nodeCount: countNodes(tree),
+        };
+      });
     }
   } catch (err) {
     logger.error(
@@ -262,13 +254,14 @@ export function useFiles() {
   const saveFile = useCallback(
     (name: string, tree: TreeNode, importedGames?: ImportedGame[]) => {
       const now = new Date().toISOString();
+      const normalizedTree = cloneTreeWithFreshIds(tree);
       const file: RepertoireFile = {
         id: generateFileId(),
         name,
         createdAt: now,
         updatedAt: now,
-        nodeCount: countNodes(tree),
-        tree: cloneTree(tree),
+        nodeCount: countNodes(normalizedTree),
+        tree: normalizedTree,
         importedGames: importedGames ?? [],
       };
       dispatch({ type: 'SAVE_FILE', file });
@@ -280,7 +273,7 @@ export function useFiles() {
 
   const updateFile = useCallback(
     (id: string, tree: TreeNode) => {
-      const clonedTree = cloneTree(tree);
+      const clonedTree = cloneTreeWithFreshIds(tree);
       dispatch({ type: 'UPDATE_FILE', id, tree: clonedTree });
       if (user) {
         // Build the updated file for cloud sync
@@ -289,7 +282,7 @@ export function useFiles() {
           const updated = {
             ...existing,
             tree: clonedTree,
-            nodeCount: countNodes(tree),
+            nodeCount: countNodes(clonedTree),
             updatedAt: new Date().toISOString(),
           };
           upsertRemoteFile(user.id, updated);
