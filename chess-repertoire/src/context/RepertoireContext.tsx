@@ -16,6 +16,14 @@ const RepertoireContext = createContext<{
   dispatch: React.Dispatch<RepertoireAction>;
 } | null>(null);
 
+function resolveSelection(tree: TreeNode, targetId: string): Pick<RepertoireState, 'currentNode' | 'currentPath'> {
+  const path = getPathToNode(tree, targetId) ?? [tree];
+  return {
+    currentNode: path[path.length - 1],
+    currentPath: path,
+  };
+}
+
 // Initial state
 function getInitialState(): RepertoireState {
   const root = createRootNode();
@@ -36,8 +44,7 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
       return {
         ...state,
         tree: action.tree,
-        currentNode: action.tree,
-        currentPath: [action.tree],
+        ...resolveSelection(action.tree, action.tree.id),
       };
     }
 
@@ -49,38 +56,34 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
       if (path) {
         return {
           ...state,
-          // Use the actual tree node (last element of path) rather than the
-          // action's node, which might be a D3 visualization copy with empty children
-          currentNode: path[path.length - 1],
-          currentPath: path,
+          ...resolveSelection(state.tree, action.node.id),
         };
       }
       return state;
     }
 
     case 'NAVIGATE_FORWARD': {
+      const selection = resolveSelection(state.tree, state.currentNode.id);
+      const liveCurrentNode = selection.currentNode;
       const childIndex = action.childIndex ?? 0;
-      if (childIndex < state.currentNode.children.length) {
-        const child = state.currentNode.children[childIndex];
-        const path = getPathToNode(state.tree, child.id);
+      if (childIndex < liveCurrentNode.children.length) {
+        const child = liveCurrentNode.children[childIndex];
         return {
           ...state,
-          currentNode: child,
-          currentPath: path || [...state.currentPath, child],
+          ...resolveSelection(state.tree, child.id),
         };
       }
       return state;
     }
 
     case 'NAVIGATE_BACK': {
-      if (state.currentNode.parentId) {
-        const parent = findNodeById(state.tree, state.currentNode.parentId);
+      const selection = resolveSelection(state.tree, state.currentNode.id);
+      if (selection.currentNode.parentId) {
+        const parent = findNodeById(state.tree, selection.currentNode.parentId);
         if (parent) {
-          const path = getPathToNode(state.tree, parent.id);
           return {
             ...state,
-            currentNode: parent,
-            currentPath: path || [parent],
+            ...resolveSelection(state.tree, parent.id),
           };
         }
       }
@@ -90,26 +93,20 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
     case 'NAVIGATE_TO_START': {
       return {
         ...state,
-        currentNode: state.tree,
-        currentPath: [state.tree],
+        ...resolveSelection(state.tree, state.tree.id),
       };
     }
 
     case 'NAVIGATE_TO_END': {
-      let current = state.currentNode;
-      let path = state.currentPath;
+      let current = resolveSelection(state.tree, state.currentNode.id).currentNode;
 
       while (current.children.length > 0) {
-        const next = current.children[0];
-        const newPath = getPathToNode(state.tree, next.id);
-        path = newPath || [...path, next];
-        current = next;
+        current = current.children[0];
       }
 
       return {
         ...state,
-        currentNode: current,
-        currentPath: path,
+        ...resolveSelection(state.tree, current.id),
       };
     }
 
@@ -135,7 +132,7 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
         if (state.currentNode.id === action.nodeId) {
           return {
             ...state,
-            currentNode: { ...state.currentNode, comment: action.comment },
+            ...resolveSelection(state.tree, action.nodeId),
           };
         }
       }
@@ -150,7 +147,7 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
         if (state.currentNode.id === action.nodeId) {
           return {
             ...state,
-            currentNode: { ...state.currentNode, nags: [...node.nags] },
+            ...resolveSelection(state.tree, action.nodeId),
           };
         }
       }
@@ -165,7 +162,7 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
         if (state.currentNode.id === action.nodeId) {
           return {
             ...state,
-            currentNode: { ...state.currentNode, nags: [...node.nags] },
+            ...resolveSelection(state.tree, action.nodeId),
           };
         }
       }
@@ -180,20 +177,16 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
         // by reference — without this, the D3 useEffect may not re-render)
         const updatedTree = { ...state.tree };
         if (action.navigateToNewNode === false) {
-          const refreshedPath = getPathToNode(updatedTree, state.currentNode.id);
           return {
             ...state,
             tree: updatedTree,
-            currentNode: refreshedPath?.[refreshedPath.length - 1] ?? state.currentNode,
-            currentPath: refreshedPath ?? state.currentPath,
+            ...resolveSelection(updatedTree, state.currentNode.id),
           };
         }
-        const path = getPathToNode(updatedTree, newNode.id);
         return {
           ...state,
           tree: updatedTree,
-          currentNode: newNode,
-          currentPath: path || [...state.currentPath, newNode],
+          ...resolveSelection(updatedTree, newNode.id),
         };
       }
       return state;
@@ -204,20 +197,16 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
       if (lastNode) {
         const updatedTree = { ...state.tree };
         if (action.navigateToNewNode === false) {
-          const refreshedPath = getPathToNode(updatedTree, state.currentNode.id);
           return {
             ...state,
             tree: updatedTree,
-            currentNode: refreshedPath?.[refreshedPath.length - 1] ?? state.currentNode,
-            currentPath: refreshedPath ?? state.currentPath,
+            ...resolveSelection(updatedTree, state.currentNode.id),
           };
         }
-        const path = getPathToNode(updatedTree, lastNode.id);
         return {
           ...state,
           tree: updatedTree,
-          currentNode: lastNode,
-          currentPath: path || state.currentPath,
+          ...resolveSelection(updatedTree, lastNode.id),
         };
       }
       return state;
