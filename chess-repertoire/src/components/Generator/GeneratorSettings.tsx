@@ -39,6 +39,13 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
   useEffect(() => {
     setLichessConnected(!!getStoredToken());
     setLichessUsername(getStoredUsername());
+
+    const onAuthUpdated = () => {
+      setLichessConnected(!!getStoredToken());
+      setLichessUsername(getStoredUsername());
+    };
+    window.addEventListener('lichess-auth-updated', onAuthUpdated);
+    return () => window.removeEventListener('lichess-auth-updated', onAuthUpdated);
   }, []);
 
   const handleLichessConnect = useCallback(() => {

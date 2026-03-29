@@ -520,7 +520,11 @@ export const App: React.FC = () => {
   // Handle Lichess OAuth2 callback (?code=... in URL after redirect)
   useEffect(() => {
     if (window.location.search.includes('code=')) {
-      handleOAuthCallback().catch(console.error);
+      handleOAuthCallback().then((success) => {
+        if (success) {
+          window.dispatchEvent(new CustomEvent('lichess-auth-updated'));
+        }
+      }).catch(console.error);
     }
   }, []);
 
