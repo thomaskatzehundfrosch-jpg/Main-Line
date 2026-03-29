@@ -52,6 +52,20 @@ function buildAncestorsOfMistakes(node: TreeNode, result: Set<string>): boolean 
   return hasBelow;
 }
 
+function buildAncestorsOfPinnedFens(
+  node: TreeNode,
+  pinnedFens: Set<string>,
+  result: Set<string>
+): boolean {
+  const isPinned = pinnedFens.has(node.fen);
+  let hasBelow = isPinned;
+  for (const child of node.children) {
+    if (buildAncestorsOfPinnedFens(child, pinnedFens, result)) hasBelow = true;
+  }
+  if (hasBelow) result.add(node.id);
+  return hasBelow;
+}
+
 /**
  * Build the visible subset of the tree:
  *  - The full current path (root → currentNode) is always shown.
@@ -68,6 +82,7 @@ function buildVisibleTree(
   node: TreeNode,
   currentPathIds: Set<string>,
   ancestorsOfMistakes: Set<string>,
+  ancestorsOfPinnedFens: Set<string>,
   expandedNodes: Set<string>,
   forceExpand = false
 ): any {
@@ -80,15 +95,16 @@ function buildVisibleTree(
   // Inside a mistake subtree: show everything unconditionally.
   if (forceExpand) {
     result.children = node.children.map((c) =>
-      buildVisibleTree(c, currentPathIds, ancestorsOfMistakes, expandedNodes, true)
+      buildVisibleTree(c, currentPathIds, ancestorsOfMistakes, ancestorsOfPinnedFens, expandedNodes, true)
     );
     return result;
   }
 
   const onPath = currentPathIds.has(node.id);
+  const onPinnedRoute = ancestorsOfPinnedFens.has(node.id);
 
-  // Stub: not on path and not on the route to a mistake.
-  if (!onPath && !ancestorsOfMistakes.has(node.id)) {
+  // Stub: not on path and not on the route to a mistake or a freshly added branch.
+  if (!onPath && !ancestorsOfMistakes.has(node.id) && !onPinnedRoute) {
     if (expandedNodes.has(node.id)) {
       // Manually expanded — show one level of children as stubs.
       result.children = node.children.map((c) => ({
@@ -107,22 +123,27 @@ function buildVisibleTree(
     const childOnPath = currentPathIds.has(child.id);
     const childIsMistake = child.nags.some((n) => MISTAKE_NAGS.has(n));
     const childLeadsToMistake = ancestorsOfMistakes.has(child.id);
+    const childLeadsToPinnedFen = ancestorsOfPinnedFens.has(child.id);
 
     if (onPath) {
       if (childOnPath) {
         // Continue along the current path.
         result.children.push(
-          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, expandedNodes, false)
+          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, ancestorsOfPinnedFens, expandedNodes, false)
         );
       } else if (childIsMistake) {
         // Mistake child — show full subtree.
         result.children.push(
-          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, expandedNodes, true)
+          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, ancestorsOfPinnedFens, expandedNodes, true)
         );
       } else if (childLeadsToMistake) {
         // On the route to a mistake — show but don't force-expand.
         result.children.push(
-          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, expandedNodes, false)
+          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, ancestorsOfPinnedFens, expandedNodes, false)
+        );
+      } else if (childLeadsToPinnedFen) {
+        result.children.push(
+          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, ancestorsOfPinnedFens, expandedNodes, false)
         );
       } else if (expandedNodes.has(child.id)) {
         // Manually expanded stub — show one extra level as stubs.
@@ -144,18 +165,22 @@ function buildVisibleTree(
         });
       }
     } else {
-      // Node is on the route to a mistake (not on current path).
-      // Only follow children that are also on route to (or are) mistakes.
+      // Node is on the route to a mistake or a freshly accepted branch
+      // (not on current path). Only follow children that continue that route.
       if (childIsMistake) {
         result.children.push(
-          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, expandedNodes, true)
+          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, ancestorsOfPinnedFens, expandedNodes, true)
         );
       } else if (childLeadsToMistake) {
         result.children.push(
-          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, expandedNodes, false)
+          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, ancestorsOfPinnedFens, expandedNodes, false)
+        );
+      } else if (childLeadsToPinnedFen) {
+        result.children.push(
+          buildVisibleTree(child, currentPathIds, ancestorsOfMistakes, ancestorsOfPinnedFens, expandedNodes, false)
         );
       }
-      // Other children of mistake-ancestor nodes are hidden.
+      // Other children of special-route nodes are hidden.
     }
   }
 
@@ -417,6 +442,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   }>({ node: null, isOverlay: false, x: 0, y: 0, visible: false });
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
   const [dismissedOverlayFens, setDismissedOverlayFens] = useState<Set<string>>(new Set());
+  const [pinnedOverlayFens, setPinnedOverlayFens] = useState<Set<string>>(new Set());
   const [exploreMode, setExploreMode] = useState(false);
   const exploreModeRef = useRef(false);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
@@ -432,6 +458,11 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   // preserve expansion of deep nodes from the previous path so they don't collapse.
   const prevPathRef = useRef<TreeNode[]>([]);
   useEffect(() => {
+    const prevIds = prevPathRef.current.map((n) => n.id).join('>');
+    const nextIds = currentPath.map((n) => n.id).join('>');
+    if (prevIds && prevIds !== nextIds) {
+      setPinnedOverlayFens(new Set());
+    }
     // When navigating away from a path, preserve manual expansions the user
     // had opened on nodes that are no longer on the new path.
     prevPathRef.current = currentPath;
@@ -550,7 +581,17 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
 
     const ancestorsOfMistakesSet = new Set<string>();
     buildAncestorsOfMistakes(tree, ancestorsOfMistakesSet);
-    const treeData = buildVisibleTree(tree, pathIds, ancestorsOfMistakesSet, expandedNodes);
+    const ancestorsOfPinnedFensSet = new Set<string>();
+    if (pinnedOverlayFens.size > 0) {
+      buildAncestorsOfPinnedFens(tree, pinnedOverlayFens, ancestorsOfPinnedFensSet);
+    }
+    const treeData = buildVisibleTree(
+      tree,
+      pathIds,
+      ancestorsOfMistakesSet,
+      ancestorsOfPinnedFensSet,
+      expandedNodes
+    );
 
     // Add overlay nodes from imported games (full lines, not just first divergence)
     if (showGameOverlay && importedGames.length > 0) {
@@ -612,6 +653,13 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
           } else {
             // Normal mode: clicking an overlay node adds the entire chain to the repertoire
             const chain = collectOverlayChain(d);
+            if (chain) {
+              setPinnedOverlayFens((prev) => {
+                const next = new Set(prev);
+                for (const move of chain.moves) next.add(move.fen);
+                return next;
+              });
+            }
             if (chain && onAddLine) {
               onAddLine(chain.repertoireParentId, chain.moves);
             } else if (chain && chain.moves.length === 1 && onAddMove) {
@@ -1027,7 +1075,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   }, [tree, currentNode, currentPath, expandedNodes, getMaxGameCount, onNodeClick, onAddMove, onAddLine, toggleExpand, showGameOverlay,
       importedGames.length, importedGames.filter(g => g.analyzed).length,
       importedGames.reduce((s, g) => s + g.mistakes.filter(m => m.reviewed).length, 0),
-      dismissedOverlayFens,
+      dismissedOverlayFens, pinnedOverlayFens,
       nodeAnnotations.size]);
 
   return (
