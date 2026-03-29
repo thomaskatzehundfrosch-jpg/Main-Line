@@ -425,6 +425,8 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   /** Screen position captured in the click handler; consumed once by the next render. */
   const clickedScreenPosRef = useRef<{ x: number; y: number } | null>(null);
+  /** Which node we expect to become current after a click-driven navigation. */
+  const clickedTargetNodeIdRef = useRef<string | null>(null);
 
   // When the current path changes (e.g. user adds a move in a different branch),
   // preserve expansion of deep nodes from the previous path so they don't collapse.
@@ -599,16 +601,11 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       .attr('transform', (d: any) => `translate(${d.y},${d.x})`)
       .style('cursor', 'pointer')
       .on('click', (_event: any, d: any) => {
-        // Snapshot where this node sits on screen BEFORE the state change
-        // so the next render can put the resulting currentNode back here.
-        if (transformRef.current) {
-          clickedScreenPosRef.current = {
-            x: transformRef.current.applyX(d.y),
-            y: transformRef.current.applyY(d.x),
-          };
-        }
-
         if (d.data._isOverlay) {
+          // Overlay clicks that import moves should not reposition the viewport.
+          clickedScreenPosRef.current = null;
+          clickedTargetNodeIdRef.current = null;
+
           if (exploreModeRef.current) {
             // Explore mode: show this position on the board without touching the tree
             onExploreFen?.(d.data.fen);
@@ -622,6 +619,16 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
             }
           }
           return;
+        }
+
+        // Snapshot where this node sits on screen BEFORE the state change
+        // so the next render can keep the navigated-to node in place.
+        if (transformRef.current) {
+          clickedScreenPosRef.current = {
+            x: transformRef.current.applyX(d.y),
+            y: transformRef.current.applyY(d.x),
+          };
+          clickedTargetNodeIdRef.current = d.data.id;
         }
         onNodeClick(d.data);
       })
@@ -986,14 +993,19 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       const currentD3 = root.descendants().find((d: any) => d.data.id === currentNode.id) as any;
       if (currentD3 && transformRef.current) {
         const pin = clickedScreenPosRef.current;
-        if (pin) {
+        const pinTargetId = clickedTargetNodeIdRef.current;
+        if (pin && pinTargetId === currentNode.id) {
           // Consume the pin so it only fires once.
           clickedScreenPosRef.current = null;
+          clickedTargetNodeIdRef.current = null;
           const { k } = transformRef.current;
           const newT = d3.zoomIdentity
             .translate(pin.x - k * currentD3.y, pin.y - k * currentD3.x)
             .scale(k);
           svg.call(zoom.transform, newT);
+        } else if (pin && pinTargetId !== currentNode.id) {
+          clickedScreenPosRef.current = null;
+          clickedTargetNodeIdRef.current = null;
         } else {
           const t = transformRef.current;
           const sx = t.applyX(currentD3.y);
