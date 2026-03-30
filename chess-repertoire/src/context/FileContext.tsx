@@ -202,8 +202,12 @@ const FileContext = createContext<{
 export function FileProvider({ children }: { children: ReactNode }): JSX.Element {
   const [state, dispatch] = useReducer(fileReducer, undefined, getInitialState);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestFilesRef = useRef(state.files);
   const { user } = useAuth();
   const prevUserRef = useRef<string | null>(null);
+
+  // Keep ref in sync so flush handlers always have the latest data
+  latestFilesRef.current = state.files;
 
   // ── Cloud sync: when user signs in, fetch remote files and merge ──────
   useEffect(() => {
@@ -236,11 +240,36 @@ export function FileProvider({ children }: { children: ReactNode }): JSX.Element
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       saveFiles(state.files);
+      saveTimerRef.current = null;
     }, DEBOUNCE_MS);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, [state.files]);
+
+  // Flush any pending save on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveFiles(latestFilesRef.current);
+      }
+    };
+  }, []);
+
+  // Flush pending save on page refresh / navigation — React cleanup is NOT
+  // guaranteed to run during beforeunload, so we need this explicit listener.
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        saveFiles(latestFilesRef.current);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   // Save active file ID
   useEffect(() => {

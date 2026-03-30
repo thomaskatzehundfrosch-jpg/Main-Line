@@ -170,6 +170,7 @@ export function GameProvider({ children }: { children: ReactNode }): JSX.Element
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       saveGames(state.importedGames);
+      saveTimerRef.current = null;
     }, DEBOUNCE_MS);
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -184,6 +185,20 @@ export function GameProvider({ children }: { children: ReactNode }): JSX.Element
         saveGames(latestGamesRef.current);
       }
     };
+  }, []);
+
+  // Flush pending save on page refresh / navigation — React cleanup is NOT
+  // guaranteed to run during beforeunload, so we need this explicit listener.
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        saveGames(latestGamesRef.current);
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
   return (
