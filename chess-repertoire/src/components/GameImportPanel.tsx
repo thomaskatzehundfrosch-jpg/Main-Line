@@ -182,14 +182,18 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
           settings.maxMoves > 0 ? settings.maxMoves : undefined
         );
 
-        setGameAnalyzed(game.id, mistakes);
-
-        // Clean up worker
-        worker.terminate();
-        workerRef.current = null;
+        // Only save results if analysis ran to completion (not cancelled)
+        if (!cancelledRef.current) {
+          setGameAnalyzed(game.id, mistakes);
+        }
       } catch (err) {
         console.error('Analysis failed:', err);
       } finally {
+        // Always clean up worker here (handleCancel no longer terminates it)
+        if (workerRef.current) {
+          workerRef.current.terminate();
+          workerRef.current = null;
+        }
         setAnalyzing(null);
         setAnalysisProgress(null);
       }
@@ -224,9 +228,11 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
     cancelledRef.current = true;
     cancelAnalysis();
     if (workerRef.current) {
+      // Send 'stop' so Stockfish emits 'bestmove', which unblocks the current
+      // analyzePosition promise. analyzeGame then sees isCancelled() = true and
+      // returns cleanly, letting handleAnalyze's finally block terminate the worker.
+      // Do NOT call worker.terminate() here — that would permanently hang the promise.
       workerRef.current.postMessage('stop');
-      workerRef.current.terminate();
-      workerRef.current = null;
     }
     setAnalyzing(null);
     setAnalysisProgress(null);

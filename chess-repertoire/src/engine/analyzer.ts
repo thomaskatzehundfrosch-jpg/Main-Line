@@ -237,6 +237,12 @@ export async function analyzeGame(
 
     const evalResult = await analyzePosition(worker, fens[i], depth);
     evals.push(evalResult.score);
+
+    // Check after each position too — so a cancel mid-evaluation exits on the
+    // very next opportunity (after the in-progress 'bestmove' arrives).
+    if (isCancelled && isCancelled()) {
+      return mistakes;
+    }
   }
 
   // Step 3: Compare consecutive evaluations to find mistakes
