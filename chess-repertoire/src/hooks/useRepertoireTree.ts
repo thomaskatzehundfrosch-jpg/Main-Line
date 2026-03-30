@@ -86,7 +86,7 @@ export function useRepertoireTree() {
         parentId,
         move,
         fen,
-        navigateToNewNode: false,
+        navigateToNewNode: true,
       });
     },
     [dispatch]
@@ -98,7 +98,7 @@ export function useRepertoireTree() {
         type: 'ADD_MOVE_LINE',
         parentId,
         moves,
-        navigateToNewNode: false,
+        navigateToNewNode: true,
       });
     },
     [dispatch]
