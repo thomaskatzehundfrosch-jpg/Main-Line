@@ -86,7 +86,13 @@ function fileReducer(state: FileState, action: FileAction): FileState {
       return {
         ...state,
         files: state.files.map((f) =>
-          f.id === action.id ? { ...f, importedGames: action.games } : f
+          f.id === action.id
+            ? {
+                ...f,
+                importedGames: action.games,
+                updatedAt: new Date().toISOString(),
+              }
+            : f
         ),
       };
 
@@ -308,7 +314,11 @@ export function useFiles() {
       if (user) {
         const existing = state.files.find((f) => f.id === id);
         if (existing) {
-          upsertRemoteFile(user.id, { ...existing, importedGames: games });
+          upsertRemoteFile(user.id, {
+            ...existing,
+            importedGames: games,
+            updatedAt: new Date().toISOString(),
+          });
         }
       }
     },

@@ -73,7 +73,7 @@ export const App: React.FC = () => {
   const engine = useEngine();
   const pgnParser = usePgnParser();
   const games = useGames();
-  const { files, activeFileId, getActiveFile } = useFiles();
+  const { files, activeFileId, getActiveFile, updateFileGames } = useFiles();
   const repertoireEval = useRepertoireEval();
 
   // ─── Folder ↔ Games bidirectional sync ────────────────────────────────
@@ -90,6 +90,11 @@ export const App: React.FC = () => {
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFileId]);
+
+  useEffect(() => {
+    if (!activeFileId || loadingGamesFromFileRef.current) return;
+    updateFileGames(activeFileId, games.importedGames);
+  }, [activeFileId, games.importedGames, updateFileGames]);
 
   // ──────────────────────────────────────────────────────────────────────
 
