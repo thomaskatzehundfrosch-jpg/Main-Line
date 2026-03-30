@@ -160,6 +160,10 @@ const GameContext = createContext<{
 export function GameProvider({ children }: { children: ReactNode }): JSX.Element {
   const [state, dispatch] = useReducer(gameReducer, undefined, getInitialState);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestGamesRef = useRef(state.importedGames);
+
+  // Keep ref in sync so the unmount handler always has the latest data
+  latestGamesRef.current = state.importedGames;
 
   // Debounced persistence
   useEffect(() => {
@@ -171,6 +175,16 @@ export function GameProvider({ children }: { children: ReactNode }): JSX.Element
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, [state.importedGames]);
+
+  // Flush any pending save on unmount so analysis results are never lost
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveGames(latestGamesRef.current);
+      }
+    };
+  }, []);
 
   return (
     <GameContext.Provider value={{ state, dispatch }}>

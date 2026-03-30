@@ -49,6 +49,7 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
   const [importError, setImportError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const workerRef = useRef<Worker | null>(null);
+  const cancelledRef = useRef(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<AnalysisSettings>(DEFAULT_SETTINGS);
@@ -155,6 +156,7 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
     async (game: ImportedGame) => {
       if (analyzingGameId) return; // already analyzing
 
+      cancelledRef.current = false;
       resetCancellation();
       setAnalyzing(game.id);
       setAnalysisProgress([0, game.moves.length + 1]);
@@ -171,7 +173,7 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
           (current, total) => {
             setAnalysisProgress([current, total]);
           },
-          () => analysisCancelled,
+          () => cancelledRef.current,
           {
             inaccuracy: settings.inaccuracyThreshold,
             mistake: settings.mistakeThreshold,
@@ -194,7 +196,6 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
     },
     [
       analyzingGameId,
-      analysisCancelled,
       resetCancellation,
       setAnalyzing,
       setAnalysisProgress,
@@ -211,15 +212,16 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
     if (unanalyzed.length === 0 || analyzingGameId) return;
 
     for (const game of unanalyzed) {
-      if (analysisCancelled) break;
+      if (cancelledRef.current) break;
       await handleAnalyze(game);
     }
-  }, [importedGames, analyzingGameId, analysisCancelled, handleAnalyze]);
+  }, [importedGames, analyzingGameId, handleAnalyze]);
 
   /**
    * Cancel ongoing analysis.
    */
   const handleCancel = useCallback(() => {
+    cancelledRef.current = true;
     cancelAnalysis();
     if (workerRef.current) {
       workerRef.current.postMessage('stop');
