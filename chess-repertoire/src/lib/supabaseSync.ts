@@ -8,6 +8,49 @@ import type { RepertoireFile } from '../types/repertoireFile';
 import type { Card } from './srScheduler';
 import type { SRLifetimeStats } from './srStorage';
 
+const pendingFileUpserts = new Map<string, { userId: string; file: RepertoireFile }>();
+let fileUpsertQueue: Promise<void> = Promise.resolve();
+
+function getFileSyncKey(userId: string, fileId: string): string {
+  return `${userId}:${fileId}`;
+}
+
+function enqueueFileUpsertProcessor(): Promise<void> {
+  fileUpsertQueue = fileUpsertQueue
+    .catch(() => {
+      // Keep the queue alive after failures.
+    })
+    .then(async () => {
+      while (pendingFileUpserts.size > 0) {
+        const nextEntry = pendingFileUpserts.entries().next().value;
+        if (!nextEntry) break;
+
+        const [key, payload] = nextEntry;
+        pendingFileUpserts.delete(key);
+
+        const { error } = await supabase.from('repertoire_files').upsert(
+          {
+            id: payload.file.id,
+            user_id: payload.userId,
+            name: payload.file.name,
+            tree: payload.file.tree,
+            node_count: payload.file.nodeCount,
+            imported_games: payload.file.importedGames ?? null,
+            updated_at: payload.file.updatedAt,
+            created_at: payload.file.createdAt,
+          },
+          { onConflict: 'id,user_id' }
+        );
+
+        if (error) {
+          console.error('[Supabase] upsertRemoteFile error:', error.message);
+        }
+      }
+    });
+
+  return fileUpsertQueue;
+}
+
 // ─── Repertoire Files ─────────────────────────────────────────────────────────
 
 export async function fetchRemoteFiles(userId: string): Promise<RepertoireFile[]> {
@@ -39,20 +82,8 @@ export async function upsertRemoteFile(
   file: RepertoireFile
 ): Promise<void> {
   if (!isSupabaseConfigured) return;
-  const { error } = await supabase.from('repertoire_files').upsert(
-    {
-      id: file.id,
-      user_id: userId,
-      name: file.name,
-      tree: file.tree,
-      node_count: file.nodeCount,
-      imported_games: file.importedGames ?? null,
-      updated_at: file.updatedAt,
-      created_at: file.createdAt,
-    },
-    { onConflict: 'id,user_id' }
-  );
-  if (error) console.error('[Supabase] upsertRemoteFile error:', error.message);
+  pendingFileUpserts.set(getFileSyncKey(userId, file.id), { userId, file });
+  await enqueueFileUpsertProcessor();
 }
 
 export async function deleteRemoteFile(
@@ -60,6 +91,10 @@ export async function deleteRemoteFile(
   fileId: string
 ): Promise<void> {
   if (!isSupabaseConfigured) return;
+  pendingFileUpserts.delete(getFileSyncKey(userId, fileId));
+  await fileUpsertQueue.catch(() => {
+    // Ignore prior queue failures and continue with delete.
+  });
   const { error } = await supabase
     .from('repertoire_files')
     .delete()
