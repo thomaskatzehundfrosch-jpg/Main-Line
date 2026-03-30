@@ -6,6 +6,7 @@ import { useGames } from '../context/GameContext';
 import { analyzeGame, createAnalysisWorker } from '../engine/analyzer';
 import type { ImportedGame } from '../types/game';
 import { generateGameId } from '../types/game';
+import { logger } from '../utils/errorLogger';
 
 interface AnalysisSettings {
   depth: number;
@@ -162,32 +163,59 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
       setAnalysisProgress([0, game.moves.length + 1]);
 
       try {
-        // Create a dedicated worker for batch analysis
-        const worker = await createAnalysisWorker();
-        workerRef.current = worker;
+        let mistakes = null;
+        let lastError: unknown = null;
 
-        const mistakes = await analyzeGame(
-          game,
-          worker,
-          settings.depth,
-          (current, total) => {
-            setAnalysisProgress([current, total]);
-          },
-          () => cancelledRef.current,
-          {
-            inaccuracy: settings.inaccuracyThreshold,
-            mistake: settings.mistakeThreshold,
-            blunder: settings.blunderThreshold,
-          },
-          settings.maxMoves > 0 ? settings.maxMoves : undefined
-        );
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          if (cancelledRef.current) break;
 
-        // Only save results if analysis ran to completion (not cancelled)
-        if (!cancelledRef.current) {
+          try {
+            const worker = await createAnalysisWorker();
+            workerRef.current = worker;
+
+            mistakes = await analyzeGame(
+              game,
+              worker,
+              settings.depth,
+              (current, total) => {
+                setAnalysisProgress([current, total]);
+              },
+              () => cancelledRef.current,
+              {
+                inaccuracy: settings.inaccuracyThreshold,
+                mistake: settings.mistakeThreshold,
+                blunder: settings.blunderThreshold,
+              },
+              settings.maxMoves > 0 ? settings.maxMoves : undefined
+            );
+
+            break;
+          } catch (err) {
+            lastError = err;
+            logger.warn(
+              'engine',
+              `Game analysis attempt ${attempt} failed${attempt < 2 ? '; retrying once.' : '.'}`,
+              err instanceof Error ? err.message : String(err)
+            );
+
+            if (workerRef.current) {
+              workerRef.current.terminate();
+              workerRef.current = null;
+            }
+          }
+        }
+
+        if (mistakes && !cancelledRef.current) {
           setGameAnalyzed(game.id, mistakes);
+        } else if (!cancelledRef.current && lastError) {
+          throw lastError;
         }
       } catch (err) {
-        console.error('Analysis failed:', err);
+        logger.error(
+          'engine',
+          `Game analysis failed for ${game.white} vs ${game.black}.`,
+          err instanceof Error ? err.message : String(err)
+        );
       } finally {
         // Always clean up worker here (handleCancel no longer terminates it)
         if (workerRef.current) {

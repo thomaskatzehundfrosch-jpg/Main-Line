@@ -2,6 +2,11 @@ import { Chess } from 'chess.js';
 import type { ImportedGame, MistakeRecord, MistakeTier } from '../types/game';
 import { classifyMistake, generateMistakeId } from '../types/game';
 import type { MoveCandidate, RepertoireStyle } from '../types/generator';
+import { logger } from '../utils/errorLogger';
+
+const ENGINE_READY_TIMEOUT_MS = 15000;
+const POSITION_ANALYSIS_TIMEOUT_MS = 45000;
+const WORKER_BOOT_TIMEOUT_MS = 10000;
 
 /**
  * Custom thresholds for mistake classification.
@@ -59,87 +64,121 @@ export function analyzePosition(
   fen: string,
   depth: number
 ): Promise<PositionEval> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let bestScore = 0;
     let isMate = false;
     let mateIn: number | null = null;
     let bestMoveUci = '';
     let bestDepth = 0;
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      worker.removeEventListener('message', syncHandler);
+      worker.removeEventListener('message', analysisHandler);
+      worker.removeEventListener('error', errorHandler);
+    };
+
+    const resolveOnce = (result: PositionEval) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(result);
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const errorHandler = (event: ErrorEvent) => {
+      rejectOnce(new Error(`Stockfish analysis worker crashed: ${event.message || 'Unknown worker error'}`));
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      try {
+        worker.postMessage('stop');
+      } catch {
+        // Ignore secondary shutdown errors after a timeout.
+      }
+      rejectOnce(new Error(`Stockfish position analysis timed out after ${POSITION_ANALYSIS_TIMEOUT_MS}ms.`));
+    }, POSITION_ANALYSIS_TIMEOUT_MS);
 
     // Phase 2: register the real analysis handler and kick off the search.
-    function startAnalysis() {
-      const handler = (e: MessageEvent<string>) => {
-        const msg = e.data;
+    const analysisHandler = (e: MessageEvent<string>) => {
+      if (settled) return;
+      const msg = e.data;
 
-        if (msg.startsWith('info') && msg.includes('score') && msg.includes(' pv ')) {
-          // Only process multipv 1 (best line)
-          const multipvMatch = msg.match(/multipv (\d+)/);
-          const mpv = multipvMatch ? parseInt(multipvMatch[1], 10) : 1;
-          if (mpv !== 1) return;
+      if (msg.startsWith('info') && msg.includes('score') && msg.includes(' pv ')) {
+        // Only process multipv 1 (best line)
+        const multipvMatch = msg.match(/multipv (\d+)/);
+        const mpv = multipvMatch ? parseInt(multipvMatch[1], 10) : 1;
+        if (mpv !== 1) return;
 
-          const depthMatch = msg.match(/depth (\d+)/);
-          const scoreMatch = msg.match(/score (cp|mate) (-?\d+)/);
-          const pvMatch = msg.match(/ pv (\S+)/);
+        const depthMatch = msg.match(/depth (\d+)/);
+        const scoreMatch = msg.match(/score (cp|mate) (-?\d+)/);
+        const pvMatch = msg.match(/ pv (\S+)/);
 
-          if (depthMatch && scoreMatch) {
-            const d = parseInt(depthMatch[1], 10);
-            const scoreType = scoreMatch[1];
-            const scoreValue = parseInt(scoreMatch[2], 10);
+        if (depthMatch && scoreMatch) {
+          const d = parseInt(depthMatch[1], 10);
+          const scoreType = scoreMatch[1];
+          const scoreValue = parseInt(scoreMatch[2], 10);
 
-            if (d >= bestDepth) {
-              bestDepth = d;
-              if (scoreType === 'cp') {
-                bestScore = scoreValue;
-                isMate = false;
-                mateIn = null;
-              } else {
-                // mate score: convert to large centipawn value
-                isMate = true;
-                mateIn = scoreValue;
-                bestScore = scoreValue > 0 ? 10000 : -10000;
-              }
-              if (pvMatch) {
-                bestMoveUci = pvMatch[1];
-              }
+          if (d >= bestDepth) {
+            bestDepth = d;
+            if (scoreType === 'cp') {
+              bestScore = scoreValue;
+              isMate = false;
+              mateIn = null;
+            } else {
+              // mate score: convert to large centipawn value
+              isMate = true;
+              mateIn = scoreValue;
+              bestScore = scoreValue > 0 ? 10000 : -10000;
+            }
+            if (pvMatch) {
+              bestMoveUci = pvMatch[1];
             }
           }
-        } else if (msg.startsWith('bestmove')) {
-          worker.removeEventListener('message', handler);
-
-          // Convert best move UCI to SAN
-          let bestMoveSan = bestMoveUci;
-          try {
-            const chess = new Chess(fen);
-            const from = bestMoveUci.substring(0, 2);
-            const to = bestMoveUci.substring(2, 4);
-            const promotion = bestMoveUci.length > 4 ? bestMoveUci[4] : undefined;
-            const move = chess.move({ from, to, promotion });
-            if (move) bestMoveSan = move.san;
-          } catch {
-            // keep UCI if conversion fails
-          }
-
-          // Stockfish reports scores from the side-to-move's perspective.
-          // Normalize to always be from White's perspective.
-          const isBlackToMove = fen.split(' ')[1] === 'b';
-          if (isBlackToMove) {
-            bestScore = -bestScore;
-            if (mateIn !== null) mateIn = -mateIn;
-          }
-
-          resolve({
-            fen,
-            score: bestScore,
-            isMate,
-            mateIn,
-            bestMoveUci,
-            bestMoveSan,
-            depth: bestDepth,
-          });
         }
-      };
+      } else if (msg.startsWith('bestmove')) {
+        // Convert best move UCI to SAN
+        let bestMoveSan = bestMoveUci;
+        try {
+          const chess = new Chess(fen);
+          const from = bestMoveUci.substring(0, 2);
+          const to = bestMoveUci.substring(2, 4);
+          const promotion = bestMoveUci.length > 4 ? bestMoveUci[4] : undefined;
+          const move = chess.move({ from, to, promotion });
+          if (move) bestMoveSan = move.san;
+        } catch {
+          // keep UCI if conversion fails
+        }
 
-      worker.addEventListener('message', handler);
+        // Stockfish reports scores from the side-to-move's perspective.
+        // Normalize to always be from White's perspective.
+        const isBlackToMove = fen.split(' ')[1] === 'b';
+        if (isBlackToMove) {
+          bestScore = -bestScore;
+          if (mateIn !== null) mateIn = -mateIn;
+        }
+
+        resolveOnce({
+          fen,
+          score: bestScore,
+          isMate,
+          mateIn,
+          bestMoveUci,
+          bestMoveSan,
+          depth: bestDepth,
+        });
+      }
+    };
+
+    function startAnalysis() {
+      worker.addEventListener('message', analysisHandler);
       worker.postMessage('setoption name MultiPV value 1');
       worker.postMessage(`position fen ${fen}`);
       worker.postMessage(`go depth ${depth}`);
@@ -149,11 +188,13 @@ export function analyzePosition(
     // Any stale 'bestmove' emitted by the stop fires with no handler and is
     // simply discarded — preventing it from being captured by our real handler.
     const syncHandler = (e: MessageEvent<string>) => {
+      if (settled) return;
       if (e.data === 'readyok') {
         worker.removeEventListener('message', syncHandler);
         startAnalysis();
       }
     };
+    worker.addEventListener('error', errorHandler);
     worker.addEventListener('message', syncHandler);
     worker.postMessage('stop');
     worker.postMessage('isready');
@@ -164,14 +205,45 @@ export function analyzePosition(
  * Wait for the engine to be ready.
  */
 export function waitForReady(worker: Worker): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      worker.removeEventListener('message', handler);
+      worker.removeEventListener('error', errorHandler);
+    };
+
+    const resolveOnce = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
     const handler = (e: MessageEvent<string>) => {
       if (e.data === 'readyok') {
-        worker.removeEventListener('message', handler);
-        resolve();
+        resolveOnce();
       }
     };
+
+    const errorHandler = (event: ErrorEvent) => {
+      rejectOnce(new Error(`Stockfish worker crashed while waiting for ready: ${event.message || 'Unknown worker error'}`));
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      rejectOnce(new Error(`Stockfish worker did not respond to isready within ${ENGINE_READY_TIMEOUT_MS}ms.`));
+    }, ENGINE_READY_TIMEOUT_MS);
+
     worker.addEventListener('message', handler);
+    worker.addEventListener('error', errorHandler);
     worker.postMessage('isready');
   });
 }
@@ -298,6 +370,91 @@ export async function analyzeGame(
   return mistakes;
 }
 
+function terminateWorkerSafely(worker: Worker): void {
+  try {
+    worker.postMessage('quit');
+  } catch {
+    // Ignore if the worker is already dead.
+  }
+
+  try {
+    worker.terminate();
+  } catch {
+    // Ignore termination failures for already-dead workers.
+  }
+}
+
+async function createRawAnalysisWorker(): Promise<Worker> {
+  try {
+    const res = await fetch('/stockfish/stockfish.js', { method: 'HEAD' });
+    if (res.ok) {
+      return new Worker('/stockfish/stockfish.js');
+    }
+  } catch {
+    // Fall through to the wrapper worker.
+  }
+
+  return new Worker(
+    new URL('../workers/stockfish.worker.ts', import.meta.url),
+    { type: 'module' }
+  );
+}
+
+function initializeAnalysisWorker(worker: Worker, numThreads: number): Promise<Worker> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let phase: 'boot' | 'configure' = 'boot';
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      worker.removeEventListener('message', onMessage);
+      worker.removeEventListener('error', onError);
+    };
+
+    const resolveOnce = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(worker);
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      terminateWorkerSafely(worker);
+      reject(error);
+    };
+
+    const onError = (event: ErrorEvent) => {
+      rejectOnce(new Error(`Stockfish worker failed during startup: ${event.message || 'Unknown worker error'}`));
+    };
+
+    const onMessage = (e: MessageEvent<string>) => {
+      if (settled) return;
+
+      if (phase === 'boot' && (e.data === 'uciok' || e.data === 'readyok')) {
+        phase = 'configure';
+        worker.postMessage(`setoption name Threads value ${numThreads}`);
+        worker.postMessage('isready');
+        return;
+      }
+
+      if (phase === 'configure' && e.data === 'readyok') {
+        resolveOnce();
+      }
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      rejectOnce(new Error(`Stockfish worker did not become ready within ${WORKER_BOOT_TIMEOUT_MS}ms.`));
+    }, WORKER_BOOT_TIMEOUT_MS);
+
+    worker.addEventListener('message', onMessage);
+    worker.addEventListener('error', onError);
+    worker.postMessage('uci');
+  });
+}
+
 /**
  * Create a dedicated Stockfish worker for batch analysis.
  * This is separate from the interactive engine worker.
@@ -308,60 +465,23 @@ export async function analyzeGame(
  * @param threads Number of search threads (defaults to half of logical cores)
  */
 export async function createAnalysisWorker(threads?: number): Promise<Worker> {
-  let worker: Worker;
-
-  // Try loading the real Stockfish engine directly as a classic worker
+  const numThreads = threads ?? Math.max(1, Math.floor((navigator?.hardwareConcurrency ?? 2) / 2));
   try {
-    const res = await fetch('/stockfish/stockfish.js', { method: 'HEAD' });
-    if (res.ok) {
-      worker = new Worker('/stockfish/stockfish.js');
-    } else {
-      worker = new Worker(
-        new URL('../workers/stockfish.worker.ts', import.meta.url),
-        { type: 'module' }
-      );
-    }
-  } catch {
-    worker = new Worker(
+    const worker = await createRawAnalysisWorker();
+    return await initializeAnalysisWorker(worker, numThreads);
+  } catch (err) {
+    logger.warn(
+      'engine',
+      'Primary Stockfish analysis worker failed to start; retrying with fallback worker.',
+      err instanceof Error ? err.message : String(err)
+    );
+
+    const fallbackWorker = new Worker(
       new URL('../workers/stockfish.worker.ts', import.meta.url),
       { type: 'module' }
     );
+    return initializeAnalysisWorker(fallbackWorker, numThreads);
   }
-
-  const numThreads = threads ?? Math.max(1, Math.floor((navigator?.hardwareConcurrency ?? 2) / 2));
-
-  // Wait for the worker to be ready, then configure threads
-  return new Promise((resolve) => {
-    let resolved = false;
-
-    const handler = (e: MessageEvent<string>) => {
-      if (e.data === 'uciok' || e.data === 'readyok') {
-        if (!resolved) {
-          resolved = true;
-          worker.postMessage(`setoption name Threads value ${numThreads}`);
-          worker.postMessage('isready');
-          const readyHandler = (e2: MessageEvent<string>) => {
-            if (e2.data === 'readyok') {
-              worker.removeEventListener('message', readyHandler);
-              resolve(worker);
-            }
-          };
-          worker.addEventListener('message', readyHandler);
-        }
-      }
-    };
-
-    worker.addEventListener('message', handler);
-    worker.postMessage('uci');
-
-    // Timeout after 10 seconds
-    setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        resolve(worker);
-      }
-    }, 10000);
-  });
 }
 
 /**
