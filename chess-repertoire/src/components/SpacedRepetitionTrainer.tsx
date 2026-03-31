@@ -315,7 +315,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     if (phase !== 'grading' || !isCorrect) return;
     autoAdvanceRef.current = setTimeout(() => {
       advanceAfterAnswer();
-    }, 700);
+    }, 180);
 
     return () => {
       if (autoAdvanceRef.current) clearTimeout(autoAdvanceRef.current);
