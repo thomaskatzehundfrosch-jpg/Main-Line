@@ -18,7 +18,8 @@ interface BoardControlsProps {
   canGoBack: boolean;
   canGoForward: boolean;
   onToggleSize?: () => void;
-  isBoardMinimized?: boolean;
+  isBoardAltSize?: boolean;
+  sizeToggleMode?: 'minimize' | 'expand';
 }
 
 const BoardControls: React.FC<BoardControlsProps> = ({
@@ -30,8 +31,14 @@ const BoardControls: React.FC<BoardControlsProps> = ({
   canGoBack,
   canGoForward,
   onToggleSize,
-  isBoardMinimized = false,
+  isBoardAltSize = false,
+  sizeToggleMode = 'minimize',
 }) => {
+  const isExpandMode = sizeToggleMode === 'expand';
+  const sizeToggleTitle = isExpandMode
+    ? (isBoardAltSize ? 'Shrink board' : 'Expand board')
+    : (isBoardAltSize ? 'Expand board' : 'Minimize board');
+
   return (
     <div className="flex items-center justify-center gap-1 py-2">
       {/* Navigation buttons */}
@@ -89,9 +96,11 @@ const BoardControls: React.FC<BoardControlsProps> = ({
           <button
             onClick={onToggleSize}
             className="btn-icon"
-            title={isBoardMinimized ? 'Expand board' : 'Minimize board'}
+            title={sizeToggleTitle}
           >
-            {isBoardMinimized ? <Maximize2 size={18} /> : <Minimize2 size={18} />}
+            {isExpandMode
+              ? (isBoardAltSize ? <Minimize2 size={18} /> : <Maximize2 size={18} />)
+              : (isBoardAltSize ? <Maximize2 size={18} /> : <Minimize2 size={18} />)}
           </button>
         </>
       )}

@@ -14,6 +14,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
+  Maximize2,
+  Minimize2,
   Trash2,
 } from 'lucide-react';
 import { Chessboard } from 'react-chessboard';
@@ -77,6 +79,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   /* ---------------------------------------------------------------- */
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
+  const [boardExpanded, setBoardExpanded] = useState(false);
   const themeColors = BOARD_THEME_COLORS[appSettings.boardTheme];
 
   // During generation animate to the latest added node; otherwise show selected.
@@ -293,6 +296,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   }, [gen.tree, settings]);
 
   const node = gen.selectedNode;
+  const generatorBoardWidth = isMobile ? 320 : (boardExpanded ? 480 : 360);
 
   /* ---------------------------------------------------------------- */
   /*  Render                                                           */
@@ -360,11 +364,11 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
         <div className="flex-1 flex flex-col overflow-auto p-4 gap-4">
           {/* Chessboard — interactive when not generating */}
           <div className="flex justify-center">
-            <div style={{ width: isMobile ? 'min(100%, 320px)' : '360px', maxWidth: '100%' }}>
+            <div style={{ width: isMobile ? 'min(100%, 320px)' : `${generatorBoardWidth}px`, maxWidth: '100%' }}>
               <Chessboard
                 position={displayFen}
                 boardOrientation={settings.color === 'black' ? 'black' : 'white'}
-                boardWidth={isMobile ? 320 : 360}
+                boardWidth={generatorBoardWidth}
                 isDraggablePiece={() => !gen.isGenerating}
                 onPieceDrop={handlePieceDrop}
                 onSquareClick={handleSquareClick}
@@ -421,6 +425,19 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
             >
               <Trash2 className="w-4 h-4" />
             </button>
+
+            {!isMobile && (
+              <>
+                <div className="w-px h-5 bg-border-subtle mx-1" />
+                <button
+                  onClick={() => setBoardExpanded((prev) => !prev)}
+                  className="btn-icon p-1.5"
+                  title={boardExpanded ? 'Shrink board' : 'Expand board'}
+                >
+                  {boardExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                </button>
+              </>
+            )}
 
             {/* Current position hint */}
             {node && !node.isRoot && node.san && (

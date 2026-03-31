@@ -106,6 +106,7 @@ export const App: React.FC = () => {
   const isMobile = useIsMobile();
   const [mobileTab, setMobileTab] = useState<MobileTab>('tree');
   const [boardMinimized, setBoardMinimized] = useState(false);
+  const [boardExpanded, setBoardExpanded] = useState(false);
 
   const [filesOpen, setFilesOpen] = useState(() => !isMobile);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -664,7 +665,8 @@ export const App: React.FC = () => {
                 canGoBack={viewingMoveIndex > 0}
                 canGoForward={viewingMoveIndex < gamePositions.length - 1}
                 onToggleSize={() => setBoardMinimized((prev) => !prev)}
-                isBoardMinimized={boardMinimized}
+                isBoardAltSize={boardMinimized}
+                sizeToggleMode="minimize"
               />
             ) : (
               <BoardControls
@@ -676,7 +678,8 @@ export const App: React.FC = () => {
                 canGoBack={currentPath.length > 1}
                 canGoForward={currentNode.children.length > 0}
                 onToggleSize={() => setBoardMinimized((prev) => !prev)}
-                isBoardMinimized={boardMinimized}
+                isBoardAltSize={boardMinimized}
+                sizeToggleMode="minimize"
               />
             )}
           </div>
@@ -1054,7 +1057,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* Right Panel: Board + Tabbed Content */}
-        <div className="w-[420px] min-w-[380px] flex flex-col overflow-hidden">
+        <div className={`${boardExpanded ? 'w-[560px] min-w-[520px]' : 'w-[420px] min-w-[380px]'} flex flex-col overflow-hidden transition-[width] duration-200`}>
           {/* Chessboard */}
           <div className="flex flex-col items-center p-3 gap-1">
             {/* Game viewer banner */}
@@ -1076,7 +1079,11 @@ export const App: React.FC = () => {
                 </button>
               </div>
             )}
-            <div className={`w-full max-w-[400px] transition-all ${boardMinimized ? 'max-w-[200px]' : ''}`}>
+            <div className={`w-full transition-all ${
+              boardExpanded
+                ? 'max-w-[520px]'
+                : 'max-w-[400px]'
+            }`}>
               <ChessBoard
                 fen={displayFen}
                 orientation={orientation}
@@ -1084,7 +1091,7 @@ export const App: React.FC = () => {
                 engineBestMove={engine.enabled ? engineArrows : undefined}
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
                 mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
-                sizeScale={boardMinimized ? 0.5 : 1}
+                sizeScale={boardExpanded ? 1.12 : 1}
               />
             </div>
             {viewingGame ? (
@@ -1096,8 +1103,9 @@ export const App: React.FC = () => {
                 onFlip={flipBoard}
                 canGoBack={viewingMoveIndex > 0}
                 canGoForward={viewingMoveIndex < gamePositions.length - 1}
-                onToggleSize={() => setBoardMinimized((prev) => !prev)}
-                isBoardMinimized={boardMinimized}
+                onToggleSize={() => setBoardExpanded((prev) => !prev)}
+                isBoardAltSize={boardExpanded}
+                sizeToggleMode="expand"
               />
             ) : (
               <BoardControls
@@ -1108,8 +1116,9 @@ export const App: React.FC = () => {
                 onFlip={flipBoard}
                 canGoBack={currentPath.length > 1}
                 canGoForward={currentNode.children.length > 0}
-                onToggleSize={() => setBoardMinimized((prev) => !prev)}
-                isBoardMinimized={boardMinimized}
+                onToggleSize={() => setBoardExpanded((prev) => !prev)}
+                isBoardAltSize={boardExpanded}
+                sizeToggleMode="expand"
               />
             )}
           </div>
