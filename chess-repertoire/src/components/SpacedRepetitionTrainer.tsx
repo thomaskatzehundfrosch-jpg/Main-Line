@@ -933,22 +933,11 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 />
               )}
               <div className="flex items-center gap-3">
-                {sessionHistory.length > 0 && (
-                  <button
-                    onClick={() => {
-                      setReplayIndex(0);
-                      setPhase('replay');
-                    }}
-                    className="btn-secondary flex items-center gap-1.5 px-4 py-2 text-sm font-medium"
-                  >
-                    Replay
-                  </button>
-                )}
                 <button
                   onClick={() => startTraining(selection)}
                   className="btn-primary px-4 py-2 text-sm font-medium"
                 >
-                  New Session
+                  Replay
                 </button>
               </div>
             </div>
