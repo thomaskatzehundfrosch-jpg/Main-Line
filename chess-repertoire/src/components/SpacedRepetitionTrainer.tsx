@@ -5,48 +5,27 @@ import type { Arrow, Piece, Square } from 'react-chessboard/dist/chessboard/type
 import {
   ArrowRight,
   Brain,
-  Check,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
-  Download,
   Eye,
-  FolderOpen,
-  Play,
   RotateCcw,
   SkipForward,
-  Trash2,
   Trophy,
 } from 'lucide-react';
+import { createCard, getDueCards, reviewCard } from '../lib/srScheduler';
 import type { Card } from '../lib/srScheduler';
-import { getDueCards, reviewCard } from '../lib/srScheduler';
-import {
-  clearAllCards,
-  loadCards,
-  loadStats,
-  saveCards,
-  saveSessionStats,
-} from '../lib/srStorage';
+import { loadCards, loadStats, saveCards, saveSessionStats } from '../lib/srStorage';
 import type { SRLifetimeStats } from '../lib/srStorage';
-import { treeToCards } from '../lib/srTreeImport';
 import { useFiles } from '../context/FileContext';
 import type { RepertoireFile } from '../types/repertoireFile';
 import { useEngine } from '../hooks/useEngine';
 import EvalBar from './Board/EvalBar';
-import { SRCardImporter } from './SRCardImporter';
 
 const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const sharedChess = new Chess();
 
 type Phase = 'idle' | 'question' | 'grading' | 'complete' | 'replay';
-
-interface ImportFeedback {
-  fileName: string;
-  added: number;
-  updated: number;
-  skipped: number;
-}
+type DrillColor = 'white' | 'black';
 
 interface SessionStats {
   correct: number;
@@ -61,15 +40,28 @@ interface SessionEntry {
   correct: boolean;
 }
 
-interface ReplayableCard extends Card {
-  moveHistorySan?: string[];
-  lineStartFen?: string;
+interface TrainerSelection {
+  fileId: string;
+  color: DrillColor;
 }
 
-function inferDrillColor(card: Card | ReplayableCard | null): 'white' | 'black' {
-  if (!card) return 'white';
-  if (card.drillColor) return card.drillColor;
-  return card.front.split(' ')[1] === 'b' ? 'black' : 'white';
+function cardKey(card: Pick<Card, 'front' | 'back'>): string {
+  return `${card.front}|||${card.back}`;
+}
+
+function compareCards(a: Card, b: Card): number {
+  if ((a.lineName ?? '') !== (b.lineName ?? '')) return (a.lineName ?? '').localeCompare(b.lineName ?? '');
+
+  const aHistory = a.moveHistorySan ?? [];
+  const bHistory = b.moveHistorySan ?? [];
+  const sharedLength = Math.min(aHistory.length, bHistory.length);
+  for (let i = 0; i < sharedLength; i += 1) {
+    if (aHistory[i] !== bHistory[i]) return aHistory[i].localeCompare(bHistory[i]);
+  }
+
+  if (aHistory.length !== bHistory.length) return aHistory.length - bHistory.length;
+  if (a.front !== b.front) return a.front.localeCompare(b.front);
+  return a.back.localeCompare(b.back);
 }
 
 function uciToSan(fen: string, uci: string): string {
@@ -86,111 +78,69 @@ function uciToSan(fen: string, uci: string): string {
   }
 }
 
-function compareCards(a: ReplayableCard, b: ReplayableCard): number {
-  if ((a.lineName ?? '') !== (b.lineName ?? '')) return (a.lineName ?? '').localeCompare(b.lineName ?? '');
+function buildCardsForSelection(file: RepertoireFile, drillColor: DrillColor, existingCards: Card[]): Card[] {
+  const existingByKey = new Map(existingCards.map((card) => [cardKey(card), card] as const));
+  const result: Card[] = [];
 
-  const aHistory = a.moveHistorySan ?? [];
-  const bHistory = b.moveHistorySan ?? [];
-  const sharedLength = Math.min(aHistory.length, bHistory.length);
-  for (let i = 0; i < sharedLength; i += 1) {
-    if (aHistory[i] !== bHistory[i]) return aHistory[i].localeCompare(bHistory[i]);
-  }
+  const walk = (node: RepertoireFile['tree'], parentFen: string | null, path: string[]) => {
+    if (node.move !== '' && parentFen !== null) {
+      const currentPath = [...path, node.move];
+      const activeColor = parentFen.split(' ')[1];
+      const isPlayerMove =
+        (drillColor === 'white' && activeColor === 'w') ||
+        (drillColor === 'black' && activeColor === 'b');
 
-  if (aHistory.length !== bHistory.length) return aHistory.length - bHistory.length;
-  if (a.front !== b.front) return a.front.localeCompare(b.front);
-  return a.back.localeCompare(b.back);
-}
-
-function buildHistoryLookup(files: RepertoireFile[]): Map<string, { moveHistorySan: string[]; lineStartFen: string; lineName: string }> {
-  const lookup = new Map<string, { moveHistorySan: string[]; lineStartFen: string; lineName: string }>();
-
-  const walk = (node: RepertoireFile['tree'], path: string[], file: RepertoireFile) => {
-    for (const child of node.children) {
-      const nextPath = [...path, child.move];
-      try {
-        const chess = new Chess(node.fen);
-        const move = chess.move(child.move);
-        if (move) {
-          const uci = move.from + move.to + (move.promotion || '');
-          const key = `${node.fen}|||${uci}`;
-          if (!lookup.has(key)) {
-            lookup.set(key, {
-              moveHistorySan: nextPath,
-              lineStartFen: file.tree.fen,
-              lineName: file.name,
-            });
+      if (isPlayerMove) {
+        try {
+          const chess = new Chess(parentFen);
+          const move = chess.move(node.move);
+          if (move) {
+            const uci = move.from + move.to + (move.promotion || '');
+            const key = `${parentFen}|||${uci}`;
+            const existing = existingByKey.get(key);
+            result.push(existing
+              ? {
+                  ...existing,
+                  drillColor,
+                  lineName: file.name,
+                  moveHistorySan: existing.moveHistorySan ?? currentPath,
+                  lineStartFen: existing.lineStartFen ?? file.tree.fen,
+                }
+              : createCard(parentFen, uci, file.name, drillColor, currentPath, file.tree.fen));
           }
+        } catch {
+          // Ignore invalid repertoire nodes while building a training deck.
         }
-      } catch {
-        // Ignore invalid repertoire nodes while rebuilding histories.
       }
-      walk(child, nextPath, file);
-    }
-  };
 
-  for (const file of files) walk(file.tree, [], file);
-  return lookup;
-}
-
-function enrichReplayableCards(cards: Card[], files: RepertoireFile[]): { cards: ReplayableCard[]; changed: boolean; skipped: number } {
-  const lookup = buildHistoryLookup(files);
-  let changed = false;
-  const replayable: ReplayableCard[] = [];
-
-  for (const card of cards) {
-    let enriched: Card = card;
-
-    if ((!card.moveHistorySan || card.moveHistorySan.length === 0) || !card.lineStartFen) {
-      const match = lookup.get(`${card.front}|||${card.back}`);
-      if (match) {
-        enriched = {
-          ...card,
-          drillColor: card.drillColor ?? inferDrillColor(card),
-          moveHistorySan: match.moveHistorySan,
-          lineStartFen: match.lineStartFen,
-          lineName: card.lineName ?? match.lineName,
-        };
-        changed = true;
-      }
+      for (const child of node.children) walk(child, node.fen, currentPath);
+      return;
     }
 
-    replayable.push(enriched as ReplayableCard);
-  }
-
-  replayable.sort(compareCards);
-  return { cards: replayable, changed, skipped: 0 };
-}
-
-function getOrientation(card: ReplayableCard | null): 'white' | 'black' {
-  if (!card) return 'white';
-  return inferDrillColor(card);
-}
-
-function mergeImportedCards(existing: Card[], file: RepertoireFile, drillColor: 'white' | 'black'): { cards: Card[]; feedback: ImportFeedback } {
-  const result = treeToCards(file.tree, drillColor, file.name, existing);
-  const updatedById = new Map(result.updatedCards.map((card) => [card.id, card]));
-  const mergedExisting = existing.map((card) => updatedById.get(card.id) ?? card);
-  const merged = [...mergedExisting, ...result.newCards];
-
-  return {
-    cards: merged,
-    feedback: {
-      fileName: file.name,
-      added: result.newCards.length,
-      updated: result.updatedCards.length,
-      skipped: result.duplicatesSkipped,
-    },
+    for (const child of node.children) walk(child, node.fen, path);
   };
+
+  walk(file.tree, null, []);
+  result.sort(compareCards);
+  return result;
+}
+
+function mergeCards(existingCards: Card[], cardsToMerge: Card[]): Card[] {
+  const merged = new Map(existingCards.map((card) => [cardKey(card), card] as const));
+  for (const card of cardsToMerge) merged.set(cardKey(card), card);
+  return Array.from(merged.values());
 }
 
 export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
   const { files } = useFiles();
   const engine = useEngine();
 
+  const [selection, setSelection] = useState<TrainerSelection | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<string>('');
+  const [selectedColor, setSelectedColor] = useState<DrillColor>('white');
   const [cards, setCards] = useState<Card[]>([]);
-  const [sessionCards, setSessionCards] = useState<ReplayableCard[]>([]);
+  const [sessionCards, setSessionCards] = useState<Card[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [lineStepIndex, setLineStepIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('idle');
   const [userMove, setUserMove] = useState<string | null>(null);
   const [cardHadMistake, setCardHadMistake] = useState(false);
@@ -200,63 +150,16 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white');
   const [stats, setStats] = useState<SessionStats>({ correct: 0, incorrect: 0 });
   const [lifetimeStats, setLifetimeStats] = useState<SRLifetimeStats>(loadStats);
-  const [importFeedback, setImportFeedback] = useState<ImportFeedback | null>(null);
-  const [repertoireListOpen, setRepertoireListOpen] = useState(true);
-  const [importerOpen, setImporterOpen] = useState(false);
   const [sessionHistory, setSessionHistory] = useState<SessionEntry[]>([]);
   const [replayIndex, setReplayIndex] = useState(0);
-  const [skippedCards, setSkippedCards] = useState(0);
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [boardWidth, setBoardWidth] = useState(400);
   const autoAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSaveRef = useRef<Card[] | null>(null);
-
-  const rebuildSession = useCallback((sourceCards?: Card[]) => {
-    const loaded = sourceCards ?? loadCards();
-    const dueCards = getDueCards(loaded, loaded.length || 20);
-    const { cards: replayable, changed, skipped } = enrichReplayableCards(dueCards, files);
-    const allEnriched = changed ? loaded.map((card) => {
-      const replayableCard = replayable.find((candidate) => candidate.id === card.id);
-      return replayableCard ?? card;
-    }) : loaded;
-
-    setCards(allEnriched);
-    setSessionCards(replayable);
-    setSkippedCards(skipped);
-    setCurrentIndex(0);
-    setLineStepIndex(0);
-    setUserMove(null);
-    setCardHadMistake(false);
-    setShowSolution(false);
-    setSelectedSquare(null);
-    setLegalMoves([]);
-    setSessionHistory([]);
-    setReplayIndex(0);
-    setStats({ correct: 0, incorrect: 0 });
-
-    if (changed) pendingSaveRef.current = allEnriched;
-
-    if (replayable.length > 0) {
-      setBoardOrientation(getOrientation(replayable[0]));
-      setPhase('question');
-    } else {
-      setBoardOrientation('white');
-      setPhase('idle');
-    }
-  }, [files]);
 
   useEffect(() => {
-    rebuildSession();
-  }, [rebuildSession]);
-
-  useEffect(() => {
-    if (pendingSaveRef.current) {
-      const nextCards = pendingSaveRef.current;
-      pendingSaveRef.current = null;
-      requestAnimationFrame(() => saveCards(nextCards));
-    }
-  });
+    if (!selectedFileId && files.length > 0) setSelectedFileId(files[0].id);
+  }, [files, selectedFileId]);
 
   useEffect(() => {
     const updateWidth = () => {
@@ -271,6 +174,10 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     return () => observer.disconnect();
   }, []);
 
+  const currentFile = useMemo(
+    () => files.find((file) => file.id === selectedFileId) ?? null,
+    [files, selectedFileId],
+  );
   const currentCard = sessionCards[currentIndex] ?? null;
   const displayFen = phase === 'replay'
     ? (sessionHistory[replayIndex]?.reviewFen ?? INITIAL_FEN)
@@ -281,11 +188,55 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const userMoveSan = userMove ? uciToSan(displayFen, userMove) : '';
   const isCorrect = !cardHadMistake && userMove !== null && userMove === expectedMove;
 
+  const startTraining = useCallback((nextSelection: TrainerSelection) => {
+    const file = files.find((candidate) => candidate.id === nextSelection.fileId);
+    if (!file) return;
+
+    const storedCards = loadCards();
+    const cardsForSelection = buildCardsForSelection(file, nextSelection.color, storedCards);
+    const mergedCards = mergeCards(storedCards, cardsForSelection);
+    saveCards(mergedCards);
+
+    const dueCards = getDueCards(cardsForSelection, cardsForSelection.length || 20);
+
+    setSelection(nextSelection);
+    setCards(cardsForSelection);
+    setSessionCards(dueCards);
+    setCurrentIndex(0);
+    setUserMove(null);
+    setCardHadMistake(false);
+    setShowSolution(false);
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setSessionHistory([]);
+    setReplayIndex(0);
+    setStats({ correct: 0, incorrect: 0 });
+    setBoardOrientation(nextSelection.color);
+    setPhase(dueCards.length > 0 ? 'question' : 'idle');
+  }, [files]);
+
+  const leaveSession = useCallback(() => {
+    setSelection(null);
+    setCards([]);
+    setSessionCards([]);
+    setCurrentIndex(0);
+    setUserMove(null);
+    setCardHadMistake(false);
+    setShowSolution(false);
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setSessionHistory([]);
+    setReplayIndex(0);
+    setStats({ correct: 0, incorrect: 0 });
+    setPhase('idle');
+    setBoardOrientation('white');
+  }, []);
+
   useEffect(() => {
     setSelectedSquare(null);
     setLegalMoves([]);
     setShowSolution(false);
-  }, [currentIndex, lineStepIndex, phase]);
+  }, [currentIndex, phase]);
 
   useEffect(() => {
     if (engine.enabled && phase !== 'replay' && currentCard) engine.analyze(displayFen);
@@ -376,6 +327,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     if (!currentCard || !expectedMove) return;
 
     const correct = !cardHadMistake && userMove !== null && userMove === expectedMove;
+    const updatedCard = reviewCard(currentCard, correct ? 2 : 0);
+    const updatedCards = cards.map((card) => (cardKey(card) === cardKey(updatedCard) ? updatedCard : card));
 
     setSessionHistory((prev) => [...prev, {
       card: currentCard,
@@ -384,11 +337,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       userMove,
       correct,
     }]);
-
-    const updatedCard = reviewCard(currentCard, correct ? 2 : 0);
-    const updatedCards = cards.map((card) => (card.id === updatedCard.id ? updatedCard : card));
     setCards(updatedCards);
-    pendingSaveRef.current = updatedCards;
+    saveCards(mergeCards(loadCards(), [updatedCard]));
 
     const nextStats = {
       correct: stats.correct + (correct ? 1 : 0),
@@ -403,17 +353,12 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       return;
     }
 
-      setCurrentIndex(nextCardIndex);
-      setLineStepIndex(0);
-      setUserMove(null);
-      setCardHadMistake(false);
-      setBoardOrientation(getOrientation(sessionCards[nextCardIndex]));
+    setCurrentIndex(nextCardIndex);
+    setUserMove(null);
+    setCardHadMistake(false);
+    setBoardOrientation(selection?.color ?? 'white');
     setPhase('question');
-  }, [cardHadMistake, cards, currentCard, currentIndex, displayFen, expectedMove, sessionCards, stats, userMove]);
-
-  const continueAfterCorrectMove = useCallback(() => {
-    advanceAfterAnswer();
-  }, [advanceAfterAnswer]);
+  }, [cardHadMistake, cards, currentCard, currentIndex, displayFen, expectedMove, selection?.color, sessionCards.length, stats, userMove]);
 
   const submitMove = useCallback((from: string, to: string, piece?: string) => {
     if ((phase !== 'question' && phase !== 'grading') || !currentCard) return false;
@@ -438,7 +383,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       const uci = from + to + (isPromotion ? 'q' : '');
       if (showSolution) {
         if (uci === expectedMove) {
-          continueAfterCorrectMove();
+          advanceAfterAnswer();
           return true;
         }
         return false;
@@ -452,7 +397,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       }
 
       if (cardHadMistake) {
-        continueAfterCorrectMove();
+        advanceAfterAnswer();
         return true;
       }
 
@@ -462,7 +407,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     } catch {
       return false;
     }
-  }, [cardHadMistake, continueAfterCorrectMove, currentCard, displayFen, expectedMove, phase, showSolution]);
+  }, [advanceAfterAnswer, cardHadMistake, currentCard, displayFen, expectedMove, phase, showSolution]);
 
   const handlePieceDrop = useCallback((source: Square, target: Square, piece: Piece) => {
     setSelectedSquare(null);
@@ -499,74 +444,123 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setLegalMoves([]);
   }, [currentCard, getLegalMoves, isOwnPiece, legalMoves, phase, selectedSquare, submitMove]);
 
-  const handleImportRepertoire = useCallback((fileId: string, drillColor: 'white' | 'black') => {
-    const file = files.find((candidate) => candidate.id === fileId);
-    if (!file) return;
-
-    const { cards: mergedCards, feedback } = mergeImportedCards(loadCards(), file, drillColor);
-    saveCards(mergedCards);
-    setImportFeedback(feedback);
-    rebuildSession(mergedCards);
-    setTimeout(() => setImportFeedback(null), 4000);
-  }, [files, rebuildSession]);
-
   const progressPercent = sessionCards.length > 0
     ? ((currentIndex + (phase === 'complete' ? 1 : 0)) / sessionCards.length) * 100
     : 0;
+
+  if (!selection) {
+    return (
+      <div className="flex-1 flex flex-col bg-bg-primary min-h-0">
+        <div className="flex items-center justify-between px-4 py-3 bg-bg-surface border-b border-border-subtle flex-shrink-0">
+          <div className="flex items-center gap-3">
+            {onClose && (
+              <button onClick={onClose} className="btn-icon p-1.5" title="Back">
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            )}
+            <Brain className="w-4 h-4 text-accent-teal" />
+            <h2 className="font-mono text-sm uppercase tracking-wider text-text-secondary">
+              Spaced Repetition Trainer
+            </h2>
+          </div>
+        </div>
+
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-2xl panel p-6">
+            <h3 className="text-text-primary text-lg font-semibold">Start New Training Session</h3>
+            <p className="text-text-muted text-sm mt-2">
+              Pick one repertoire and one side. This session will only train that selection until you go back.
+            </p>
+
+            <div className="mt-6 grid gap-6">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Repertoire</div>
+                {files.length === 0 ? (
+                  <div className="panel p-4 text-sm text-text-muted">
+                    No saved repertoires yet. Save a repertoire from the main view first.
+                  </div>
+                ) : (
+                  <div className="grid gap-2">
+                    {files.map((file) => (
+                      <button
+                        key={file.id}
+                        onClick={() => setSelectedFileId(file.id)}
+                        className={`w-full text-left rounded-lg border px-4 py-3 transition-colors ${
+                          selectedFileId === file.id
+                            ? 'border-accent-teal bg-accent-teal/5'
+                            : 'border-border-subtle bg-bg-panel hover:border-border-active'
+                        }`}
+                      >
+                        <div className="text-sm font-medium text-text-primary">{file.name}</div>
+                        <div className="text-xs text-text-muted mt-1">
+                          {file.nodeCount} position{file.nodeCount !== 1 ? 's' : ''}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Color</div>
+                <div className="flex gap-2">
+                  {(['white', 'black'] as DrillColor[]).map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => setSelectedColor(color)}
+                      className={`flex-1 rounded-lg border px-4 py-3 text-sm font-medium transition-colors ${
+                        selectedColor === color
+                          ? 'border-accent-teal bg-accent-teal/5 text-text-primary'
+                          : 'border-border-subtle bg-bg-panel text-text-muted hover:text-text-primary'
+                      }`}
+                    >
+                      {color === 'white' ? 'White' : 'Black'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={() => currentFile && startTraining({ fileId: currentFile.id, color: selectedColor })}
+                  disabled={!currentFile}
+                  className="btn-primary flex items-center gap-2 px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Start Training <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col bg-bg-primary min-h-0">
       <div className="flex items-center justify-between px-4 py-3 bg-bg-surface border-b border-border-subtle flex-shrink-0">
         <div className="flex items-center gap-3">
+          <button onClick={leaveSession} className="btn-icon p-1.5" title="Choose another repertoire">
+            <ChevronLeft className="w-4 h-4" />
+          </button>
           {onClose && (
-            <button onClick={onClose} className="btn-icon p-1.5" title="Back">
-              <ChevronLeft className="w-4 h-4" />
+            <button onClick={onClose} className="text-xs text-text-muted hover:text-text-primary transition-colors">
+              Close
             </button>
           )}
           <Brain className="w-4 h-4 text-accent-teal" />
           <h2 className="font-mono text-sm uppercase tracking-wider text-text-secondary">
-            Spaced Repetition Trainer
+            {currentFile?.name ?? 'Spaced Repetition Trainer'}
           </h2>
         </div>
         <div className="flex items-center gap-3 text-xs text-text-muted">
-          <span>{getDueCards(cards, cards.length || 20).length} due</span>
-          {skippedCards > 0 && (
-            <>
-              <span className="text-border-subtle">|</span>
-              <span>{skippedCards} unusable</span>
-            </>
-          )}
+          <span>{selection.color === 'white' ? 'White' : 'Black'} repertoire</span>
           <span className="text-border-subtle">|</span>
-          <span>{cards.length} total</span>
-          {cards.length > 0 && (
-            <>
-              <span className="text-border-subtle">|</span>
-              <button
-                onClick={() => {
-                  if (!window.confirm('Remove all spaced-repetition cards? This cannot be undone.')) return;
-                  clearAllCards();
-                  rebuildSession([]);
-                }}
-                className="btn-icon p-1"
-                title="Clear all cards"
-              >
-                <Trash2 className="w-3.5 h-3.5 hover:text-accent-red transition-colors" />
-              </button>
-            </>
-          )}
+          <span>{cards.length} cards</span>
+          <span className="text-border-subtle">|</span>
+          <span>{getDueCards(cards, cards.length || 20).length} due</span>
         </div>
       </div>
-
-      {importFeedback && (
-        <div className="mx-4 mt-3 px-3 py-2 bg-accent-teal/5 border border-accent-teal/30 rounded-lg text-xs text-accent-teal flex items-center gap-2 flex-shrink-0">
-          <Check className="w-3.5 h-3.5 flex-shrink-0" />
-          <span>
-            <strong>{importFeedback.fileName}</strong>: {importFeedback.added} added
-            {importFeedback.updated > 0 && <span className="text-text-muted">, {importFeedback.updated} upgraded</span>}
-            {importFeedback.skipped > 0 && <span className="text-text-muted"> ({importFeedback.skipped} duplicate skipped)</span>}
-          </span>
-        </div>
-      )}
 
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-auto">
         <div ref={boardContainerRef} className="flex flex-col items-center p-4 lg:flex-1 lg:min-w-[400px]">
@@ -623,20 +617,19 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
             <div className="flex flex-col items-center justify-center gap-4 py-6">
               <Brain className="w-12 h-12 text-text-muted opacity-40" />
               <p className="text-text-muted text-center text-sm">
-                {cards.length === 0
-                  ? 'No cards yet. Import a repertoire below to get started.'
-                  : 'No due cards found.'}
+                No due cards for this repertoire right now.
               </p>
+              <button onClick={leaveSession} className="btn-secondary px-4 py-2 text-sm">
+                Choose Another Repertoire
+              </button>
             </div>
           )}
 
           {phase === 'question' && currentCard && (
             <div className="panel p-4">
-              {currentCard.lineName && (
-                <div className="text-xs text-accent-teal font-mono mb-2 uppercase tracking-wider">
-                  {currentCard.lineName}
-                </div>
-              )}
+              <div className="text-xs text-accent-teal font-mono mb-2 uppercase tracking-wider">
+                {currentFile?.name}
+              </div>
               <p className="text-text-primary text-sm">
                 Find the repertoire move for <span className="font-semibold">{isWhiteToMove ? 'White' : 'Black'}</span>.
               </p>
@@ -645,7 +638,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
               </p>
               {!showSolution ? (
                 <>
-                  <p className="text-text-muted text-xs mt-2">Click or drag a piece to make the exact next move.</p>
+                  <p className="text-text-muted text-xs mt-2">Click or drag a piece to make the move.</p>
                   <button
                     onClick={() => setShowSolution(true)}
                     className="btn-secondary mt-3 flex items-center gap-1.5 text-xs py-1.5 px-3"
@@ -691,23 +684,23 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
               ) : (
                 <div className="flex flex-col gap-2">
                   <p className="text-text-muted text-xs">
-                    Play the correct move on the board to continue this line. This card will still count as incorrect.
+                    Play the correct move on the board to continue. This card will still count as incorrect.
                   </p>
                   <div className="flex items-center gap-2">
-                  {!showSolution && (
+                    {!showSolution && (
+                      <button
+                        onClick={() => setShowSolution(true)}
+                        className="flex-1 btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+                      >
+                        <Eye className="w-3.5 h-3.5" /> Show Solution
+                      </button>
+                    )}
                     <button
-                      onClick={() => setShowSolution(true)}
+                      onClick={advanceAfterAnswer}
                       className="flex-1 btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
                     >
-                      <Eye className="w-3.5 h-3.5" /> Show Solution
+                      <SkipForward className="w-3.5 h-3.5" /> Next Card
                     </button>
-                  )}
-                  <button
-                    onClick={advanceAfterAnswer}
-                    className="flex-1 btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
-                  >
-                    <SkipForward className="w-3.5 h-3.5" /> Next Card
-                  </button>
                   </div>
                 </div>
               )}
@@ -752,10 +745,13 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                     }}
                     className="btn-secondary flex items-center gap-1.5 px-4 py-2 text-sm font-medium"
                   >
-                    <Play className="w-4 h-4" /> Replay
+                    Replay
                   </button>
                 )}
-                <button onClick={() => rebuildSession(cards)} className="btn-primary px-4 py-2 text-sm font-medium">
+                <button
+                  onClick={() => startTraining(selection)}
+                  className="btn-primary px-4 py-2 text-sm font-medium"
+                >
                   New Session
                 </button>
               </div>
@@ -781,7 +777,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 </p>
                 {sessionHistory[replayIndex].userMove && (
                   <p className="text-text-muted text-xs mt-1">
-                    Your move: <span className="text-text-primary font-mono">{uciToSan(sessionHistory[replayIndex].reviewFen, sessionHistory[replayIndex].userMove!)}</span>
+                    Your move: <span className="text-text-primary font-mono">{uciToSan(sessionHistory[replayIndex].reviewFen, sessionHistory[replayIndex].userMove)}</span>
                   </p>
                 )}
               </div>
@@ -803,76 +799,6 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
               </div>
             </div>
           )}
-
-          <div className="mt-auto pt-4 flex flex-col gap-2">
-            <button
-              onClick={() => setRepertoireListOpen((prev) => !prev)}
-              className="btn-secondary flex items-center justify-between w-full px-3 py-2 text-xs"
-            >
-              <span className="flex items-center gap-1.5">
-                <FolderOpen className="w-3.5 h-3.5" />
-                Import Repertoire
-              </span>
-              {repertoireListOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </button>
-
-            {repertoireListOpen && (
-              <div className="panel overflow-hidden">
-                {files.length === 0 ? (
-                  <div className="px-3 py-4 text-xs text-text-muted text-center">
-                    No saved repertoires yet.<br />Save a repertoire from the main view first.
-                  </div>
-                ) : (
-                  <div className="divide-y divide-border-subtle">
-                    {files.map((file) => (
-                      <div key={file.id} className="px-3 py-2.5 flex items-center gap-2">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-xs text-text-primary font-medium truncate">{file.name}</div>
-                          <div className="text-[10px] text-text-muted">
-                            {file.nodeCount} position{file.nodeCount !== 1 ? 's' : ''}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          <button
-                            onClick={() => handleImportRepertoire(file.id, 'white')}
-                            className="btn-secondary flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded"
-                            title={`Add White cards from "${file.name}"`}
-                          >
-                            <Download className="w-2.5 h-2.5" />
-                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-white border border-border-active" />
-                          </button>
-                          <button
-                            onClick={() => handleImportRepertoire(file.id, 'black')}
-                            className="btn-secondary flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded"
-                            title={`Add Black cards from "${file.name}"`}
-                          >
-                            <Download className="w-2.5 h-2.5" />
-                            <span className="inline-flex items-center justify-center w-3 h-3 rounded-sm bg-text-primary border border-border-subtle" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="px-3 py-2 border-t border-border-subtle text-[10px] text-text-muted">
-                  White/Black square = drill as that colour
-                </div>
-              </div>
-            )}
-
-            <button
-              onClick={() => setImporterOpen((prev) => !prev)}
-              className="btn-secondary flex items-center justify-between w-full px-3 py-2 text-xs"
-            >
-              <span>Add Cards Manually</span>
-              {importerOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </button>
-            {importerOpen && (
-              <div className="mt-1">
-                <SRCardImporter onCardsChanged={() => rebuildSession()} />
-              </div>
-            )}
-          </div>
         </div>
       </div>
     </div>
