@@ -265,7 +265,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const [stats, setStats] = useState<SessionStats>({ correct: 0, incorrect: 0 });
   const [lastSessionStats, setLastSessionStats] = useState<SRLastSessionStats | null>(loadLastSessionStats);
   const [comparisonLastSessionStats, setComparisonLastSessionStats] = useState<SRLastSessionStats | null>(loadLastSessionStats);
-  const [lineResults, setLineResults] = useState<boolean[]>([]);
+  const [completedSessionStats, setCompletedSessionStats] = useState<SessionStats | null>(null);
   const [sessionHistory, setSessionHistory] = useState<SessionEntry[]>([]);
   const [replayIndex, setReplayIndex] = useState(0);
 
@@ -343,7 +343,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setSessionHistory([]);
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
-    setLineResults([]);
+    setCompletedSessionStats(null);
     setComparisonLastSessionStats(lastSessionStats);
     const firstFen = linesForSession[0]?.lineStartFen
       ? buildPromptSteps(linesForSession[0], nextSelection.color)[0]?.reviewFen ?? linesForSession[0].front
@@ -367,7 +367,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setSessionHistory([]);
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
-    setLineResults([]);
+    setCompletedSessionStats(null);
     setPhase('idle');
     setBoardOrientation('white');
   }, []);
@@ -498,10 +498,10 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       incorrect: stats.incorrect + (lineCorrect ? 0 : 1),
     };
     setStats(nextStats);
-    setLineResults((prev) => [...prev, lineCorrect]);
 
     const nextLineIndex = currentLineIndex + 1;
     if (nextLineIndex >= sessionLines.length) {
+      setCompletedSessionStats(nextStats);
       const savedStats = saveSessionStats(nextStats.correct, nextStats.incorrect);
       setLastSessionStats(savedStats.lastSession);
       setPhase('complete');
@@ -610,9 +610,10 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const progressPercent = sessionLines.length > 0
     ? ((currentLineIndex + (phase === 'complete' ? 1 : 0)) / sessionLines.length) * 100
     : 0;
-  const completedLineCount = lineResults.length;
-  const correctLineCount = lineResults.filter(Boolean).length;
-  const incorrectLineCount = completedLineCount - correctLineCount;
+  const summaryStats = completedSessionStats ?? stats;
+  const completedLineCount = summaryStats.correct + summaryStats.incorrect;
+  const correctLineCount = summaryStats.correct;
+  const incorrectLineCount = summaryStats.incorrect;
   const currentSessionPercent = percentFromCounts(correctLineCount, completedLineCount);
   const previousSessionPercent = comparisonLastSessionStats
     ? percentFromCounts(comparisonLastSessionStats.totalCorrect, comparisonLastSessionStats.totalReviewed)
