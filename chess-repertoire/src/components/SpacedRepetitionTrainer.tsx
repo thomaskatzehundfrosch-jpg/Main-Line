@@ -467,14 +467,18 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     if (!currentCard || !expectedMove) return;
 
     const promptCorrect = !cardHadMistake && userMove !== null && userMove === expectedMove;
-
-    setSessionHistory((prev) => [...prev, {
+    const nextSessionHistory = [...sessionHistory, {
       card: currentCard,
       reviewFen: displayFen,
       expectedMove,
       userMove,
       correct: promptCorrect,
-    }]);
+    }];
+    const nextPromptStats = {
+      correct: nextSessionHistory.filter((entry) => entry.correct).length,
+      incorrect: nextSessionHistory.filter((entry) => !entry.correct).length,
+    };
+    setSessionHistory(nextSessionHistory);
 
     const nextPromptIndex = currentPromptIndex + 1;
     if (nextPromptIndex < promptSteps.length) {
@@ -501,8 +505,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
 
     const nextLineIndex = currentLineIndex + 1;
     if (nextLineIndex >= sessionLines.length) {
-      setCompletedSessionStats(nextStats);
-      const savedStats = saveSessionStats(nextStats.correct, nextStats.incorrect);
+      setCompletedSessionStats(nextPromptStats);
+      const savedStats = saveSessionStats(nextPromptStats.correct, nextPromptStats.incorrect);
       setLastSessionStats(savedStats.lastSession);
       setPhase('complete');
       return;
@@ -519,7 +523,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setLineHadMistake(false);
     setBoardOrientation(getOrientationForFen(selection?.color ?? 'white', nextReviewFen));
     setPhase('question');
-  }, [cardHadMistake, cards, currentCard, currentLineIndex, currentPromptIndex, displayFen, expectedMove, lineHadMistake, promptSteps.length, selection?.color, sessionLines.length, stats, userMove]);
+  }, [cardHadMistake, cards, currentCard, currentLineIndex, currentPromptIndex, displayFen, expectedMove, lineHadMistake, promptSteps.length, selection?.color, sessionHistory, sessionLines.length, stats, userMove]);
 
   const submitMove = useCallback((from: string, to: string, piece?: string) => {
     if ((phase !== 'question' && phase !== 'grading') || !currentCard) return false;
