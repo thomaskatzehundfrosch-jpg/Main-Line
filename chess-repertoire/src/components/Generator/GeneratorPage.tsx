@@ -79,7 +79,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   /* ---------------------------------------------------------------- */
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
-  const [boardExpanded, setBoardExpanded] = useState(false);
+  const [boardExpanded, setBoardExpanded] = useState(true);
   const themeColors = BOARD_THEME_COLORS[appSettings.boardTheme];
 
   // During generation animate to the latest added node; otherwise show selected.
