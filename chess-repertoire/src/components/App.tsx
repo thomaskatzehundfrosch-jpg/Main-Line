@@ -106,7 +106,7 @@ export const App: React.FC = () => {
   const isMobile = useIsMobile();
   const [mobileTab, setMobileTab] = useState<MobileTab>('tree');
 
-  const [filesOpen, setFilesOpen] = useState(true);
+  const [filesOpen, setFilesOpen] = useState(() => !isMobile);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -138,6 +138,10 @@ export const App: React.FC = () => {
   // ─── Game Viewer State ───────────────────────────────────────────────
   const [viewingGame, setViewingGame] = useState<ImportedGame | null>(null);
   const [viewingMoveIndex, setViewingMoveIndex] = useState(0);
+
+  useEffect(() => {
+    if (isMobile) setFilesOpen(false);
+  }, [isMobile]);
 
   // ─── Explore overlay FEN ─────────────────────────────────────────────
   // Set when clicking a greyed-out overlay node in explore mode.
@@ -638,7 +642,7 @@ export const App: React.FC = () => {
                 </button>
               </div>
             )}
-            <div className="w-full">
+            <div className="mx-auto w-full max-w-[320px]">
               <ChessBoard
                 fen={displayFen}
                 orientation={orientation}
@@ -717,7 +721,6 @@ export const App: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <div className="panel-header">OPENING TREE</div>
                 <div className="flex-1 min-h-0">
                   <OpeningTree
                     tree={tree}
@@ -876,9 +879,8 @@ export const App: React.FC = () => {
           </div>
 
           {/* Opening Tree */}
-          <div className="panel-header flex items-center justify-between">
+          <div className="panel-header flex items-center justify-end gap-3">
             <div className="flex items-center gap-2">
-              <span>OPENING TREE</span>
               {/* Annotation count badges — shown after analysis completes */}
               {!repertoireEval.isAnalyzing && repertoireEval.nodeAnnotations.size > 0 && (() => {
                 const counts = {
@@ -1046,7 +1048,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* Right Panel: Board + Tabbed Content */}
-        <div className="w-[420px] min-w-[380px] flex flex-col overflow-hidden">
+        <div className="w-[360px] min-w-[340px] flex flex-col overflow-hidden xl:w-[380px] xl:min-w-[360px]">
           {/* Chessboard */}
           <div className="flex flex-col items-center p-3 gap-1">
             {/* Game viewer banner */}
@@ -1068,7 +1070,7 @@ export const App: React.FC = () => {
                 </button>
               </div>
             )}
-            <div className="w-full max-w-[400px]">
+            <div className="w-full max-w-[340px] xl:max-w-[360px]">
               <ChessBoard
                 fen={displayFen}
                 orientation={orientation}
