@@ -69,6 +69,12 @@ export interface SRLifetimeStats {
   totalCorrect: number;
 }
 
+export interface SRLastSessionStats {
+  totalReviewed: number;
+  totalCorrect: number;
+  completedAt: number | null;
+}
+
 export function loadStats(): SRLifetimeStats {
   try {
     const raw = localStorage.getItem(STATS_KEY);
@@ -86,12 +92,42 @@ export function loadStats(): SRLifetimeStats {
   }
 }
 
-export function saveSessionStats(correct: number, incorrect: number): SRLifetimeStats {
+const LAST_SESSION_KEY = 'aic_sr_last_session_stats';
+
+export function loadLastSessionStats(): SRLastSessionStats | null {
+  try {
+    const raw = localStorage.getItem(LAST_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SRLastSessionStats;
+    if (
+      typeof parsed.totalReviewed !== 'number' ||
+      typeof parsed.totalCorrect !== 'number' ||
+      (parsed.completedAt !== null && typeof parsed.completedAt !== 'number')
+    ) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function saveSessionStats(
+  correct: number,
+  incorrect: number,
+): { lifetime: SRLifetimeStats; lastSession: SRLastSessionStats } {
   const prev = loadStats();
+  const totalReviewed = correct + incorrect;
   const updated: SRLifetimeStats = {
-    totalReviewed: prev.totalReviewed + correct + incorrect,
+    totalReviewed: prev.totalReviewed + totalReviewed,
     totalCorrect: prev.totalCorrect + correct,
   };
   localStorage.setItem(STATS_KEY, JSON.stringify(updated));
-  return updated;
+  const lastSession: SRLastSessionStats = {
+    totalReviewed,
+    totalCorrect: correct,
+    completedAt: Date.now(),
+  };
+  localStorage.setItem(LAST_SESSION_KEY, JSON.stringify(lastSession));
+  return { lifetime: updated, lastSession };
 }
