@@ -14,8 +14,8 @@ import {
 } from 'lucide-react';
 import { createCard, getDueCards, reviewCard } from '../lib/srScheduler';
 import type { Card } from '../lib/srScheduler';
-import { loadCards, loadStats, saveCards, saveSessionStats } from '../lib/srStorage';
-import type { SRLifetimeStats } from '../lib/srStorage';
+import { loadCards, loadLastSessionStats, loadStats, saveCards, saveSessionStats } from '../lib/srStorage';
+import type { SRLastSessionStats, SRLifetimeStats } from '../lib/srStorage';
 import { useFiles } from '../context/FileContext';
 import { useSettings } from '../context/SettingsContext';
 import type { RepertoireFile } from '../types/repertoireFile';
@@ -27,7 +27,7 @@ const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const sharedChess = new Chess();
 
 type Phase = 'idle' | 'question' | 'grading' | 'complete' | 'replay';
-type DrillColor = 'white' | 'black';
+type DrillColor = 'white' | 'black' | 'both';
 
 interface SessionStats {
   correct: number;
@@ -115,6 +115,7 @@ function buildCardsForSelection(file: RepertoireFile, drillColor: DrillColor, ex
       const currentPath = [...path, node.move];
       const activeColor = parentFen.split(' ')[1];
       const isPlayerMove =
+        drillColor === 'both' ||
         (drillColor === 'white' && activeColor === 'w') ||
         (drillColor === 'black' && activeColor === 'b');
 
@@ -129,12 +130,19 @@ function buildCardsForSelection(file: RepertoireFile, drillColor: DrillColor, ex
             result.push(existing
               ? {
                   ...existing,
-                  drillColor,
+                  drillColor: drillColor === 'both' ? existing.drillColor : drillColor,
                   lineName: file.name,
                   moveHistorySan: existing.moveHistorySan ?? currentPath,
                   lineStartFen: existing.lineStartFen ?? file.tree.fen,
                 }
-              : createCard(parentFen, uci, file.name, drillColor, currentPath, file.tree.fen));
+              : createCard(
+                  parentFen,
+                  uci,
+                  file.name,
+                  drillColor === 'both' ? undefined : drillColor,
+                  currentPath,
+                  file.tree.fen,
+                ));
           }
         } catch {
           // Ignore invalid repertoire nodes while building a training deck.
@@ -168,7 +176,11 @@ function buildPromptSteps(card: Card, drillColor: DrillColor): PromptStep[] {
       const move = chess.move(san);
       if (!move) return [{ reviewFen: card.front, expectedMove: card.back }];
 
-      if ((drillColor === 'white' && mover === 'w') || (drillColor === 'black' && mover === 'b')) {
+      if (
+        drillColor === 'both' ||
+        (drillColor === 'white' && mover === 'w') ||
+        (drillColor === 'black' && mover === 'b')
+      ) {
         prompts.push({
           reviewFen,
           expectedMove: move.from + move.to + (move.promotion || ''),
@@ -187,6 +199,50 @@ function mergeCards(existingCards: Card[], cardsToMerge: Card[]): Card[] {
   for (const card of cardsToMerge) merged.set(cardKey(card), card);
   return Array.from(merged.values());
 }
+
+function getOrientationForFen(selectionColor: DrillColor, fen: string): 'white' | 'black' {
+  if (selectionColor === 'both') return 'white';
+  return selectionColor;
+}
+
+function percentFromCounts(correct: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.round((correct / total) * 100);
+}
+
+const AccuracyComparisonCard: React.FC<{
+  currentPercent?: number | null;
+  lastSessionPercent: number | null;
+  lifetimePercent: number | null;
+}> = ({ currentPercent, lastSessionPercent, lifetimePercent }) => {
+  const rows = [
+    { label: 'This session', value: currentPercent, colorClass: 'bg-accent-teal' },
+    { label: 'Last session', value: lastSessionPercent, colorClass: 'bg-accent-amber' },
+    { label: 'Lifetime', value: lifetimePercent, colorClass: 'bg-accent-blue' },
+  ].filter((row) => row.value !== null);
+
+  return (
+    <div className="panel w-full p-4">
+      <div className="text-xs uppercase tracking-wide text-text-muted">Accuracy Comparison</div>
+      <div className="mt-3 space-y-3">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <div className="mb-1 flex items-center justify-between text-xs">
+              <span className="text-text-muted">{row.label}</span>
+              <span className="font-semibold text-text-primary">{row.value}%</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-bg-panel">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${row.colorClass}`}
+                style={{ width: `${row.value}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
   const { files } = useFiles();
@@ -210,6 +266,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white');
   const [stats, setStats] = useState<SessionStats>({ correct: 0, incorrect: 0 });
   const [lifetimeStats, setLifetimeStats] = useState<SRLifetimeStats>(loadStats);
+  const [lastSessionStats, setLastSessionStats] = useState<SRLastSessionStats | null>(loadLastSessionStats);
   const [sessionHistory, setSessionHistory] = useState<SessionEntry[]>([]);
   const [replayIndex, setReplayIndex] = useState(0);
 
@@ -287,7 +344,10 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setSessionHistory([]);
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
-    setBoardOrientation(nextSelection.color);
+    const firstFen = linesForSession[0]?.lineStartFen
+      ? buildPromptSteps(linesForSession[0], nextSelection.color)[0]?.reviewFen ?? linesForSession[0].front
+      : linesForSession[0]?.front ?? INITIAL_FEN;
+    setBoardOrientation(getOrientationForFen(nextSelection.color, firstFen));
     setPhase(linesForSession.length > 0 ? 'question' : 'idle');
   }, [files]);
 
@@ -416,10 +476,11 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
 
     const nextPromptIndex = currentPromptIndex + 1;
     if (nextPromptIndex < promptSteps.length) {
+      const nextReviewFen = promptSteps[nextPromptIndex]?.reviewFen ?? currentCard.front;
       setCurrentPromptIndex(nextPromptIndex);
       setUserMove(null);
       setCardHadMistake(false);
-      setBoardOrientation(selection?.color ?? 'white');
+      setBoardOrientation(getOrientationForFen(selection?.color ?? 'white', nextReviewFen));
       setPhase('question');
       return;
     }
@@ -438,17 +499,23 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
 
     const nextLineIndex = currentLineIndex + 1;
     if (nextLineIndex >= sessionLines.length) {
-      setLifetimeStats(saveSessionStats(nextStats.correct, nextStats.incorrect));
+      const savedStats = saveSessionStats(nextStats.correct, nextStats.incorrect);
+      setLifetimeStats(savedStats.lifetime);
+      setLastSessionStats(savedStats.lastSession);
       setPhase('complete');
       return;
     }
 
+    const nextLine = sessionLines[nextLineIndex];
+    const nextReviewFen = nextLine
+      ? buildPromptSteps(nextLine, selection?.color ?? 'white')[0]?.reviewFen ?? nextLine.front
+      : INITIAL_FEN;
     setCurrentLineIndex(nextLineIndex);
     setCurrentPromptIndex(0);
     setUserMove(null);
     setCardHadMistake(false);
     setLineHadMistake(false);
-    setBoardOrientation(selection?.color ?? 'white');
+    setBoardOrientation(getOrientationForFen(selection?.color ?? 'white', nextReviewFen));
     setPhase('question');
   }, [cardHadMistake, cards, currentCard, currentLineIndex, currentPromptIndex, displayFen, expectedMove, lineHadMistake, promptSteps.length, selection?.color, sessionLines.length, stats, userMove]);
 
@@ -541,6 +608,13 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const progressPercent = sessionLines.length > 0
     ? ((currentLineIndex + (phase === 'complete' ? 1 : 0)) / sessionLines.length) * 100
     : 0;
+  const currentSessionPercent = percentFromCounts(stats.correct, stats.correct + stats.incorrect);
+  const previousSessionPercent = lastSessionStats
+    ? percentFromCounts(lastSessionStats.totalCorrect, lastSessionStats.totalReviewed)
+    : null;
+  const lifetimePercent = lifetimeStats.totalReviewed > 0
+    ? percentFromCounts(lifetimeStats.totalCorrect, lifetimeStats.totalReviewed)
+    : null;
 
   if (!selection) {
     return (
@@ -598,7 +672,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
               <div>
                 <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Color</div>
                 <div className="flex gap-2">
-                  {(['white', 'black'] as DrillColor[]).map((color) => (
+                  {(['white', 'black', 'both'] as DrillColor[]).map((color) => (
                     <button
                       key={color}
                       onClick={() => setSelectedColor(color)}
@@ -608,11 +682,22 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                           : 'border-border-subtle bg-bg-panel text-text-muted hover:text-text-primary'
                       }`}
                     >
-                      {color === 'white' ? 'White' : 'Black'}
+                      {color === 'white' ? 'White' : color === 'black' ? 'Black' : 'Both'}
                     </button>
                   ))}
                 </div>
+                <p className="text-text-muted text-xs mt-2">
+                  Choose both if you want to be tested on every stored move in the line.
+                </p>
               </div>
+
+              {(previousSessionPercent !== null || lifetimePercent !== null) && (
+                <AccuracyComparisonCard
+                  currentPercent={null}
+                  lastSessionPercent={previousSessionPercent}
+                  lifetimePercent={lifetimePercent}
+                />
+              )}
 
               <div className="sticky bottom-0 -mx-4 mt-1 border-t border-border-subtle bg-bg-primary/95 px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur sm:static sm:mx-0 sm:mt-0 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0 sm:backdrop-blur-none">
                 <button
@@ -648,7 +733,13 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
           </h2>
         </div>
         <div className="flex items-center gap-3 text-xs text-text-muted">
-          <span>{selection.color === 'white' ? 'White' : 'Black'} repertoire</span>
+          <span>
+            {selection.color === 'white'
+              ? 'White repertoire'
+              : selection.color === 'black'
+                ? 'Black repertoire'
+                : 'Both sides'}
+          </span>
           <span className="text-border-subtle">|</span>
           <span>{cards.length} cards</span>
           <span className="text-border-subtle">|</span>
@@ -813,11 +904,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
             <div className="flex flex-col items-center gap-4 py-8">
               <Trophy className="w-12 h-12 text-accent-amber" />
               <h3 className="text-text-primary text-lg font-semibold">Session Complete</h3>
-              <div className="text-4xl font-bold text-accent-teal">
-                {stats.correct + stats.incorrect > 0
-                  ? Math.round((stats.correct / (stats.correct + stats.incorrect)) * 100)
-                  : 0}%
-              </div>
+              <div className="text-4xl font-bold text-accent-teal">{currentSessionPercent}%</div>
               <div className="panel p-4 w-full">
                 <div className="grid grid-cols-2 gap-4 text-center">
                   <div>
@@ -830,14 +917,11 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                   </div>
                 </div>
               </div>
-              {lifetimeStats.totalReviewed > 0 && (
-                <div className="panel p-3 w-full text-center">
-                  <p className="text-text-muted text-xs mb-1">Lifetime Accuracy</p>
-                  <p className="text-text-primary text-lg font-semibold">
-                    {Math.round((lifetimeStats.totalCorrect / lifetimeStats.totalReviewed) * 100)}%
-                  </p>
-                </div>
-              )}
+              <AccuracyComparisonCard
+                currentPercent={currentSessionPercent}
+                lastSessionPercent={previousSessionPercent}
+                lifetimePercent={lifetimePercent}
+              />
               <div className="flex items-center gap-3">
                 {sessionHistory.length > 0 && (
                   <button
