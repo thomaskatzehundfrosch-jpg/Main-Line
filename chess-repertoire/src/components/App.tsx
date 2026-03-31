@@ -1057,7 +1057,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* Right Panel: Board + Tabbed Content */}
-        <div className={`${boardExpanded ? 'w-[560px] min-w-[520px]' : 'w-[420px] min-w-[380px]'} flex flex-col overflow-hidden transition-[width] duration-200`}>
+        <div className={`${boardExpanded ? 'w-[580px] min-w-[540px]' : 'w-[420px] min-w-[380px]'} flex flex-col overflow-hidden transition-[width] duration-200`}>
           {/* Chessboard */}
           <div className="flex flex-col items-center p-3 gap-1">
             {/* Game viewer banner */}
@@ -1081,7 +1081,7 @@ export const App: React.FC = () => {
             )}
             <div className={`w-full transition-all ${
               boardExpanded
-                ? 'max-w-[520px]'
+                ? 'max-w-[540px]'
                 : 'max-w-[400px]'
             }`}>
               <ChessBoard
@@ -1091,7 +1091,7 @@ export const App: React.FC = () => {
                 engineBestMove={engine.enabled ? engineArrows : undefined}
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
                 mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
-                sizeScale={boardExpanded ? 1.12 : 1}
+                sizeScale={1}
               />
             </div>
             {viewingGame ? (
