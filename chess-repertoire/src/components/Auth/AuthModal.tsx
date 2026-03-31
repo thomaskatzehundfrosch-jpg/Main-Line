@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Mail, Lock, LogIn, UserPlus, Chrome } from 'lucide-react';
+import { X, Mail, Lock, LogIn, UserPlus } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { isSupabaseConfigured } from '../../lib/supabase';
 
@@ -10,7 +10,7 @@ interface AuthModalProps {
 type Tab = 'signin' | 'signup';
 
 export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
-  const { signIn, signUp, signInWithGoogle } = useAuth();
+  const { signIn, signUp } = useAuth();
   const [tab, setTab] = useState<Tab>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -43,29 +43,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
     setInfo(null);
     setLoading(true);
 
-    if (tab === 'signin') {
-      const { error } = await signIn(email, password);
-      if (error) {
-        setError(error.message);
+    try {
+      if (tab === 'signin') {
+        const { error } = await signIn(email, password);
+        if (error) {
+          setError(error.message);
+        } else {
+          onClose();
+        }
       } else {
-        onClose();
+        const { error } = await signUp(email, password);
+        if (error) {
+          setError(error.message);
+        } else {
+          onClose();
+        }
       }
-    } else {
-      const { error } = await signUp(email, password);
-      if (error) {
-        setError(error.message);
-      } else {
-        onClose();
-      }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
-
-  const handleGoogle = async () => {
-    setError(null);
-    const { error } = await signInWithGoogle();
-    if (error) setError(error.message);
-    // OAuth redirect will close the modal automatically
   };
 
   return (
@@ -108,21 +104,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
           </button>
         </div>
 
-        {/* Google OAuth */}
-        <button
-          onClick={handleGoogle}
-          className="w-full flex items-center justify-center gap-2 btn-secondary mb-4 py-2"
-        >
-          <Chrome className="w-4 h-4" />
-          <span>Continue with Google</span>
-        </button>
-
-        <div className="flex items-center gap-3 mb-4">
-          <div className="flex-1 h-px bg-border-subtle" />
-          <span className="text-text-muted text-xs">or</span>
-          <div className="flex-1 h-px bg-border-subtle" />
-        </div>
-
         {/* Email/Password Form */}
         <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div className="relative">
@@ -133,6 +114,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              disabled={loading}
               className="w-full bg-bg-secondary border border-border-subtle rounded-lg pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-teal"
             />
           </div>
@@ -145,6 +127,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={6}
+              disabled={loading}
               className="w-full bg-bg-secondary border border-border-subtle rounded-lg pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-teal"
             />
           </div>
