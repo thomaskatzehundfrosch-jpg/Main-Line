@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X, Heart, Youtube } from 'lucide-react';
+import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X, Heart, Mail, Youtube } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './Auth/AuthModal';
 import { UserMenu } from './Auth/UserMenu';
 import { useIsMobile } from '../hooks/useIsMobile';
+import type { GeneratorProgress } from '../types/generator';
 
 interface TopBarProps {
   onImport: () => void;
@@ -13,9 +14,48 @@ interface TopBarProps {
   onTrainer?: () => void;
   onSettings?: () => void;
   activeFileName?: string | null;
+  generatorProgress?: GeneratorProgress;
+  isGenerating?: boolean;
 }
 
-export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetcher, onGenerator, onTrainer, onSettings, activeFileName }) => {
+function GeneratorStatus({ progress, isGenerating }: { progress?: GeneratorProgress; isGenerating?: boolean }) {
+  if (!progress) return null;
+  if (!isGenerating && progress.nodes <= 0) return null;
+
+  const pct = progress.maxNodes > 0
+    ? Math.min(100, Math.round((progress.nodes / progress.maxNodes) * 100))
+    : 0;
+  const label = isGenerating ? (progress.status || 'Generating') : 'Ready';
+
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <span className={`text-[10px] font-mono uppercase tracking-wider ${isGenerating ? 'text-accent-teal' : 'text-text-muted'}`}>
+        {label}
+      </span>
+      <div className="w-20 sm:w-24 h-1 rounded-full bg-bg-hover overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-200 ${isGenerating ? 'bg-accent-teal' : 'bg-text-muted/60'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="text-[10px] text-text-muted font-mono whitespace-nowrap">
+        {pct}%
+      </span>
+    </div>
+  );
+}
+
+export const TopBar: React.FC<TopBarProps> = ({
+  onImport,
+  onExport,
+  onGameFetcher,
+  onGenerator,
+  onTrainer,
+  onSettings,
+  activeFileName,
+  generatorProgress,
+  isGenerating,
+}) => {
   const { user, loading } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -33,6 +73,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
               className="w-6 h-6 rounded-sm object-cover"
             />
             <span className="font-mono text-accent-teal text-base font-semibold">Main Line</span>
+            <GeneratorStatus progress={generatorProgress} isGenerating={isGenerating} />
             {activeFileName && (
               <span className="text-[11px] text-text-muted font-normal ml-1 truncate max-w-[100px]">
                 — {activeFileName}
@@ -45,6 +86,13 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
             <button onClick={onImport} className="btn-icon" title="Import PGN">
               <Upload className="w-4 h-4" />
             </button>
+            <a
+              href="mailto:mainlinecheese@gmail.com"
+              className="btn-icon !text-text-muted hover:!text-accent-teal"
+              title="Contact: mainlinecheese@gmail.com"
+            >
+              <Mail className="w-4 h-4" />
+            </a>
             <a
               href="https://paypal.me/minecraftweber"
               target="_blank"
@@ -137,17 +185,16 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
   return (
     <div className="bg-bg-primary border-b border-border-subtle px-4 py-3 flex items-center justify-between">
       {/* Left side: Logo and App name */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 min-w-0">
         <img
           src="/app-logo.png"
           alt="Main Line logo"
           className="w-8 h-8 rounded-md object-cover"
         />
-        <span className="font-mono text-accent-teal text-lg font-semibold">
-          Main Line
-        </span>
+        <span className="font-mono text-accent-teal text-lg font-semibold">Main Line</span>
+        <GeneratorStatus progress={generatorProgress} isGenerating={isGenerating} />
         {activeFileName && (
-          <span className="text-xs text-text-muted font-normal ml-2">
+          <span className="text-xs text-text-muted font-normal ml-1 truncate max-w-[220px]">
             — {activeFileName}
           </span>
         )}
@@ -205,6 +252,14 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
             <span>Train</span>
           </button>
         )}
+
+        <a
+          href="mailto:mainlinecheese@gmail.com"
+          className="btn-icon !text-text-muted hover:!text-accent-teal"
+          title="Contact: mainlinecheese@gmail.com"
+        >
+          <Mail className="w-4 h-4" />
+        </a>
 
         <a
           href="https://paypal.me/minecraftweber"
