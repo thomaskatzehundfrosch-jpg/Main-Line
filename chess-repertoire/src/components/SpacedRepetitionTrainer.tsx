@@ -509,7 +509,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   }, [submitMove]);
 
   const handleSquareClick = useCallback((square: Square) => {
-    if (phase !== 'question' || !currentCard) {
+    const canClickMove = phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution));
+    if (!canClickMove || !currentCard) {
       setSelectedSquare(null);
       setLegalMoves([]);
       return;
@@ -535,7 +536,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
 
     setSelectedSquare(null);
     setLegalMoves([]);
-  }, [currentCard, getLegalMoves, isOwnPiece, legalMoves, phase, selectedSquare, submitMove]);
+  }, [currentCard, getLegalMoves, isCorrect, isOwnPiece, legalMoves, phase, selectedSquare, showSolution, submitMove]);
 
   const progressPercent = sessionLines.length > 0
     ? ((currentLineIndex + (phase === 'complete' ? 1 : 0)) / sessionLines.length) * 100
