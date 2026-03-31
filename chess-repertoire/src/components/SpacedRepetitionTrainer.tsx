@@ -223,17 +223,22 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       const viewportWidth = window.innerWidth;
       const viewportHeight = window.innerHeight;
       const sidePanelWidth = viewportWidth >= 1024 ? 340 : 0;
-      const horizontalPadding = viewportWidth >= 1024 ? 96 : 32;
-      const verticalAllowance = 220;
-      const availableWidth = viewportWidth - sidePanelWidth - horizontalPadding;
+      const containerWidth = boardContainerRef.current?.clientWidth ?? viewportWidth;
+      const horizontalPadding = viewportWidth >= 1024 ? 96 : 16;
+      const evalBarFootprint = 28;
+      const verticalAllowance = viewportWidth >= 1024 ? 220 : 280;
+      const availableWidth = viewportWidth >= 1024
+        ? viewportWidth - sidePanelWidth - horizontalPadding
+        : containerWidth - horizontalPadding - evalBarFootprint;
       const availableHeight = viewportHeight - verticalAllowance;
-      setBoardWidth(Math.max(360, Math.min(availableWidth, availableHeight, 960)));
+      const minBoardWidth = viewportWidth < 640 ? 280 : 360;
+      setBoardWidth(Math.max(minBoardWidth, Math.min(availableWidth, availableHeight, 960)));
     };
 
     updateWidth();
     window.addEventListener('resize', updateWidth);
     return () => window.removeEventListener('resize', updateWidth);
-  }, []);
+  }, [selection]);
 
   const currentFile = useMemo(
     () => files.find((file) => file.id === selectedFileId) ?? null,
@@ -649,9 +654,9 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-auto">
         <div
           ref={boardContainerRef}
-          className="w-full flex flex-col items-center p-2 lg:flex-[2.8] lg:basis-0 lg:min-w-[820px] xl:min-w-[980px] 2xl:min-w-[1120px]"
+          className="w-full flex flex-col items-center px-2 py-2 sm:px-3 lg:flex-[2.8] lg:basis-0 lg:min-w-[820px] xl:min-w-[980px] 2xl:min-w-[1120px]"
         >
-          <div className="flex items-start gap-0 w-full max-w-[1120px] justify-center">
+          <div className="mx-auto flex w-fit max-w-full items-start justify-center">
             <div className="mr-1">
               <EvalBar
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
@@ -659,7 +664,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 height={boardWidth}
               />
             </div>
-            <div className="flex-1 min-w-0">
+            <div className="shrink-0">
               <Chessboard
                 position={displayFen}
                 boardWidth={boardWidth}
