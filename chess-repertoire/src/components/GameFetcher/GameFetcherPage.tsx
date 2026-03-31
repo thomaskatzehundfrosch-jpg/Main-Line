@@ -5,10 +5,11 @@ import { useAuth } from '../../context/AuthContext';
 import { generateGameId } from '../../types/game';
 import type { ImportedGame } from '../../types/game';
 import {
-  fetchChessComGames,
+  fetchGames,
   parsePgnMoves,
   parsePgnResult,
-  type ChessComRawGame,
+  type GameSource,
+  type RawFetchedGame,
   type FetchProgress,
 } from '../../utils/chessComFetcher';
 import { classifyOpening, classifyTimeControl } from '../../utils/ecoClassifier';
@@ -31,7 +32,7 @@ interface Filters {
 
 interface ClassifiedGame {
   id: string;
-  raw: ChessComRawGame;
+  raw: RawFetchedGame;
   eco: string;
   opening: string;
   moves: string[];
@@ -45,6 +46,15 @@ interface OpeningGroup {
   wins: number;
   draws: number;
   losses: number;
+}
+
+const SOURCE_OPTIONS: { value: GameSource; label: string }[] = [
+  { value: 'chesscom', label: 'Chess.com' },
+  { value: 'lichess', label: 'Lichess' },
+];
+
+function sourceLabel(source: GameSource): string {
+  return source === 'lichess' ? 'Lichess' : 'Chess.com';
 }
 
 // ─── Filter Chip Component ───────────────────────────────────────────────────
@@ -80,9 +90,11 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
   const games = useGames();
   const { user } = useAuth();
   const [mode, setMode] = useState<FetcherMode>('standard');
+  const [source, setSource] = useState<GameSource>('chesscom');
 
-  // Derive a per-user (or global) localStorage key for the saved chess.com username
-  const usernameStorageKey = user ? `gamefetcher_username_${user.id}` : 'gamefetcher_username';
+  const usernameStorageKey = user
+    ? `gamefetcher_username_${source}_${user.id}`
+    : `gamefetcher_username_${source}`;
 
   // Form state
   const [username, setUsername] = useState('');
@@ -90,7 +102,7 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
   // Load saved username on mount / when the signed-in user changes
   useEffect(() => {
     const saved = localStorage.getItem(usernameStorageKey);
-    if (saved) setUsername(saved);
+    setUsername(saved ?? '');
   }, [usernameStorageKey]);
   const [dateFrom, setDateFrom] = useState(() => {
     const now = new Date();
@@ -124,7 +136,7 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
   // ─── Filter & classify fetched games ─────────────────────────────────────
 
   const applyFiltersAndClassify = useCallback(
-    (rawGames: ChessComRawGame[], user: string): OpeningGroup[] => {
+    (rawGames: RawFetchedGame[], user: string): OpeningGroup[] => {
       const filtered = rawGames.filter((g) => {
         // Rated filter
         if (filters.rated === 'rated' && !g.rated) return false;
@@ -220,7 +232,7 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
   const handleFetch = useCallback(async () => {
     const user = username.trim();
     if (!user) {
-      setError('Enter a chess.com username.');
+      setError(`Enter a ${sourceLabel(source)} username.`);
       return;
     }
     if (!dateFrom || !dateTo) {
@@ -242,7 +254,7 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
     setSelectedIds(new Set());
 
     try {
-      const rawGames = await fetchChessComGames(user, dateFrom, dateTo, (p) =>
+      const rawGames = await fetchGames(source, user, dateFrom, dateTo, (p) =>
         setProgress(p)
       );
 
@@ -269,7 +281,7 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
     } finally {
       setLoading(false);
     }
-  }, [username, dateFrom, dateTo, applyFiltersAndClassify, usernameStorageKey]);
+  }, [username, dateFrom, dateTo, applyFiltersAndClassify, usernameStorageKey, source]);
 
   // ─── Selection helpers ───────────────────────────────────────────────────
 
@@ -440,7 +452,7 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
 
         <span className="text-xs text-text-muted ml-1">
           {mode === 'standard'
-            ? 'Fetch games from chess.com and import as overlay'
+            ? `Fetch games from ${sourceLabel(source)} and import as overlay`
             : 'Find games that reached a specific line in your repertoire'}
         </span>
       </div>
@@ -460,14 +472,34 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
               <div className="flex gap-3 items-end flex-wrap">
                 <div className="flex flex-col gap-1">
                   <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
-                    Username
+                    Source
+                  </label>
+                  <div className="flex items-center gap-1 bg-bg-panel rounded border border-border-subtle p-0.5 h-9">
+                    {SOURCE_OPTIONS.map((option) => (
+                      <button
+                        key={option.value}
+                        onClick={() => setSource(option.value)}
+                        className={`px-3 py-1 rounded text-xs font-mono transition-all ${
+                          source === option.value
+                            ? 'bg-bg-surface text-accent-teal border border-accent-teal/40'
+                            : 'text-text-muted hover:text-text-secondary'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
+                    Username ({sourceLabel(source)})
                   </label>
                   <input
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleFetch()}
-                    placeholder="e.g. hikaru"
+                    placeholder={source === 'lichess' ? 'e.g. DrNykterstein' : 'e.g. hikaru'}
                     className="h-9 px-3 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-sm outline-none focus:border-accent-teal transition-colors w-[180px]"
                     autoComplete="off"
                     spellCheck={false}
@@ -884,7 +916,7 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
           {/* Empty state when no results yet */}
           {!loading && groups.length === 0 && !error && (
             <div className="text-center py-16 text-text-muted text-sm">
-              Enter a chess.com username and fetch games to get started.
+              Enter a {sourceLabel(source)} username and fetch games to get started.
             </div>
           )}
         </div>

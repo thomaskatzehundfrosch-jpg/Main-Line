@@ -23,6 +23,11 @@ export default defineConfig({
           });
         },
       },
+      '/lichess-api': {
+        target: 'https://lichess.org',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/lichess-api/, ''),
+      },
     },
   },
   optimizeDeps: {

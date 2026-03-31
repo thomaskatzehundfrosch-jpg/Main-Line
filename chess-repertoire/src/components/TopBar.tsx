@@ -177,7 +177,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onImport, onExport, onGameFetche
           <button
             onClick={onGameFetcher}
             className="btn-primary flex items-center gap-2"
-            title="Fetch games from chess.com"
+            title="Fetch games from Chess.com or Lichess"
           >
             <Globe className="w-4 h-4" />
             <span>Game Fetcher</span>

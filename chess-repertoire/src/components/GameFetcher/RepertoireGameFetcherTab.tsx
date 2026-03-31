@@ -10,10 +10,11 @@ import { generateGameId } from '../../types/game';
 import type { ImportedGame } from '../../types/game';
 import type { TreeNode } from '../../types';
 import {
-  fetchChessComGames,
+  fetchGames,
   parsePgnMoves,
   parsePgnResult,
-  type ChessComRawGame,
+  type GameSource,
+  type RawFetchedGame,
   type FetchProgress,
 } from '../../utils/chessComFetcher';
 import { classifyTimeControl } from '../../utils/ecoClassifier';
@@ -29,7 +30,7 @@ interface Filters {
 
 interface ClassifiedGame {
   id: string;
-  raw: ChessComRawGame;
+  raw: RawFetchedGame;
   moves: string[];
   result: string;
   deviationIndex: number;       // index of first deviation (-1 = followed whole line)
@@ -45,6 +46,15 @@ interface DeviationGroup {
   wins: number;
   draws: number;
   losses: number;
+}
+
+const SOURCE_OPTIONS: { value: GameSource; label: string }[] = [
+  { value: 'chesscom', label: 'Chess.com' },
+  { value: 'lichess', label: 'Lichess' },
+];
+
+function sourceLabel(source: GameSource): string {
+  return source === 'lichess' ? 'Lichess' : 'Chess.com';
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -228,15 +238,18 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
   const games = useGames();
   const { user } = useAuth();
   const { state: repertoire } = useRepertoire();
+  const [source, setSource] = useState<GameSource>('chesscom');
 
-  const usernameStorageKey = user ? `gamefetcher_username_${user.id}` : 'gamefetcher_username';
+  const usernameStorageKey = user
+    ? `gamefetcher_username_${source}_${user.id}`
+    : `gamefetcher_username_${source}`;
 
   // ─── Form state ───────────────────────────────────────────────────────────
   const [username, setUsername] = useState('');
 
   useEffect(() => {
     const saved = localStorage.getItem(usernameStorageKey);
-    if (saved) setUsername(saved);
+    setUsername(saved ?? '');
   }, [usernameStorageKey]);
 
   const [dateFrom, setDateFrom] = useState(() => {
@@ -297,7 +310,7 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
   // ─── Classify & group by deviation ───────────────────────────────────────
 
   const applyFiltersAndClassify = useCallback(
-    (rawGames: ChessComRawGame[], uname: string): DeviationGroup[] => {
+    (rawGames: RawFetchedGame[], uname: string): DeviationGroup[] => {
       if (selectedMoves.length === 0) return [];
 
       const filtered = rawGames.filter((g) => {
@@ -404,7 +417,7 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
 
   const handleFetch = useCallback(async () => {
     const uname = username.trim();
-    if (!uname) { setError('Enter a chess.com username.'); return; }
+    if (!uname) { setError(`Enter a ${sourceLabel(source)} username.`); return; }
     if (!dateFrom || !dateTo) { setError('Select a date range.'); return; }
     if (dateFrom > dateTo) { setError('From date must be before To date.'); return; }
     if (selectedMoves.length === 0) {
@@ -420,7 +433,7 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
     setSelectedIds(new Set());
 
     try {
-      const rawGames = await fetchChessComGames(uname, dateFrom, dateTo, (p) => setProgress(p));
+      const rawGames = await fetchGames(source, uname, dateFrom, dateTo, (p) => setProgress(p));
 
       if (rawGames.length === 0) {
         setError('No games found for this user in the selected period.');
@@ -449,7 +462,7 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
     } finally {
       setLoading(false);
     }
-  }, [username, dateFrom, dateTo, applyFiltersAndClassify, selectedMoves, usernameStorageKey]);
+  }, [username, dateFrom, dateTo, applyFiltersAndClassify, selectedMoves, usernameStorageKey, source]);
 
   // ─── Selection helpers ────────────────────────────────────────────────────
 
@@ -580,14 +593,34 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
             <div className="flex gap-3 items-end flex-wrap">
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
-                  Username (chess.com)
+                  Source
+                </label>
+                <div className="flex items-center gap-1 bg-bg-panel rounded border border-border-subtle p-0.5 h-9">
+                  {SOURCE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      onClick={() => setSource(option.value)}
+                      className={`px-3 py-1 rounded text-xs font-mono transition-all ${
+                        source === option.value
+                          ? 'bg-bg-surface text-accent-teal border border-accent-teal/40'
+                          : 'text-text-muted hover:text-text-secondary'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
+                  Username ({sourceLabel(source)})
                 </label>
                 <input
                   type="text"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleFetch()}
-                  placeholder="e.g. hikaru"
+                  placeholder={source === 'lichess' ? 'e.g. DrNykterstein' : 'e.g. hikaru'}
                   className="h-9 px-3 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-sm outline-none focus:border-accent-teal transition-colors w-[180px]"
                   autoComplete="off"
                   spellCheck={false}
@@ -915,7 +948,7 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
           <div className="text-center py-16 text-text-muted text-sm">
             {selectedMoves.length === 0
               ? 'Navigate your repertoire above to select an opening line, then fetch games.'
-              : `Line set to ${selectedMoves.join(' ')} — enter a username and fetch.`
+              : `Line set to ${selectedMoves.join(' ')} — enter a ${sourceLabel(source)} username and fetch.`
             }
           </div>
         )}

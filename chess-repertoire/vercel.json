@@ -10,6 +10,7 @@
   ],
   "rewrites": [
     { "source": "/chess-api/:path*", "destination": "https://api.chess.com/:path*" },
+    { "source": "/lichess-api/:path*", "destination": "https://lichess.org/:path*" },
     { "source": "/((?!.*\\..*).*)", "destination": "/index.html" }
   ]
 }

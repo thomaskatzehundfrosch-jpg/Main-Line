@@ -1,8 +1,11 @@
 /**
- * Chess.com API integration for fetching player games.
+ * Game fetching utilities for Chess.com and Lichess.
  */
 
-export interface ChessComRawGame {
+export type GameSource = 'chesscom' | 'lichess';
+
+export interface RawFetchedGame {
+  source: GameSource;
   url: string;
   pgn: string;
   time_control: string;
@@ -22,10 +25,37 @@ export interface ChessComRawGame {
   };
 }
 
+export type ChessComRawGame = RawFetchedGame;
+
 export interface FetchProgress {
   fetchedMonths: number;
   totalMonths: number;
   gamesFound: number;
+}
+
+interface LichessApiGame {
+  id: string;
+  rated: boolean;
+  variant: string;
+  speed: string;
+  createdAt: number;
+  lastMoveAt?: number;
+  winner?: 'white' | 'black';
+  players?: {
+    white?: {
+      user?: { name?: string };
+      rating?: number;
+    };
+    black?: {
+      user?: { name?: string };
+      rating?: number;
+    };
+  };
+  pgn?: string;
+  clock?: {
+    initial?: number;
+    increment?: number;
+  };
 }
 
 /**
@@ -53,6 +83,61 @@ export function getMonthsBetween(
   return months;
 }
 
+function monthBoundsUtc(year: number, month: number): { since: number; until: number } {
+  return {
+    since: Date.UTC(year, month - 1, 1, 0, 0, 0, 0),
+    until: Date.UTC(year, month, 0, 23, 59, 59, 999),
+  };
+}
+
+function mapWinnerToResult(
+  winner: 'white' | 'black' | undefined,
+  color: 'white' | 'black'
+): string {
+  if (!winner) return 'agreed';
+  return winner === color ? 'win' : 'loss';
+}
+
+function parseNdjson<T>(text: string): T[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as T);
+}
+
+function toLichessTimeControl(game: LichessApiGame): string {
+  const initial = game.clock?.initial;
+  const increment = game.clock?.increment;
+  if (typeof initial === 'number' && typeof increment === 'number') {
+    return `${initial}+${increment}`;
+  }
+  return '';
+}
+
+function normalizeLichessGame(game: LichessApiGame): RawFetchedGame {
+  return {
+    source: 'lichess',
+    url: `https://lichess.org/${game.id}`,
+    pgn: game.pgn ?? '',
+    time_control: toLichessTimeControl(game),
+    end_time: Math.floor((game.lastMoveAt ?? game.createdAt) / 1000),
+    rated: !!game.rated,
+    time_class: game.speed ?? '',
+    rules: game.variant ?? 'standard',
+    white: {
+      username: game.players?.white?.user?.name ?? 'Anonymous',
+      rating: game.players?.white?.rating ?? 0,
+      result: mapWinnerToResult(game.winner, 'white'),
+    },
+    black: {
+      username: game.players?.black?.user?.name ?? 'Anonymous',
+      rating: game.players?.black?.rating ?? 0,
+      result: mapWinnerToResult(game.winner, 'black'),
+    },
+  };
+}
+
 /**
  * Fetch games from chess.com for a given username and month range.
  * Calls the public API: https://api.chess.com/pub/player/{username}/games/{YYYY}/{MM}
@@ -62,7 +147,7 @@ export async function fetchChessComGames(
   fromMonth: string,
   toMonth: string,
   onProgress?: (progress: FetchProgress) => void
-): Promise<ChessComRawGame[]> {
+): Promise<RawFetchedGame[]> {
   const months = getMonthsBetween(fromMonth, toMonth);
 
   if (months.length === 0) {
@@ -72,7 +157,7 @@ export async function fetchChessComGames(
     throw new Error('Date range too large (max 24 months).');
   }
 
-  const allGames: ChessComRawGame[] = [];
+  const allGames: RawFetchedGame[] = [];
   let fetched = 0;
 
   for (const { year, month } of months) {
@@ -100,7 +185,10 @@ export async function fetchChessComGames(
     }
 
     const data = await resp.json();
-    const games: ChessComRawGame[] = data.games || [];
+    const games = ((data.games || []) as Omit<RawFetchedGame, 'source'>[]).map((game) => ({
+      ...game,
+      source: 'chesscom' as const,
+    }));
     allGames.push(...games);
 
     fetched++;
@@ -112,6 +200,73 @@ export async function fetchChessComGames(
   }
 
   return allGames;
+}
+
+/**
+ * Fetch games from Lichess for a given username and month range.
+ * Calls the public API: https://lichess.org/api/games/user/{username}
+ */
+export async function fetchLichessGames(
+  username: string,
+  fromMonth: string,
+  toMonth: string,
+  onProgress?: (progress: FetchProgress) => void
+): Promise<RawFetchedGame[]> {
+  const months = getMonthsBetween(fromMonth, toMonth);
+
+  if (months.length === 0) {
+    throw new Error('No months in selected range.');
+  }
+  if (months.length > 24) {
+    throw new Error('Date range too large (max 24 months).');
+  }
+
+  const allGames: RawFetchedGame[] = [];
+  let fetched = 0;
+
+  for (const { year, month } of months) {
+    const { since, until } = monthBoundsUtc(year, month);
+    const url = `/lichess-api/api/games/user/${encodeURIComponent(
+      username
+    )}?since=${since}&until=${until}&pgnInJson=true&opening=true`;
+
+    const resp = await fetch(url, {
+      headers: { Accept: 'application/x-ndjson' },
+    });
+
+    if (resp.status === 404) {
+      throw new Error(`User "${username}" not found on Lichess.`);
+    }
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status} fetching ${year}-${String(month).padStart(2, '0')}`);
+    }
+
+    const text = await resp.text();
+    const games = parseNdjson<LichessApiGame>(text).map(normalizeLichessGame);
+    allGames.push(...games);
+
+    fetched++;
+    onProgress?.({
+      fetchedMonths: fetched,
+      totalMonths: months.length,
+      gamesFound: allGames.length,
+    });
+  }
+
+  return allGames;
+}
+
+export async function fetchGames(
+  source: GameSource,
+  username: string,
+  fromMonth: string,
+  toMonth: string,
+  onProgress?: (progress: FetchProgress) => void
+): Promise<RawFetchedGame[]> {
+  if (source === 'lichess') {
+    return fetchLichessGames(username, fromMonth, toMonth, onProgress);
+  }
+  return fetchChessComGames(username, fromMonth, toMonth, onProgress);
 }
 
 /**
