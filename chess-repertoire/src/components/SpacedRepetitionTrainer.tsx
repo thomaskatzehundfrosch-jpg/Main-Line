@@ -165,7 +165,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     const updateWidth = () => {
       if (!boardContainerRef.current) return;
       const width = boardContainerRef.current.offsetWidth;
-      setBoardWidth(Math.max(320, Math.min(760, width - 32)));
+      setBoardWidth(Math.max(340, Math.min(880, width - 16)));
     };
 
     updateWidth();
@@ -197,11 +197,9 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     const mergedCards = mergeCards(storedCards, cardsForSelection);
     saveCards(mergedCards);
 
-    const dueCards = getDueCards(cardsForSelection, cardsForSelection.length || 20);
-
     setSelection(nextSelection);
     setCards(cardsForSelection);
-    setSessionCards(dueCards);
+    setSessionCards(cardsForSelection);
     setCurrentIndex(0);
     setUserMove(null);
     setCardHadMistake(false);
@@ -212,7 +210,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
     setBoardOrientation(nextSelection.color);
-    setPhase(dueCards.length > 0 ? 'question' : 'idle');
+    setPhase(cardsForSelection.length > 0 ? 'question' : 'idle');
   }, [files]);
 
   const leaveSession = useCallback(() => {
@@ -563,8 +561,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       </div>
 
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-auto">
-        <div ref={boardContainerRef} className="flex flex-col items-center p-4 lg:flex-[1.5] lg:min-w-[520px] xl:min-w-[620px]">
-          <div className="flex items-start gap-0 w-full max-w-[760px]">
+        <div ref={boardContainerRef} className="flex flex-col items-center p-3 lg:flex-[1.9] lg:min-w-[620px] xl:min-w-[760px]">
+          <div className="flex items-start gap-0 w-full max-w-[880px]">
             <div className="mr-1">
               <EvalBar
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
@@ -600,7 +598,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
           </button>
         </div>
 
-        <div className="lg:w-[360px] lg:min-w-[320px] xl:w-[380px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
+        <div className="lg:w-[320px] lg:min-w-[300px] xl:w-[340px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
           {sessionCards.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
             <div>
               <div className="flex justify-between text-xs text-text-muted mb-1.5">
@@ -617,7 +615,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
             <div className="flex flex-col items-center justify-center gap-4 py-6">
               <Brain className="w-12 h-12 text-text-muted opacity-40" />
               <p className="text-text-muted text-center text-sm">
-                No due cards for this repertoire right now.
+                This repertoire has no trainable cards yet.
               </p>
               <button onClick={leaveSession} className="btn-secondary px-4 py-2 text-sm">
                 Choose Another Repertoire
