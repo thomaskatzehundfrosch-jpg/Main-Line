@@ -165,7 +165,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     const updateWidth = () => {
       if (!boardContainerRef.current) return;
       const width = boardContainerRef.current.offsetWidth;
-      setBoardWidth(Math.max(340, Math.min(880, width - 16)));
+      setBoardWidth(Math.max(360, Math.min(1120, width - 8)));
     };
 
     updateWidth();
@@ -561,8 +561,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       </div>
 
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-auto">
-        <div ref={boardContainerRef} className="flex flex-col items-center p-3 lg:flex-[1.9] lg:min-w-[620px] xl:min-w-[760px]">
-          <div className="flex items-start gap-0 w-full max-w-[880px]">
+        <div ref={boardContainerRef} className="flex flex-col items-center p-2 lg:flex-[2.8] lg:min-w-[820px] xl:min-w-[980px] 2xl:min-w-[1120px]">
+          <div className="flex items-start gap-0 w-full max-w-[1120px]">
             <div className="mr-1">
               <EvalBar
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
@@ -598,7 +598,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
           </button>
         </div>
 
-        <div className="lg:w-[320px] lg:min-w-[300px] xl:w-[340px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
+        <div className="lg:w-[280px] lg:min-w-[260px] xl:w-[300px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
           {sessionCards.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
             <div>
               <div className="flex justify-between text-xs text-text-muted mb-1.5">
