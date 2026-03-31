@@ -41,6 +41,7 @@ import { GeneratorPage } from './Generator/GeneratorPage';
 import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
 import { handleOAuthCallback } from '../utils/lichessAuth';
 import { useIsMobile } from '../hooks/useIsMobile';
+import { useGenerator } from '../hooks/useGenerator';
 
 type SidebarTab = 'analysis' | 'games';
 type MobileTab = 'tree' | 'analysis' | 'games';
@@ -75,6 +76,7 @@ export const App: React.FC = () => {
   const games = useGames();
   const { files, activeFileId, getActiveFile, updateFileGames } = useFiles();
   const repertoireEval = useRepertoireEval();
+  const generator = useGenerator();
 
   // ─── Folder ↔ Games bidirectional sync ────────────────────────────────
   // When the active folder changes, load that folder's games into GameContext.
@@ -558,6 +560,8 @@ export const App: React.FC = () => {
         onTrainer={() => { setGameFetcherOpen(false); setGeneratorOpen(false); setTrainerOpen(true); }}
         onSettings={() => setSettingsOpen(true)}
         activeFileName={getActiveFile()?.name ?? null}
+        generatorProgress={generator.progress}
+        isGenerating={generator.isGenerating}
       />
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
 
@@ -566,7 +570,7 @@ export const App: React.FC = () => {
           CSS (not unmounted) so all React state is preserved. */}
       <div className={generatorOpen ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
         <GeneratorPage
-          isVisible={generatorOpen}
+          gen={generator}
           onClose={() => setGeneratorOpen(false)}
           onImportTree={(importedTree) => {
             setTree(importedTree);
@@ -579,7 +583,13 @@ export const App: React.FC = () => {
       {!generatorOpen && (gameFetcherOpen ? (
         <GameFetcherPage onClose={() => setGameFetcherOpen(false)} />
       ) : trainerOpen ? (
-        <SpacedRepetitionTrainer onClose={() => setTrainerOpen(false)} />
+        <SpacedRepetitionTrainer
+          onClose={() => setTrainerOpen(false)}
+          onAnalyzePosition={(fen) => {
+            setTrainerOpen(false);
+            handleNavigateToFen(fen);
+          }}
+        />
       ) : (
       <>
 

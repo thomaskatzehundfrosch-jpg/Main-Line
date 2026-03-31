@@ -3,6 +3,7 @@ import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
 import type { Arrow, Piece, Square } from 'react-chessboard/dist/chessboard/types';
 import {
+  ArrowUpRight,
   ArrowRight,
   Brain,
   ChevronLeft,
@@ -242,7 +243,10 @@ const AccuracyComparisonCard: React.FC<{
   );
 };
 
-export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
+export const SpacedRepetitionTrainer: React.FC<{
+  onClose?: () => void;
+  onAnalyzePosition?: (fen: string) => void;
+}> = ({ onClose, onAnalyzePosition }) => {
   const { files } = useFiles();
   const engine = useEngine();
   const { settings } = useSettings();
@@ -433,7 +437,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     }
 
     if (!expectedMove) return [];
-    if (phase === 'grading' || showSolution) {
+    if (showSolution) {
       return [[
         expectedMove.slice(0, 2) as Square,
         expectedMove.slice(2, 4) as Square,
@@ -785,6 +789,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 customSquareStyles={clickStyles}
                 animationDuration={120}
                 customArrows={arrows.length > 0 ? arrows : undefined}
+                areArrowsAllowed={false}
               />
             </div>
           </div>
@@ -798,6 +803,16 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
         </div>
 
         <div className="lg:w-[280px] lg:min-w-[260px] xl:w-[300px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
+          {onAnalyzePosition && phase !== 'idle' && (
+            <button
+              onClick={() => onAnalyzePosition(displayFen)}
+              className="btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+            >
+              <ArrowUpRight className="w-3.5 h-3.5" />
+              Analyze Current Position
+            </button>
+          )}
+
           {sessionLines.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
             <div>
               <div className="flex justify-between text-xs text-text-muted mb-1.5">
