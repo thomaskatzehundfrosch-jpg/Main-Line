@@ -1,7 +1,7 @@
 {
   "name": "Main Line",
   "short_name": "Main Line",
-  "description": "generate custom chess repertoires, grow your opening tree and find your diviations from your games.",
+  "description": "Build chess repertoires, expand your opening tree, analyze lines, and compare your games against your prep with Main Line.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
