@@ -17,9 +17,11 @@ import type { Card } from '../lib/srScheduler';
 import { loadCards, loadStats, saveCards, saveSessionStats } from '../lib/srStorage';
 import type { SRLifetimeStats } from '../lib/srStorage';
 import { useFiles } from '../context/FileContext';
+import { useSettings } from '../context/SettingsContext';
 import type { RepertoireFile } from '../types/repertoireFile';
 import { useEngine } from '../hooks/useEngine';
 import EvalBar from './Board/EvalBar';
+import { BOARD_THEME_COLORS } from './Board/theme';
 
 const INITIAL_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const sharedChess = new Chess();
@@ -189,6 +191,7 @@ function mergeCards(existingCards: Card[], cardsToMerge: Card[]): Card[] {
 export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ onClose }) => {
   const { files } = useFiles();
   const engine = useEngine();
+  const { settings } = useSettings();
 
   const [selection, setSelection] = useState<TrainerSelection | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string>('');
@@ -213,6 +216,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [boardWidth, setBoardWidth] = useState(400);
   const autoAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const themeColors = BOARD_THEME_COLORS[settings.boardTheme];
 
   useEffect(() => {
     if (!selectedFileId && files.length > 0) setSelectedFileId(files[0].id);
@@ -331,22 +335,22 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     const styles: Record<string, React.CSSProperties> = {};
     if (!selectedSquare) return styles;
 
-    styles[selectedSquare] = { backgroundColor: 'rgba(59,98,160,0.35)' };
+    styles[selectedSquare] = { backgroundColor: `${themeColors.dark}55` };
 
     try {
       sharedChess.load(displayFen);
       for (const square of legalMoves) {
         const target = sharedChess.get(square as Square);
         styles[square] = target
-          ? { background: 'radial-gradient(circle, transparent 55%, rgba(59,98,160,0.4) 55%)' }
-          : { background: 'radial-gradient(circle, rgba(59,98,160,0.35) 25%, transparent 25%)' };
+          ? { background: `radial-gradient(circle, transparent 55%, ${themeColors.dark}60 55%)` }
+          : { background: `radial-gradient(circle, ${themeColors.dark}55 25%, transparent 25%)` };
       }
     } catch {
       return styles;
     }
 
     return styles;
-  }, [displayFen, legalMoves, selectedSquare]);
+  }, [displayFen, legalMoves, selectedSquare, themeColors.dark]);
 
   const arrows: Arrow[] = useMemo(() => {
     if (phase === 'replay' && sessionHistory[replayIndex]) {
@@ -673,10 +677,10 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 onSquareClick={handleSquareClick}
                 onPieceClick={(_piece, square) => handleSquareClick(square)}
                 isDraggablePiece={() => phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution))}
-                customDarkSquareStyle={{ backgroundColor: '#4b6fa0' }}
-                customLightSquareStyle={{ backgroundColor: '#e8dcc0' }}
+                customDarkSquareStyle={{ backgroundColor: themeColors.dark }}
+                customLightSquareStyle={{ backgroundColor: themeColors.light }}
                 customBoardStyle={{ borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)' }}
-                customDropSquareStyle={{ boxShadow: 'inset 0 0 1px 6px rgba(59,98,160,0.5)' }}
+                customDropSquareStyle={{ boxShadow: `inset 0 0 1px 6px ${themeColors.dark}80` }}
                 customSquareStyles={clickStyles}
                 animationDuration={120}
                 customArrows={arrows.length > 0 ? arrows : undefined}

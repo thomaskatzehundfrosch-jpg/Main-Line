@@ -30,6 +30,8 @@ import { GeneratorMoveTree } from './GeneratorMoveTree';
 import { convertToTreeNode } from '../../utils/generatorConverter';
 import { exportGeneratorPGN } from '../../utils/generatorPgn';
 import { useIsMobile } from '../../hooks/useIsMobile';
+import { useSettings } from '../../context/SettingsContext';
+import { BOARD_THEME_COLORS } from '../Board/theme';
 
 interface GeneratorPageProps {
   onClose: () => void;
@@ -49,6 +51,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   const engine = useEngine();
   const gen = useGenerator();
   const isMobile = useIsMobile();
+  const { settings: appSettings } = useSettings();
 
   const [settings, _setSettings] = useState<GeneratorSettings>(() => _cachedSettings);
   const [pgnSeeds, _setPgnSeeds] = useState<string[][]>(() => _cachedPgnSeeds);
@@ -74,6 +77,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   /* ---------------------------------------------------------------- */
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
+  const themeColors = BOARD_THEME_COLORS[appSettings.boardTheme];
 
   // During generation animate to the latest added node; otherwise show selected.
   const displayNode = gen.isGenerating ? gen.latestNode : gen.selectedNode;
@@ -196,13 +200,13 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   if (displayNode && !displayNode.isRoot && displayNode.uci) {
     const uci = displayNode.uci;
     if (uci.length >= 4) {
-      customSquareStyles[uci.substring(0, 2)] = { backgroundColor: 'rgba(59,98,160,0.15)' };
-      customSquareStyles[uci.substring(2, 4)] = { backgroundColor: 'rgba(59,98,160,0.15)' };
+      customSquareStyles[uci.substring(0, 2)] = { backgroundColor: `${themeColors.dark}30` };
+      customSquareStyles[uci.substring(2, 4)] = { backgroundColor: `${themeColors.dark}30` };
     }
   }
 
   if (selectedSquare) {
-    customSquareStyles[selectedSquare] = { backgroundColor: 'rgba(59,98,160,0.35)' };
+    customSquareStyles[selectedSquare] = { backgroundColor: `${themeColors.dark}55` };
   }
 
   for (const sq of legalMoves) {
@@ -215,8 +219,8 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
     customSquareStyles[sq] = {
       ...customSquareStyles[sq],
       background: isCapture
-        ? 'radial-gradient(circle, transparent 55%, rgba(59,98,160,0.4) 55%)'
-        : 'radial-gradient(circle, rgba(59,98,160,0.35) 25%, transparent 25%)',
+        ? `radial-gradient(circle, transparent 55%, ${themeColors.dark}60 55%)`
+        : `radial-gradient(circle, ${themeColors.dark}55 25%, transparent 25%)`,
     };
   }
 
@@ -366,14 +370,14 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
                 onSquareClick={handleSquareClick}
                 onPieceClick={handlePieceClick}
                 customSquareStyles={customSquareStyles}
-                customDarkSquareStyle={{ backgroundColor: '#4b6fa0' }}
-                customLightSquareStyle={{ backgroundColor: '#e8dcc0' }}
+                customDarkSquareStyle={{ backgroundColor: themeColors.dark }}
+                customLightSquareStyle={{ backgroundColor: themeColors.light }}
                 customBoardStyle={{
                   borderRadius: '4px',
                   boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
                 }}
                 customDropSquareStyle={{
-                  boxShadow: 'inset 0 0 1px 6px rgba(59,98,160,0.5)',
+                  boxShadow: `inset 0 0 1px 6px ${themeColors.dark}80`,
                 }}
                 animationDuration={200}
               />

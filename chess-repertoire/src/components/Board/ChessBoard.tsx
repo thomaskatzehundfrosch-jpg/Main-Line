@@ -4,16 +4,7 @@ import type { Square, Arrow, Piece } from 'react-chessboard/dist/chessboard/type
 import { Chess } from 'chess.js';
 import EvalBar from './EvalBar';
 import { useSettings } from '../../context/SettingsContext';
-import type { BoardTheme } from '../../context/SettingsContext';
-
-// Colours for each board theme
-const THEME_COLORS: Record<BoardTheme, { light: string; dark: string }> = {
-  classic:  { light: '#e8dcc0', dark: '#4b6fa0' },
-  ocean:    { light: '#d4e8e8', dark: '#2d7d7d' },
-  forest:   { light: '#d9e8c0', dark: '#3d6b3d' },
-  midnight: { light: '#cdd5e0', dark: '#3a4466' },
-  coral:    { light: '#f0d9d0', dark: '#b05050' },
-};
+import { BOARD_THEME_COLORS } from './theme';
 
 interface ChessBoardProps {
   fen: string;
@@ -42,7 +33,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
 
   const { settings } = useSettings();
-  const themeColors = THEME_COLORS[settings.boardTheme];
+  const themeColors = BOARD_THEME_COLORS[settings.boardTheme];
 
   // Measure board container width on mount and resize
   useEffect(() => {
