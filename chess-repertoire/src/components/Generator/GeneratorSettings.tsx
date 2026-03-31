@@ -405,16 +405,6 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={settings.blunderCorrection}
-                  onChange={(e) => update('blunderCorrection', e.target.checked)}
-                  disabled={isGenerating}
-                  className="accent-accent-teal"
-                />
-                <span className="text-[11px] text-text-secondary">Blunder correction (second pass)</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
                   checked={settings.flagDangerousResponses}
                   onChange={(e) => update('flagDangerousResponses', e.target.checked)}
                   disabled={isGenerating}

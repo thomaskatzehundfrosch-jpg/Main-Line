@@ -18,7 +18,6 @@ export interface GeneratorSettings {
   /** Extra moves past maxMoveNumber allowed in tactical positions (captures/check). 0 = disabled. */
   tacticalExtension: number;
   evalThreshold: number;          // min acceptable eval for our moves (pawns)
-  blunderCorrection: boolean;     // run a second-pass blunder correction after generation
   flagDangerousResponses: boolean;
   smartFiltering: boolean;         // skip weak opponent responses when eval gap is large
   /**
@@ -148,7 +147,6 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   sfDepth: 25,
   tacticalExtension: 4,
   evalThreshold: -0.3,
-  blunderCorrection: true,
   flagDangerousResponses: true,
   smartFiltering: true,
   styleValue: -1,
