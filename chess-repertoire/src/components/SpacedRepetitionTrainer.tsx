@@ -163,15 +163,19 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
 
   useEffect(() => {
     const updateWidth = () => {
-      if (!boardContainerRef.current) return;
-      const width = boardContainerRef.current.offsetWidth;
-      setBoardWidth(Math.max(360, Math.min(1120, width - 8)));
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const sidePanelWidth = viewportWidth >= 1024 ? 340 : 0;
+      const horizontalPadding = viewportWidth >= 1024 ? 96 : 32;
+      const verticalAllowance = 220;
+      const availableWidth = viewportWidth - sidePanelWidth - horizontalPadding;
+      const availableHeight = viewportHeight - verticalAllowance;
+      setBoardWidth(Math.max(360, Math.min(availableWidth, availableHeight, 960)));
     };
 
     updateWidth();
-    const observer = new ResizeObserver(updateWidth);
-    if (boardContainerRef.current) observer.observe(boardContainerRef.current);
-    return () => observer.disconnect();
+    window.addEventListener('resize', updateWidth);
+    return () => window.removeEventListener('resize', updateWidth);
   }, []);
 
   const currentFile = useMemo(
