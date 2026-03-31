@@ -108,8 +108,8 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({
 
   return (
     <div className="panel flex flex-col">
-      <div className="panel-header flex items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="panel-header flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="flex min-w-0 items-center gap-2">
           <button
             onClick={onToggle}
             className={`w-4 h-4 rounded border transition-colors flex-shrink-0 ${
@@ -128,10 +128,10 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({
           )}
         </div>
         {enabled && (
-          <div className="flex items-center gap-3 text-xs">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-x-2 gap-y-1 text-[11px]">
             {/* Depth control */}
             <div className="flex items-center gap-1">
-              <span className="text-text-muted">Depth</span>
+              <span className="text-text-muted">DEPTH</span>
               <button
                 onClick={() => onDepthChange(Math.max(1, depth - 2))}
                 className="w-4 h-4 flex items-center justify-center rounded bg-bg-hover hover:bg-border-subtle text-text-secondary transition-colors text-[10px]"
@@ -144,7 +144,7 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({
             </div>
             {/* Lines (MultiPV) control */}
             <div className="flex items-center gap-1">
-              <span className="text-text-muted">Lines</span>
+              <span className="text-text-muted">LINES</span>
               <button
                 onClick={() => onMultiPVChange(Math.max(1, multiPV - 1))}
                 className="w-4 h-4 flex items-center justify-center rounded bg-bg-hover hover:bg-border-subtle text-text-secondary transition-colors text-[10px]"
@@ -157,7 +157,7 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({
             </div>
             {/* Threads control */}
             <div className="flex items-center gap-1">
-              <span className="text-text-muted">Threads</span>
+              <span className="text-text-muted">THREADS</span>
               <button
                 onClick={() => onThreadsChange(Math.max(1, threads - 1))}
                 className="w-4 h-4 flex items-center justify-center rounded bg-bg-hover hover:bg-border-subtle text-text-secondary transition-colors text-[10px]"

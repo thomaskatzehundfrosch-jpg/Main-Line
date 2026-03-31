@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Chess } from 'chess.js';
-import { Loader, StopCircle, Cpu, ChevronUp, ChevronDown, Plus } from 'lucide-react';
+import { Loader, StopCircle, Cpu, ChevronUp, ChevronDown, Plus, Settings2 } from 'lucide-react';
 import { TopBar } from './TopBar';
 import { StatusBar } from './StatusBar';
 import ChessBoard from './Board/ChessBoard';
@@ -42,7 +42,7 @@ import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
 import { handleOAuthCallback } from '../utils/lichessAuth';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useGenerator } from '../hooks/useGenerator';
-import { useSettings } from '../context/SettingsContext';
+import { useSettings, type PracticalMoveRating } from '../context/SettingsContext';
 import { getMostLikelyMove, type LichessMove } from '../utils/lichessApi';
 import { logger } from '../utils/errorLogger';
 
@@ -86,7 +86,7 @@ export const App: React.FC = () => {
   const { files, activeFileId, getActiveFile, updateFileGames, setActive } = useFiles();
   const repertoireEval = useRepertoireEval();
   const generator = useGenerator();
-  const { settings } = useSettings();
+  const { settings, updateSetting } = useSettings();
 
   // ─── Folder ↔ Games bidirectional sync ────────────────────────────────
   // When the active folder changes, load that folder's games into GameContext.
@@ -140,6 +140,7 @@ export const App: React.FC = () => {
   });
   const [mostLikelyMoveState, setMostLikelyMoveState] = useState<MostLikelyMoveState | null>(null);
   const [isFetchingMostLikelyMove, setIsFetchingMostLikelyMove] = useState(false);
+  const [showMostLikelyMoveSettings, setShowMostLikelyMoveSettings] = useState(false);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -191,6 +192,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     setMostLikelyMoveState(null);
     setIsFetchingMostLikelyMove(false);
+    setShowMostLikelyMoveSettings(false);
   }, [currentNode.fen]);
 
   const handleViewGame = useCallback((game: ImportedGame) => {
@@ -431,19 +433,46 @@ export const App: React.FC = () => {
   const mostLikelyMoveSection = (
     <div className="flex flex-col border-t border-border-subtle">
       <div className="px-3 py-2">
-        <button
-          onClick={handleFetchMostLikelyMove}
-          disabled={isFetchingMostLikelyMove}
-          className={`w-full rounded-md border px-3 py-2 text-xs font-mono transition-colors ${
-            isFetchingMostLikelyMove
-              ? 'border-accent-teal/40 bg-accent-teal/10 text-accent-teal'
-              : 'border-border-subtle text-text-secondary hover:border-accent-teal/40 hover:text-accent-teal'
-          }`}
-        >
-          {isFetchingMostLikelyMove
-            ? `Checking Lichess ${settings.mostLikelyMoveRating}+...`
-            : `Most Likely Next Move ? (${settings.mostLikelyMoveRating}+)`}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleFetchMostLikelyMove}
+            disabled={isFetchingMostLikelyMove}
+            className={`min-w-0 flex-1 rounded-md border px-3 py-2 text-xs font-mono transition-colors ${
+              isFetchingMostLikelyMove
+                ? 'border-accent-teal/40 bg-accent-teal/10 text-accent-teal'
+                : 'border-border-subtle text-text-secondary hover:border-accent-teal/40 hover:text-accent-teal'
+            }`}
+          >
+            {isFetchingMostLikelyMove
+              ? `Checking Lichess ${settings.mostLikelyMoveRating}+...`
+              : `Most Likely Next Move ? (${settings.mostLikelyMoveRating}+)`}
+          </button>
+          <button
+            onClick={() => setShowMostLikelyMoveSettings((prev) => !prev)}
+            className={`btn-icon border border-border-subtle ${showMostLikelyMoveSettings ? 'bg-bg-hover text-accent-teal' : ''}`}
+            title="Set Most Likely Next Move rating"
+          >
+            <Settings2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        {showMostLikelyMoveSettings && (
+          <div className="mt-2 flex items-center gap-2 rounded-md border border-border-subtle bg-bg-surface px-2 py-2">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-text-muted">
+              Elo
+            </span>
+            <select
+              value={settings.mostLikelyMoveRating}
+              onChange={(e) => updateSetting('mostLikelyMoveRating', Number(e.target.value) as PracticalMoveRating)}
+              className="flex-1 rounded-md border border-border-subtle bg-bg-primary px-2 py-1 text-xs text-text-primary focus:outline-none focus:border-accent-teal/50"
+            >
+              {[1600, 1800, 2000, 2200, 2500].map((rating) => (
+                <option key={rating} value={rating}>
+                  {rating}+
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
       {mostLikelyMovePanel}
     </div>
