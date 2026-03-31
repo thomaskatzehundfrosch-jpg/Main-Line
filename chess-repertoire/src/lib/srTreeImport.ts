@@ -76,6 +76,7 @@ export function treeToCards(
               if (!existingCard.moveHistorySan || existingCard.moveHistorySan.length === 0) {
                 const upgradedCard: Card = {
                   ...existingCard,
+                  drillColor: existingCard.drillColor ?? (drillColor === 'both' ? undefined : drillColor),
                   lineName: existingCard.lineName ?? lineName,
                   moveHistorySan: currentPath,
                   lineStartFen: existingCard.lineStartFen ?? tree.fen,
@@ -86,7 +87,14 @@ export function treeToCards(
                 duplicatesSkipped++;
               }
             } else {
-              const newCard = createCard(parentFen, uci, lineName, currentPath, tree.fen);
+              const newCard = createCard(
+                parentFen,
+                uci,
+                lineName,
+                drillColor === 'both' ? undefined : drillColor,
+                currentPath,
+                tree.fen,
+              );
               existingByKey.set(key, newCard);
               newCards.push(newCard);
             }

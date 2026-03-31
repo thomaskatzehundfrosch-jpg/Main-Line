@@ -80,6 +80,12 @@ interface ReplayableCard extends Card {
   lineStartFen: string;
 }
 
+function inferDrillColor(card: Card | ReplayableCard | null): 'white' | 'black' {
+  if (!card) return 'white';
+  if (card.drillColor) return card.drillColor;
+  return card.front.split(' ')[1] === 'b' ? 'black' : 'white';
+}
+
 function uciToSan(fen: string, uci: string): string {
   try {
     sharedChess.load(fen);
@@ -171,6 +177,7 @@ function enrichReplayableCards(cards: Card[], files: RepertoireFile[]): { cards:
       if (match) {
         enriched = {
           ...card,
+          drillColor: card.drillColor ?? inferDrillColor(card),
           moveHistorySan: match.moveHistorySan,
           lineStartFen: match.lineStartFen,
           lineName: card.lineName ?? match.lineName,
@@ -218,17 +225,12 @@ function buildPreparedLine(card: ReplayableCard | null): PreparedLineStep[] {
 
 function getOrientation(card: ReplayableCard | null): 'white' | 'black' {
   if (!card) return 'white';
-  try {
-    const chess = new Chess(card.lineStartFen);
-    return chess.turn() === 'b' ? 'black' : 'white';
-  } catch {
-    return 'white';
-  }
+  return inferDrillColor(card);
 }
 
 function getTrainingColor(card: ReplayableCard | null): 'w' | 'b' {
   if (!card) return 'w';
-  return card.front.split(' ')[1] === 'b' ? 'b' : 'w';
+  return inferDrillColor(card) === 'black' ? 'b' : 'w';
 }
 
 function findNextPlayerStep(steps: PreparedLineStep[], startIndex: number, trainingColor: 'w' | 'b'): number {
@@ -353,6 +355,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     ? (sessionHistory[replayIndex]?.reviewFen ?? INITIAL_FEN)
     : (currentStep?.fenBefore ?? currentCard?.lineStartFen ?? INITIAL_FEN);
   const expectedMove = currentStep?.uci ?? currentCard?.back ?? '';
+  const isPlayersTurn = currentStep?.color === trainingColor;
   const isWhiteToMove = displayFen.split(' ')[1] === 'w';
   const correctMoveSan = expectedMove ? uciToSan(displayFen, expectedMove) : '';
   const userMoveSan = userMove ? uciToSan(displayFen, userMove) : '';
@@ -370,9 +373,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       return;
     }
 
-    const firstPlayerStep = findNextPlayerStep(preparedLine, 0, trainingColor);
-    setLineStepIndex(firstPlayerStep >= 0 ? firstPlayerStep : 0);
-  }, [currentCard?.id, preparedLine, trainingColor]);
+    setLineStepIndex(0);
+  }, [currentCard?.id, preparedLine.length]);
 
   useEffect(() => {
     if (engine.enabled && phase !== 'replay' && currentStep) engine.analyze(displayFen);
@@ -515,9 +517,9 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   }, [cardHadMistake, cards, currentCard, currentIndex, displayFen, expectedMove, sessionCards, stats, userMove]);
 
   const continueAfterCorrectMove = useCallback(() => {
-    const nextStepIndex = findNextPlayerStep(preparedLine, lineStepIndex + 1, trainingColor);
-    if (nextStepIndex >= 0) {
-      setLineStepIndex(nextStepIndex);
+    const immediateNextIndex = lineStepIndex + 1;
+    if (immediateNextIndex < preparedLine.length) {
+      setLineStepIndex(immediateNextIndex);
       setPhase('question');
       setShowSolution(false);
       setSelectedSquare(null);
@@ -591,7 +593,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   }, [submitMove]);
 
   const handleSquareClick = useCallback((square: Square) => {
-    if (phase !== 'question' || !currentStep) {
+    if (phase !== 'question' || !currentStep || !isPlayersTurn) {
       setSelectedSquare(null);
       setLegalMoves([]);
       return;
@@ -617,7 +619,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
 
     setSelectedSquare(null);
     setLegalMoves([]);
-  }, [currentStep, getLegalMoves, isOwnPiece, legalMoves, phase, selectedSquare, submitMove]);
+  }, [currentStep, getLegalMoves, isOwnPiece, isPlayersTurn, legalMoves, phase, selectedSquare, submitMove]);
 
   const handleImportRepertoire = useCallback((fileId: string, drillColor: 'white' | 'black') => {
     const file = files.find((candidate) => candidate.id === fileId);
@@ -706,7 +708,10 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 onPieceDrop={handlePieceDrop}
                 onSquareClick={handleSquareClick}
                 onPieceClick={(_piece, square) => handleSquareClick(square)}
-                isDraggablePiece={() => phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution))}
+                isDraggablePiece={() => (
+                  (phase === 'question' && isPlayersTurn) ||
+                  (phase === 'grading' && (!isCorrect || showSolution))
+                )}
                 customDarkSquareStyle={{ backgroundColor: '#4b6fa0' }}
                 customLightSquareStyle={{ backgroundColor: '#e8dcc0' }}
                 customBoardStyle={{ borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)' }}
@@ -784,16 +789,23 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
               <p className="text-text-muted text-xs mt-2">
                 Step {lineStepIndex + 1} of {preparedLine.length}. Opponent replies are played automatically.
               </p>
+              {!isPlayersTurn && (
+                <p className="text-text-muted text-xs mt-2">Opponent move incoming...</p>
+              )}
               {!showSolution ? (
                 <>
-                  <p className="text-text-muted text-xs mt-2">Click or drag a piece to make the exact next move.</p>
-                  <button
-                    onClick={() => setShowSolution(true)}
-                    className="btn-secondary mt-3 flex items-center gap-1.5 text-xs py-1.5 px-3"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    Show Solution
-                  </button>
+                  {isPlayersTurn && (
+                    <>
+                      <p className="text-text-muted text-xs mt-2">Click or drag a piece to make the exact next move.</p>
+                      <button
+                        onClick={() => setShowSolution(true)}
+                        className="btn-secondary mt-3 flex items-center gap-1.5 text-xs py-1.5 px-3"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        Show Solution
+                      </button>
+                    </>
+                  )}
                 </>
               ) : (
                 <>

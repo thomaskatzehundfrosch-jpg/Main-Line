@@ -61,6 +61,7 @@ export const SRCardImporter: React.FC<SRCardImporterProps> = ({
       trimmedFen,
       trimmedMove,
       lineName.trim() || undefined,
+      trimmedFen.split(' ')[1] === 'b' ? 'black' : 'white',
     );
     addCards([card]);
 

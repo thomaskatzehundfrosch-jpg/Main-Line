@@ -9,6 +9,7 @@ export interface Card {
   id: string;
   front: string;              // FEN position
   back: string;               // Correct move in UCI notation (e.g. "e2e4")
+  drillColor?: 'white' | 'black'; // Which side this card is meant to train
   moveHistorySan?: string[];  // Full SAN line from the start position to this card's move
   lineStartFen?: string;      // Starting FEN for the stored line history
   interval: number;           // Days until next review (default 1)
@@ -95,6 +96,7 @@ export function createCard(
   fen: string,
   moveUci: string,
   lineName?: string,
+  drillColor?: 'white' | 'black',
   moveHistorySan?: string[],
   lineStartFen?: string,
 ): Card {
@@ -102,6 +104,7 @@ export function createCard(
     id: crypto.randomUUID(),
     front: fen,
     back: moveUci,
+    drillColor,
     moveHistorySan,
     lineStartFen,
     interval: 1,
