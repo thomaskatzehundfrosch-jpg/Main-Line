@@ -23,6 +23,7 @@ interface ChessBoardProps {
   lastMove?: { from: string; to: string };
   score?: number;
   mate?: number | null;
+  sizeScale?: number;
 }
 
 const ChessBoard: React.FC<ChessBoardProps> = ({
@@ -33,6 +34,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   lastMove,
   score = 0,
   mate = null,
+  sizeScale = 1,
 }) => {
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [boardWidth, setBoardWidth] = useState(480);
@@ -47,7 +49,9 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     const updateBoardWidth = () => {
       if (boardContainerRef.current) {
         const containerWidth = boardContainerRef.current.offsetWidth;
-        const width = Math.max(300, Math.min(700, containerWidth - 50));
+        const baseWidth = Math.min(700, containerWidth - 50);
+        const minWidth = sizeScale < 1 ? 150 : 300;
+        const width = Math.max(minWidth, baseWidth * sizeScale);
         setBoardWidth(width);
       }
     };
@@ -61,7 +65,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     return () => {
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [sizeScale]);
 
   // Clear selection when FEN changes (new position)
   useEffect(() => {

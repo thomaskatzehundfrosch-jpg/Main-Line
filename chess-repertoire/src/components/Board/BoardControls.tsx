@@ -5,6 +5,8 @@ import {
   ChevronRight,
   SkipForward,
   RotateCcw,
+  Minimize2,
+  Maximize2,
 } from 'lucide-react';
 
 interface BoardControlsProps {
@@ -15,6 +17,8 @@ interface BoardControlsProps {
   onFlip: () => void;
   canGoBack: boolean;
   canGoForward: boolean;
+  onToggleSize?: () => void;
+  isBoardMinimized?: boolean;
 }
 
 const BoardControls: React.FC<BoardControlsProps> = ({
@@ -25,6 +29,8 @@ const BoardControls: React.FC<BoardControlsProps> = ({
   onFlip,
   canGoBack,
   canGoForward,
+  onToggleSize,
+  isBoardMinimized = false,
 }) => {
   return (
     <div className="flex items-center justify-center gap-1 py-2">
@@ -76,6 +82,19 @@ const BoardControls: React.FC<BoardControlsProps> = ({
       >
         <RotateCcw size={18} />
       </button>
+
+      {onToggleSize && (
+        <>
+          <div className="border-l border-border-subtle mx-2 h-6" />
+          <button
+            onClick={onToggleSize}
+            className="btn-icon"
+            title={isBoardMinimized ? 'Expand board' : 'Minimize board'}
+          >
+            {isBoardMinimized ? <Maximize2 size={18} /> : <Minimize2 size={18} />}
+          </button>
+        </>
+      )}
     </div>
   );
 };

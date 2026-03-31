@@ -18,9 +18,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   gameCount,
 }) => {
   return (
-    <div className="bg-bg-primary border-t border-border-subtle px-4 py-1.5 flex items-center justify-between">
+    <div className="bg-bg-primary border-t border-border-subtle px-4 py-2 flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:py-1.5">
       {/* Left: Opening name + ECO code */}
-      <div className="flex items-center gap-2 min-w-0">
+      <div className="flex items-center gap-2 min-w-0 w-full sm:w-auto">
         {eco && (
           <span className="font-mono text-xs text-accent-teal font-semibold flex-shrink-0">
             {eco}
@@ -39,12 +39,12 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       </div>
 
       {/* Center: Current move info */}
-      <div className="font-mono text-xs text-text-secondary flex-shrink-0">
+      <div className="font-mono text-xs text-text-secondary w-full sm:w-auto">
         Move {moveNumber} · {isWhiteToMove ? 'White' : 'Black'} to move
       </div>
 
       {/* Right: Tree stats */}
-      <div className="font-mono text-xs text-text-secondary text-right flex-shrink-0">
+      <div className="font-mono text-xs text-text-secondary w-full text-left sm:w-auto sm:text-right">
         {nodeCount} position{nodeCount !== 1 ? 's' : ''} ·{' '}
         {gameCount} game{gameCount !== 1 ? 's' : ''}
       </div>

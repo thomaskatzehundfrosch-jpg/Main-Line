@@ -105,6 +105,7 @@ export const App: React.FC = () => {
 
   const isMobile = useIsMobile();
   const [mobileTab, setMobileTab] = useState<MobileTab>('tree');
+  const [boardMinimized, setBoardMinimized] = useState(false);
 
   const [filesOpen, setFilesOpen] = useState(() => !isMobile);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -642,7 +643,7 @@ export const App: React.FC = () => {
                 </button>
               </div>
             )}
-            <div className="mx-auto w-full max-w-[320px]">
+            <div className={`w-full transition-all ${boardMinimized ? 'max-w-[160px]' : ''}`}>
               <ChessBoard
                 fen={displayFen}
                 orientation={orientation}
@@ -650,6 +651,7 @@ export const App: React.FC = () => {
                 engineBestMove={engine.enabled ? engineArrows : undefined}
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
                 mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
+                sizeScale={boardMinimized ? 0.5 : 1}
               />
             </div>
             {viewingGame ? (
@@ -661,6 +663,8 @@ export const App: React.FC = () => {
                 onFlip={flipBoard}
                 canGoBack={viewingMoveIndex > 0}
                 canGoForward={viewingMoveIndex < gamePositions.length - 1}
+                onToggleSize={() => setBoardMinimized((prev) => !prev)}
+                isBoardMinimized={boardMinimized}
               />
             ) : (
               <BoardControls
@@ -671,6 +675,8 @@ export const App: React.FC = () => {
                 onFlip={flipBoard}
                 canGoBack={currentPath.length > 1}
                 canGoForward={currentNode.children.length > 0}
+                onToggleSize={() => setBoardMinimized((prev) => !prev)}
+                isBoardMinimized={boardMinimized}
               />
             )}
           </div>
@@ -716,7 +722,7 @@ export const App: React.FC = () => {
                     </span>
                   </div>
                   {filesOpen && (
-                    <div className="px-3 pb-2">
+                    <div className="max-h-[40vh] overflow-y-auto px-3 pb-2">
                       <RepertoireFilesPanel currentTree={tree} onLoadTree={setTree} />
                     </div>
                   )}
@@ -1048,7 +1054,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* Right Panel: Board + Tabbed Content */}
-        <div className="w-[360px] min-w-[340px] flex flex-col overflow-hidden xl:w-[380px] xl:min-w-[360px]">
+        <div className="w-[420px] min-w-[380px] flex flex-col overflow-hidden">
           {/* Chessboard */}
           <div className="flex flex-col items-center p-3 gap-1">
             {/* Game viewer banner */}
@@ -1070,7 +1076,7 @@ export const App: React.FC = () => {
                 </button>
               </div>
             )}
-            <div className="w-full max-w-[340px] xl:max-w-[360px]">
+            <div className={`w-full max-w-[400px] transition-all ${boardMinimized ? 'max-w-[200px]' : ''}`}>
               <ChessBoard
                 fen={displayFen}
                 orientation={orientation}
@@ -1078,6 +1084,7 @@ export const App: React.FC = () => {
                 engineBestMove={engine.enabled ? engineArrows : undefined}
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
                 mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
+                sizeScale={boardMinimized ? 0.5 : 1}
               />
             </div>
             {viewingGame ? (
@@ -1089,6 +1096,8 @@ export const App: React.FC = () => {
                 onFlip={flipBoard}
                 canGoBack={viewingMoveIndex > 0}
                 canGoForward={viewingMoveIndex < gamePositions.length - 1}
+                onToggleSize={() => setBoardMinimized((prev) => !prev)}
+                isBoardMinimized={boardMinimized}
               />
             ) : (
               <BoardControls
@@ -1099,6 +1108,8 @@ export const App: React.FC = () => {
                 onFlip={flipBoard}
                 canGoBack={currentPath.length > 1}
                 canGoForward={currentNode.children.length > 0}
+                onToggleSize={() => setBoardMinimized((prev) => !prev)}
+                isBoardMinimized={boardMinimized}
               />
             )}
           </div>
