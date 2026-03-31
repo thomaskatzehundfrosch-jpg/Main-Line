@@ -277,6 +277,10 @@ export const SpacedRepetitionTrainer: React.FC<{
   const [boardWidth, setBoardWidth] = useState(400);
   const autoAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const themeColors = BOARD_THEME_COLORS[settings.boardTheme];
+  const selectedScope = useMemo(
+    () => (selectedFileId ? { fileId: selectedFileId, color: selectedColor } : null),
+    [selectedColor, selectedFileId],
+  );
 
   useEffect(() => {
     if (!selectedFileId && files.length > 0) setSelectedFileId(files[0].id);
@@ -319,10 +323,6 @@ export const SpacedRepetitionTrainer: React.FC<{
   const currentFile = useMemo(
     () => files.find((file) => file.id === selectedFileId) ?? null,
     [files, selectedFileId],
-  );
-  const selectedScope = useMemo(
-    () => (selectedFileId ? { fileId: selectedFileId, color: selectedColor } : null),
-    [selectedColor, selectedFileId],
   );
   const currentCard = sessionLines[currentLineIndex] ?? null;
   const promptSteps = useMemo(
