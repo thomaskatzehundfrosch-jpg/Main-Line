@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 
 export type BoardTheme = 'classic' | 'ocean' | 'forest' | 'midnight' | 'coral';
 export type PieceSet = 'standard' | 'neo' | 'alpha';
+export type PracticalMoveRating = 1600 | 1800 | 2000 | 2200 | 2500;
 
 export interface AppSettings {
   // Board appearance
@@ -24,6 +25,7 @@ export interface AppSettings {
   defaultColor: 'white' | 'black';
   autoSave: boolean;
   confirmDeleteNode: boolean;
+  mostLikelyMoveRating: PracticalMoveRating;
 
   // UI
   showEvalBar: boolean;
@@ -51,6 +53,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultColor: 'white',
   autoSave: true,
   confirmDeleteNode: true,
+  mostLikelyMoveRating: 1800,
 
   showEvalBar: true,
   compactMoveList: false,

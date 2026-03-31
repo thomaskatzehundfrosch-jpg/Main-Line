@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Chess } from 'chess.js';
-import { Loader, StopCircle, Cpu, ChevronUp, ChevronDown } from 'lucide-react';
+import { Loader, StopCircle, Cpu, ChevronUp, ChevronDown, Plus } from 'lucide-react';
 import { TopBar } from './TopBar';
 import { StatusBar } from './StatusBar';
 import ChessBoard from './Board/ChessBoard';
@@ -42,9 +42,18 @@ import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
 import { handleOAuthCallback } from '../utils/lichessAuth';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useGenerator } from '../hooks/useGenerator';
+import { useSettings } from '../context/SettingsContext';
+import { getMostLikelyMove, type LichessMove } from '../utils/lichessApi';
+import { logger } from '../utils/errorLogger';
 
 type SidebarTab = 'analysis' | 'games';
 type MobileTab = 'tree' | 'analysis' | 'games';
+
+interface MostLikelyMoveState {
+  fen: string;
+  move: LichessMove | null;
+  error: string | null;
+}
 
 export const App: React.FC = () => {
   const {
@@ -77,6 +86,7 @@ export const App: React.FC = () => {
   const { files, activeFileId, getActiveFile, updateFileGames, setActive } = useFiles();
   const repertoireEval = useRepertoireEval();
   const generator = useGenerator();
+  const { settings } = useSettings();
 
   // ─── Folder ↔ Games bidirectional sync ────────────────────────────────
   // When the active folder changes, load that folder's games into GameContext.
@@ -128,6 +138,8 @@ export const App: React.FC = () => {
     mistake:    MISTAKE_THRESHOLDS.mistake,
     blunder:    MISTAKE_THRESHOLDS.blunder,
   });
+  const [mostLikelyMoveState, setMostLikelyMoveState] = useState<MostLikelyMoveState | null>(null);
+  const [isFetchingMostLikelyMove, setIsFetchingMostLikelyMove] = useState(false);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -175,6 +187,11 @@ export const App: React.FC = () => {
   const viewingFen = viewingGame && gamePositions.length > 0
     ? gamePositions[Math.min(viewingMoveIndex, gamePositions.length - 1)]
     : null;
+
+  useEffect(() => {
+    setMostLikelyMoveState(null);
+    setIsFetchingMostLikelyMove(false);
+  }, [currentNode.fen]);
 
   const handleViewGame = useCallback((game: ImportedGame) => {
     if (viewingGame?.id === game.id) {
@@ -255,6 +272,181 @@ export const App: React.FC = () => {
       }
     },
     [currentNode, navigateToNode, addMove]
+  );
+
+  const addSanMoveFromFen = useCallback((san: string) => {
+    try {
+      const chess = new Chess(currentNode.fen);
+      const move = chess.move(san);
+      if (!move) return false;
+      addMoveToNode(currentNode.id, move.san, chess.fen());
+      return true;
+    } catch {
+      return false;
+    }
+  }, [addMoveToNode, currentNode.fen, currentNode.id]);
+
+  const engineBestMoveSan = engine.lines[0]?.pv?.[0] ?? null;
+  const lichessMostLikelyMove = mostLikelyMoveState?.fen === currentNode.fen
+    ? mostLikelyMoveState.move
+    : null;
+  const engineAndLichessAgree = !!engineBestMoveSan && !!lichessMostLikelyMove && engineBestMoveSan === lichessMostLikelyMove.san;
+
+  const handleFetchMostLikelyMove = useCallback(async () => {
+    setIsFetchingMostLikelyMove(true);
+    setMostLikelyMoveState({
+      fen: currentNode.fen,
+      move: null,
+      error: null,
+    });
+
+    try {
+      const move = await getMostLikelyMove(
+        currentNode.fen,
+        {
+          color: currentNode.fen.split(' ')[1] === 'w' ? 'white' : 'black',
+          useMasters: false,
+          ratingMin: settings.mostLikelyMoveRating,
+          ratingMax: settings.mostLikelyMoveRating,
+          speeds: ['blitz', 'rapid', 'classical'],
+        },
+        (level, message) => {
+          if (level === 'error') logger.error('general', message);
+          else if (level === 'warning') logger.warn('general', message);
+          else logger.info('general', message);
+        }
+      );
+
+      setMostLikelyMoveState({
+        fen: currentNode.fen,
+        move,
+        error: move ? null : `No Lichess move data found for ${settings.mostLikelyMoveRating}+ in this position.`,
+      });
+    } catch (error) {
+      setMostLikelyMoveState({
+        fen: currentNode.fen,
+        move: null,
+        error: error instanceof Error ? error.message : 'Failed to fetch Lichess move data.',
+      });
+    } finally {
+      setIsFetchingMostLikelyMove(false);
+    }
+  }, [currentNode.fen, settings.mostLikelyMoveRating]);
+
+  const handleAddEngineMove = useCallback(() => {
+    if (!engineBestMoveSan) return;
+    addSanMoveFromFen(engineBestMoveSan);
+  }, [addSanMoveFromFen, engineBestMoveSan]);
+
+  const handleAddMostLikelyMove = useCallback(() => {
+    if (!lichessMostLikelyMove) return;
+    addSanMoveFromFen(lichessMostLikelyMove.san);
+  }, [addSanMoveFromFen, lichessMostLikelyMove]);
+
+  const handleAddBothMoves = useCallback(() => {
+    if (engineBestMoveSan) addSanMoveFromFen(engineBestMoveSan);
+    if (lichessMostLikelyMove && lichessMostLikelyMove.san !== engineBestMoveSan) {
+      addSanMoveFromFen(lichessMostLikelyMove.san);
+    }
+  }, [addSanMoveFromFen, engineBestMoveSan, lichessMostLikelyMove]);
+
+  const mostLikelyMovePanel = mostLikelyMoveState?.fen === currentNode.fen ? (
+    <div className="border-t border-border-subtle bg-bg-primary px-3 py-2">
+      {engineAndLichessAgree && (
+        <div className="text-[10px] font-mono text-accent-green">
+          Engine and Lichess agree
+        </div>
+      )}
+
+      {mostLikelyMoveState.error ? (
+        <div className="mt-2 text-xs text-accent-red">{mostLikelyMoveState.error}</div>
+      ) : lichessMostLikelyMove ? (
+        <>
+          <div className="mt-2 flex flex-col gap-2">
+            <div className="rounded border border-border-subtle bg-bg-surface px-2 py-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">Engine</div>
+              <div className="mt-1 flex items-start justify-between gap-2">
+                <span className="min-w-0 flex-1 break-words text-sm font-semibold text-text-primary">
+                  {engineBestMoveSan ?? 'No line yet'}
+                </span>
+                {engineBestMoveSan && (
+                  <button
+                    onClick={handleAddEngineMove}
+                    className="btn-secondary flex shrink-0 items-center gap-1 px-2 py-1 text-[10px]"
+                    title="Add engine move to this node"
+                  >
+                    <Plus className="w-3 h-3" />
+                    Add
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded border border-accent-teal/30 bg-accent-teal/5 px-2 py-2">
+              <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">Lichess</div>
+              <div className="mt-1 flex items-start justify-between gap-2">
+                <span className="min-w-0 flex-1 break-words text-sm font-semibold text-accent-teal">
+                  {lichessMostLikelyMove.san}
+                </span>
+                <button
+                  onClick={handleAddMostLikelyMove}
+                  className="btn-primary flex shrink-0 items-center gap-1 px-2 py-1 text-[10px]"
+                  title="Add most likely move to this node"
+                >
+                  <Plus className="w-3 h-3" />
+                  Add
+                </button>
+              </div>
+              <div className="mt-1 text-[11px] text-text-secondary">
+                {lichessMostLikelyMove.playRate.toFixed(1)}% of {lichessMostLikelyMove.totalGames.toLocaleString()} games
+              </div>
+              <div className="mt-0.5 text-[10px] text-text-muted">
+                W {lichessMostLikelyMove.winRate.toFixed(0)}% · D {lichessMostLikelyMove.drawRate.toFixed(0)}% · L {lichessMostLikelyMove.lossRate.toFixed(0)}%
+              </div>
+            </div>
+          </div>
+
+          {engineBestMoveSan && lichessMostLikelyMove.san !== engineBestMoveSan && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[11px] text-text-secondary">
+                Best move differs from the most played practical move.
+              </div>
+              <button
+                onClick={handleAddBothMoves}
+                className="btn-secondary flex items-center gap-1 px-2 py-1 text-[10px]"
+                title="Add both engine and Lichess moves to this node"
+              >
+                <Plus className="w-3 h-3" />
+                Add both
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="mt-2 text-xs text-text-muted">No move data loaded yet.</div>
+      )}
+    </div>
+  ) : null;
+
+  const mostLikelyMoveSection = (
+    <div className="flex flex-col border-t border-border-subtle">
+      <div className="px-3 py-2">
+        <button
+          onClick={handleFetchMostLikelyMove}
+          disabled={isFetchingMostLikelyMove}
+          className={`w-full rounded-md border px-3 py-2 text-xs font-mono transition-colors ${
+            isFetchingMostLikelyMove
+              ? 'border-accent-teal/40 bg-accent-teal/10 text-accent-teal'
+              : 'border-border-subtle text-text-secondary hover:border-accent-teal/40 hover:text-accent-teal'
+          }`}
+        >
+          {isFetchingMostLikelyMove
+            ? `Checking Lichess ${settings.mostLikelyMoveRating}+...`
+            : `Most Likely Next Move ? (${settings.mostLikelyMoveRating}+)`}
+        </button>
+      </div>
+      {mostLikelyMovePanel}
+    </div>
   );
 
   // Handle PGN import
@@ -784,6 +976,7 @@ export const App: React.FC = () => {
                     onThreadsChange={engine.setThreads}
                   />
                 </div>
+                {mostLikelyMoveSection}
                 <div className="min-h-[40vh] flex flex-col border-t border-border-subtle">
                   <MoveList
                     currentPath={currentPath}
@@ -1191,6 +1384,7 @@ export const App: React.FC = () => {
                     onThreadsChange={engine.setThreads}
                   />
                 </div>
+                {mostLikelyMoveSection}
 
                 {/* Move List */}
                 <div className="flex-[2] min-h-0 flex flex-col border-t border-border-subtle">

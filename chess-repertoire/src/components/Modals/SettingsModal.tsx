@@ -7,7 +7,11 @@ import {
   Sliders,
   RotateCcw,
 } from 'lucide-react';
-import { useSettings, DEFAULT_SETTINGS, type BoardTheme } from '../../context/SettingsContext';
+import {
+  useSettings,
+  type BoardTheme,
+  type PracticalMoveRating,
+} from '../../context/SettingsContext';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -29,6 +33,8 @@ const BOARD_THEMES: { id: BoardTheme; label: string; light: string; dark: string
   { id: 'midnight',label: 'Midnight',light: '#cdd5e0', dark: '#3a4466' },
   { id: 'coral',   label: 'Coral',   light: '#f0d9d0', dark: '#b05050' },
 ];
+
+const PRACTICAL_MOVE_RATINGS: PracticalMoveRating[] = [1600, 1800, 2000, 2200, 2500];
 
 function Toggle({
   checked,
@@ -324,6 +330,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     checked={settings.confirmDeleteNode}
                     onChange={(v) => updateSetting('confirmDeleteNode', v)}
                   />
+                </SettingRow>
+
+                <SettingRow
+                  label="Most Likely Move Rating"
+                  description='Used only for the "Most Likely Move?" button. Does not affect repertoire generation.'
+                >
+                  <select
+                    value={settings.mostLikelyMoveRating}
+                    onChange={(e) => updateSetting('mostLikelyMoveRating', Number(e.target.value) as PracticalMoveRating)}
+                    className="bg-bg-primary border border-border-subtle rounded-md px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent-teal/50"
+                  >
+                    {PRACTICAL_MOVE_RATINGS.map((rating) => (
+                      <option key={rating} value={rating}>
+                        {rating}+
+                      </option>
+                    ))}
+                  </select>
                 </SettingRow>
               </div>
             )}

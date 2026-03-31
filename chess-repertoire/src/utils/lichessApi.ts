@@ -190,10 +190,19 @@ export interface LichessMove {
   san: string;
   uci: string;
   totalGames: number;
+  playRate: number;
   winRate: number;
   lossRate: number;
   drawRate: number;
   averageRating: number | null;
+}
+
+interface LichessLookupSettings {
+  color: 'white' | 'black';
+  useMasters: boolean;
+  ratingMin: number;
+  ratingMax: number;
+  speeds: string[];
 }
 
 /**
@@ -242,6 +251,7 @@ export async function getMostPlayedMoves(
 
   // Find max games across all moves for normalisation
   const maxGames = Math.max(...moves.map(totalGames));
+  const totalGamesInPosition = moves.reduce((sum, move) => sum + totalGames(move), 0);
 
   // Sort by composite score (win rate weighted with popularity)
   moves.sort((a, b) => compositeScore(b, color, maxGames) - compositeScore(a, color, maxGames));
@@ -258,6 +268,7 @@ export async function getMostPlayedMoves(
       san: m.san,
       uci: m.uci,
       totalGames: total,
+      playRate: totalGamesInPosition > 0 ? (total / totalGamesInPosition) * 100 : 0,
       winRate: winRate(m, color),
       lossRate: lossRate(m, color),
       drawRate: drawRate(m),
@@ -288,4 +299,36 @@ export async function getLichessMoveCounts(
     if (total > 0) counts.set(m.san, total);
   }
   return counts;
+}
+
+/**
+ * Get the single most common move from Lichess for a position, ordered purely
+ * by play frequency for the selected player pool.
+ */
+export async function getMostLikelyMove(
+  fen: string,
+  settings: LichessLookupSettings,
+  logError: LogFn
+): Promise<LichessMove | null> {
+  const data = await fetchLichess(fen, settings as GeneratorSettings, logError);
+  const moves = [...(data.moves || [])];
+  if (moves.length === 0) return null;
+
+  moves.sort((a, b) => totalGames(b) - totalGames(a));
+
+  const topMove = moves[0];
+  const totalGamesInPosition = moves.reduce((sum, move) => sum + totalGames(move), 0);
+  const total = totalGames(topMove);
+  const color = settings.color || 'white';
+
+  return {
+    san: topMove.san,
+    uci: topMove.uci,
+    totalGames: total,
+    playRate: totalGamesInPosition > 0 ? (total / totalGamesInPosition) * 100 : 0,
+    winRate: winRate(topMove, color),
+    lossRate: lossRate(topMove, color),
+    drawRate: drawRate(topMove),
+    averageRating: topMove.averageRating || null,
+  };
 }
