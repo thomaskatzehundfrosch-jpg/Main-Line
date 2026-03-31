@@ -267,6 +267,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const [stats, setStats] = useState<SessionStats>({ correct: 0, incorrect: 0 });
   const [lifetimeStats, setLifetimeStats] = useState<SRLifetimeStats>(loadStats);
   const [lastSessionStats, setLastSessionStats] = useState<SRLastSessionStats | null>(loadLastSessionStats);
+  const [comparisonLastSessionStats, setComparisonLastSessionStats] = useState<SRLastSessionStats | null>(loadLastSessionStats);
   const [sessionHistory, setSessionHistory] = useState<SessionEntry[]>([]);
   const [replayIndex, setReplayIndex] = useState(0);
 
@@ -344,6 +345,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setSessionHistory([]);
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
+    setComparisonLastSessionStats(lastSessionStats);
     const firstFen = linesForSession[0]?.lineStartFen
       ? buildPromptSteps(linesForSession[0], nextSelection.color)[0]?.reviewFen ?? linesForSession[0].front
       : linesForSession[0]?.front ?? INITIAL_FEN;
@@ -609,7 +611,10 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     ? ((currentLineIndex + (phase === 'complete' ? 1 : 0)) / sessionLines.length) * 100
     : 0;
   const currentSessionPercent = percentFromCounts(stats.correct, stats.correct + stats.incorrect);
-  const previousSessionPercent = lastSessionStats
+  const previousSessionPercent = comparisonLastSessionStats
+    ? percentFromCounts(comparisonLastSessionStats.totalCorrect, comparisonLastSessionStats.totalReviewed)
+    : null;
+  const lastSessionOverviewPercent = lastSessionStats
     ? percentFromCounts(lastSessionStats.totalCorrect, lastSessionStats.totalReviewed)
     : null;
   const lifetimePercent = lifetimeStats.totalReviewed > 0
@@ -694,7 +699,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
               {(previousSessionPercent !== null || lifetimePercent !== null) && (
                 <AccuracyComparisonCard
                   currentPercent={null}
-                  lastSessionPercent={previousSessionPercent}
+                  lastSessionPercent={lastSessionOverviewPercent}
                   lifetimePercent={lifetimePercent}
                 />
               )}
