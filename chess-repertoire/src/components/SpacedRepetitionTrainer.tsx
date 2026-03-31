@@ -488,6 +488,7 @@ export const SpacedRepetitionTrainer: React.FC<{
 
   const advanceAfterAnswer = useCallback(() => {
     if (!currentCard || !expectedMove) return;
+    setShowSolution(false);
 
     const promptCorrect = !cardHadMistake && userMove !== null && userMove === expectedMove;
     const nextSessionHistory = [...sessionHistory, {
@@ -575,6 +576,7 @@ export const SpacedRepetitionTrainer: React.FC<{
       const uci = from + to + (isPromotion ? 'q' : '');
       if (showSolution) {
         if (uci === expectedMove) {
+          setShowSolution(false);
           advanceAfterAnswer();
           return true;
         }
@@ -590,6 +592,7 @@ export const SpacedRepetitionTrainer: React.FC<{
       }
 
       if (cardHadMistake) {
+        setShowSolution(false);
         advanceAfterAnswer();
         return true;
       }
