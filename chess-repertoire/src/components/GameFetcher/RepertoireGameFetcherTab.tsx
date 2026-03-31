@@ -18,6 +18,7 @@ import {
   type FetchProgress,
 } from '../../utils/chessComFetcher';
 import { classifyTimeControl } from '../../utils/ecoClassifier';
+import { MonthYearInput } from './MonthYearInput';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -626,24 +627,8 @@ export const RepertoireGameFetcherTab: React.FC<RepertoireGameFetcherTabProps> =
                   spellCheck={false}
                 />
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">From</label>
-                <input
-                  type="month"
-                  value={dateFrom}
-                  onChange={(e) => setDateFrom(e.target.value)}
-                  className="h-9 px-3 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-sm outline-none focus:border-accent-teal transition-colors"
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">To</label>
-                <input
-                  type="month"
-                  value={dateTo}
-                  onChange={(e) => setDateTo(e.target.value)}
-                  className="h-9 px-3 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-sm outline-none focus:border-accent-teal transition-colors"
-                />
-              </div>
+              <MonthYearInput label="From" value={dateFrom} onChange={setDateFrom} />
+              <MonthYearInput label="To" value={dateTo} onChange={setDateTo} />
               <button
                 onClick={handleFetch}
                 disabled={loading || selectedMoves.length === 0}
