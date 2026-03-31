@@ -40,6 +40,11 @@ interface SessionEntry {
   correct: boolean;
 }
 
+interface PromptStep {
+  reviewFen: string;
+  expectedMove: string;
+}
+
 interface TrainerSelection {
   fileId: string;
   color: DrillColor;
@@ -62,6 +67,27 @@ function compareCards(a: Card, b: Card): number {
   if (aHistory.length !== bHistory.length) return aHistory.length - bHistory.length;
   if (a.front !== b.front) return a.front.localeCompare(b.front);
   return a.back.localeCompare(b.back);
+}
+
+function isStrictPrefix(prefix: string[], full: string[]): boolean {
+  if (prefix.length >= full.length) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (prefix[i] !== full[i]) return false;
+  }
+  return true;
+}
+
+function collapseToDeepestLines(cards: Card[]): Card[] {
+  return cards.filter((card, index) => {
+    const cardHistory = card.moveHistorySan ?? [];
+    const cardStartFen = card.lineStartFen ?? '';
+    return !cards.some((other, otherIndex) => {
+      if (index === otherIndex) return false;
+      if ((other.lineStartFen ?? '') !== cardStartFen) return false;
+      if ((other.lineName ?? '') !== (card.lineName ?? '')) return false;
+      return isStrictPrefix(cardHistory, other.moveHistorySan ?? []);
+    });
+  });
 }
 
 function uciToSan(fen: string, uci: string): string {
@@ -125,6 +151,35 @@ function buildCardsForSelection(file: RepertoireFile, drillColor: DrillColor, ex
   return result;
 }
 
+function buildPromptSteps(card: Card, drillColor: DrillColor): PromptStep[] {
+  if (!card.lineStartFen || !card.moveHistorySan || card.moveHistorySan.length === 0) {
+    return [{ reviewFen: card.front, expectedMove: card.back }];
+  }
+
+  try {
+    const chess = new Chess(card.lineStartFen);
+    const prompts: PromptStep[] = [];
+
+    for (const san of card.moveHistorySan) {
+      const reviewFen = chess.fen();
+      const mover = chess.turn();
+      const move = chess.move(san);
+      if (!move) return [{ reviewFen: card.front, expectedMove: card.back }];
+
+      if ((drillColor === 'white' && mover === 'w') || (drillColor === 'black' && mover === 'b')) {
+        prompts.push({
+          reviewFen,
+          expectedMove: move.from + move.to + (move.promotion || ''),
+        });
+      }
+    }
+
+    return prompts.length > 0 ? prompts : [{ reviewFen: card.front, expectedMove: card.back }];
+  } catch {
+    return [{ reviewFen: card.front, expectedMove: card.back }];
+  }
+}
+
 function mergeCards(existingCards: Card[], cardsToMerge: Card[]): Card[] {
   const merged = new Map(existingCards.map((card) => [cardKey(card), card] as const));
   for (const card of cardsToMerge) merged.set(cardKey(card), card);
@@ -139,11 +194,13 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const [selectedFileId, setSelectedFileId] = useState<string>('');
   const [selectedColor, setSelectedColor] = useState<DrillColor>('white');
   const [cards, setCards] = useState<Card[]>([]);
-  const [sessionCards, setSessionCards] = useState<Card[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [sessionLines, setSessionLines] = useState<Card[]>([]);
+  const [currentLineIndex, setCurrentLineIndex] = useState(0);
+  const [currentPromptIndex, setCurrentPromptIndex] = useState(0);
   const [phase, setPhase] = useState<Phase>('idle');
   const [userMove, setUserMove] = useState<string | null>(null);
   const [cardHadMistake, setCardHadMistake] = useState(false);
+  const [lineHadMistake, setLineHadMistake] = useState(false);
   const [showSolution, setShowSolution] = useState(false);
   const [selectedSquare, setSelectedSquare] = useState<string | null>(null);
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
@@ -182,11 +239,16 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     () => files.find((file) => file.id === selectedFileId) ?? null,
     [files, selectedFileId],
   );
-  const currentCard = sessionCards[currentIndex] ?? null;
+  const currentCard = sessionLines[currentLineIndex] ?? null;
+  const promptSteps = useMemo(
+    () => (currentCard && selection ? buildPromptSteps(currentCard, selection.color) : []),
+    [currentCard, selection],
+  );
+  const currentPrompt = promptSteps[currentPromptIndex] ?? null;
   const displayFen = phase === 'replay'
     ? (sessionHistory[replayIndex]?.reviewFen ?? INITIAL_FEN)
-    : (currentCard?.front ?? INITIAL_FEN);
-  const expectedMove = currentCard?.back ?? '';
+    : (currentPrompt?.reviewFen ?? currentCard?.front ?? INITIAL_FEN);
+  const expectedMove = currentPrompt?.expectedMove ?? currentCard?.back ?? '';
   const isWhiteToMove = displayFen.split(' ')[1] === 'w';
   const correctMoveSan = expectedMove ? uciToSan(displayFen, expectedMove) : '';
   const userMoveSan = userMove ? uciToSan(displayFen, userMove) : '';
@@ -198,15 +260,18 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
 
     const storedCards = loadCards();
     const cardsForSelection = buildCardsForSelection(file, nextSelection.color, storedCards);
+    const linesForSession = collapseToDeepestLines(cardsForSelection);
     const mergedCards = mergeCards(storedCards, cardsForSelection);
     saveCards(mergedCards);
 
     setSelection(nextSelection);
     setCards(cardsForSelection);
-    setSessionCards(cardsForSelection);
-    setCurrentIndex(0);
+    setSessionLines(linesForSession);
+    setCurrentLineIndex(0);
+    setCurrentPromptIndex(0);
     setUserMove(null);
     setCardHadMistake(false);
+    setLineHadMistake(false);
     setShowSolution(false);
     setSelectedSquare(null);
     setLegalMoves([]);
@@ -214,16 +279,18 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
     setBoardOrientation(nextSelection.color);
-    setPhase(cardsForSelection.length > 0 ? 'question' : 'idle');
+    setPhase(linesForSession.length > 0 ? 'question' : 'idle');
   }, [files]);
 
   const leaveSession = useCallback(() => {
     setSelection(null);
     setCards([]);
-    setSessionCards([]);
-    setCurrentIndex(0);
+    setSessionLines([]);
+    setCurrentLineIndex(0);
+    setCurrentPromptIndex(0);
     setUserMove(null);
     setCardHadMistake(false);
+    setLineHadMistake(false);
     setShowSolution(false);
     setSelectedSquare(null);
     setLegalMoves([]);
@@ -238,7 +305,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setSelectedSquare(null);
     setLegalMoves([]);
     setShowSolution(false);
-  }, [currentIndex, phase]);
+  }, [currentLineIndex, currentPromptIndex, phase]);
 
   useEffect(() => {
     if (engine.enabled && phase !== 'replay' && currentCard) engine.analyze(displayFen);
@@ -328,39 +395,53 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const advanceAfterAnswer = useCallback(() => {
     if (!currentCard || !expectedMove) return;
 
-    const correct = !cardHadMistake && userMove !== null && userMove === expectedMove;
-    const updatedCard = reviewCard(currentCard, correct ? 2 : 0);
-    const updatedCards = cards.map((card) => (cardKey(card) === cardKey(updatedCard) ? updatedCard : card));
+    const promptCorrect = !cardHadMistake && userMove !== null && userMove === expectedMove;
 
     setSessionHistory((prev) => [...prev, {
       card: currentCard,
       reviewFen: displayFen,
       expectedMove,
       userMove,
-      correct,
+      correct: promptCorrect,
     }]);
+
+    const nextPromptIndex = currentPromptIndex + 1;
+    if (nextPromptIndex < promptSteps.length) {
+      setCurrentPromptIndex(nextPromptIndex);
+      setUserMove(null);
+      setCardHadMistake(false);
+      setBoardOrientation(selection?.color ?? 'white');
+      setPhase('question');
+      return;
+    }
+
+    const lineCorrect = !lineHadMistake && promptCorrect;
+    const updatedCard = reviewCard(currentCard, lineCorrect ? 2 : 0);
+    const updatedCards = cards.map((card) => (cardKey(card) === cardKey(updatedCard) ? updatedCard : card));
     setCards(updatedCards);
     saveCards(mergeCards(loadCards(), [updatedCard]));
 
     const nextStats = {
-      correct: stats.correct + (correct ? 1 : 0),
-      incorrect: stats.incorrect + (correct ? 0 : 1),
+      correct: stats.correct + (lineCorrect ? 1 : 0),
+      incorrect: stats.incorrect + (lineCorrect ? 0 : 1),
     };
     setStats(nextStats);
 
-    const nextCardIndex = currentIndex + 1;
-    if (nextCardIndex >= sessionCards.length) {
+    const nextLineIndex = currentLineIndex + 1;
+    if (nextLineIndex >= sessionLines.length) {
       setLifetimeStats(saveSessionStats(nextStats.correct, nextStats.incorrect));
       setPhase('complete');
       return;
     }
 
-    setCurrentIndex(nextCardIndex);
+    setCurrentLineIndex(nextLineIndex);
+    setCurrentPromptIndex(0);
     setUserMove(null);
     setCardHadMistake(false);
+    setLineHadMistake(false);
     setBoardOrientation(selection?.color ?? 'white');
     setPhase('question');
-  }, [cardHadMistake, cards, currentCard, currentIndex, displayFen, expectedMove, selection?.color, sessionCards.length, stats, userMove]);
+  }, [cardHadMistake, cards, currentCard, currentLineIndex, currentPromptIndex, displayFen, expectedMove, lineHadMistake, promptSteps.length, selection?.color, sessionLines.length, stats, userMove]);
 
   const submitMove = useCallback((from: string, to: string, piece?: string) => {
     if ((phase !== 'question' && phase !== 'grading') || !currentCard) return false;
@@ -394,6 +475,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       if (uci !== expectedMove) {
         setUserMove((prev) => prev ?? uci);
         setCardHadMistake(true);
+        setLineHadMistake(true);
         setPhase('grading');
         return true;
       }
@@ -446,8 +528,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setLegalMoves([]);
   }, [currentCard, getLegalMoves, isOwnPiece, legalMoves, phase, selectedSquare, submitMove]);
 
-  const progressPercent = sessionCards.length > 0
-    ? ((currentIndex + (phase === 'complete' ? 1 : 0)) / sessionCards.length) * 100
+  const progressPercent = sessionLines.length > 0
+    ? ((currentLineIndex + (phase === 'complete' ? 1 : 0)) / sessionLines.length) * 100
     : 0;
 
   if (!selection) {
@@ -606,11 +688,11 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
         </div>
 
         <div className="lg:w-[280px] lg:min-w-[260px] xl:w-[300px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
-          {sessionCards.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
+          {sessionLines.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
             <div>
               <div className="flex justify-between text-xs text-text-muted mb-1.5">
-                <span>Session Progress</span>
-                <span>{Math.min(currentIndex + 1, sessionCards.length)} / {sessionCards.length}</span>
+                <span>Line Progress</span>
+                <span>{Math.min(currentLineIndex + 1, sessionLines.length)} / {sessionLines.length}</span>
               </div>
               <div className="w-full h-2 bg-bg-panel rounded-full overflow-hidden">
                 <div className="h-full bg-accent-teal rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }} />
@@ -641,6 +723,11 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
               <p className="text-text-muted text-xs mt-2">
                 Play the exact stored move from this position.
               </p>
+              {promptSteps.length > 1 && (
+                <p className="text-text-muted text-xs mt-2">
+                  Move {currentPromptIndex + 1} of {promptSteps.length} in this line.
+                </p>
+              )}
               {!showSolution ? (
                 <>
                   <p className="text-text-muted text-xs mt-2">Click or drag a piece to make the move.</p>
