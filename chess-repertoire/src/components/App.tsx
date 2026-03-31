@@ -74,7 +74,7 @@ export const App: React.FC = () => {
   const engine = useEngine();
   const pgnParser = usePgnParser();
   const games = useGames();
-  const { files, activeFileId, getActiveFile, updateFileGames } = useFiles();
+  const { files, activeFileId, getActiveFile, updateFileGames, setActive } = useFiles();
   const repertoireEval = useRepertoireEval();
   const generator = useGenerator();
 
@@ -423,7 +423,12 @@ export const App: React.FC = () => {
 
   // Navigate to a FEN from the mistake panel
   const handleNavigateToFen = useCallback(
-    (fen: string) => {
+    (fen: string, fileId?: string) => {
+      const targetFile = fileId
+        ? files.find((file) => file.id === fileId) ?? null
+        : null;
+      const sourceTree = targetFile?.tree ?? tree;
+
       // Find the node in the tree that has this FEN
       const findByFen = (node: TreeNode): TreeNode | null => {
         if (node.fen === fen) return node;
@@ -434,12 +439,16 @@ export const App: React.FC = () => {
         return null;
       };
 
-      const targetNode = findByFen(tree);
+      const targetNode = findByFen(sourceTree);
       if (targetNode) {
+        if (targetFile) {
+          setActive(targetFile.id);
+          setTree(cloneTree(targetFile.tree));
+        }
         navigateToNode(targetNode);
       }
     },
-    [tree, navigateToNode]
+    [files, navigateToNode, setActive, setTree, tree]
   );
 
   // Keyboard navigation — game viewer mode takes priority
@@ -585,9 +594,9 @@ export const App: React.FC = () => {
       ) : trainerOpen ? (
         <SpacedRepetitionTrainer
           onClose={() => setTrainerOpen(false)}
-          onAnalyzePosition={(fen) => {
+          onAnalyzePosition={(fileId, fen) => {
             setTrainerOpen(false);
-            handleNavigateToFen(fen);
+            handleNavigateToFen(fen, fileId);
           }}
         />
       ) : (

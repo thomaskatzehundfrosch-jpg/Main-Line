@@ -75,6 +75,11 @@ export interface SRLastSessionStats {
   completedAt: number | null;
 }
 
+export interface SRSessionScope {
+  fileId: string;
+  color: string;
+}
+
 export function loadStats(): SRLifetimeStats {
   try {
     const raw = localStorage.getItem(STATS_KEY);
@@ -94,9 +99,14 @@ export function loadStats(): SRLifetimeStats {
 
 const LAST_SESSION_KEY = 'aic_sr_last_session_stats';
 
-export function loadLastSessionStats(): SRLastSessionStats | null {
+function buildLastSessionKey(scope?: SRSessionScope): string {
+  if (!scope) return LAST_SESSION_KEY;
+  return `${LAST_SESSION_KEY}:${scope.fileId}:${scope.color}`;
+}
+
+export function loadLastSessionStats(scope?: SRSessionScope): SRLastSessionStats | null {
   try {
-    const raw = localStorage.getItem(LAST_SESSION_KEY);
+    const raw = localStorage.getItem(buildLastSessionKey(scope));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SRLastSessionStats;
     if (
@@ -115,6 +125,7 @@ export function loadLastSessionStats(): SRLastSessionStats | null {
 export function saveSessionStats(
   correct: number,
   incorrect: number,
+  scope?: SRSessionScope,
 ): { lifetime: SRLifetimeStats; lastSession: SRLastSessionStats } {
   const prev = loadStats();
   const totalReviewed = correct + incorrect;
@@ -128,6 +139,6 @@ export function saveSessionStats(
     totalCorrect: correct,
     completedAt: Date.now(),
   };
-  localStorage.setItem(LAST_SESSION_KEY, JSON.stringify(lastSession));
+  localStorage.setItem(buildLastSessionKey(scope), JSON.stringify(lastSession));
   return { lifetime: updated, lastSession };
 }

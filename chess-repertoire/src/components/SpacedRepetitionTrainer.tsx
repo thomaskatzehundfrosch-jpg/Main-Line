@@ -245,7 +245,7 @@ const AccuracyComparisonCard: React.FC<{
 
 export const SpacedRepetitionTrainer: React.FC<{
   onClose?: () => void;
-  onAnalyzePosition?: (fen: string) => void;
+  onAnalyzePosition?: (fileId: string, fen: string) => void;
 }> = ({ onClose, onAnalyzePosition }) => {
   const { files } = useFiles();
   const engine = useEngine();
@@ -267,8 +267,8 @@ export const SpacedRepetitionTrainer: React.FC<{
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white');
   const [stats, setStats] = useState<SessionStats>({ correct: 0, incorrect: 0 });
-  const [lastSessionStats, setLastSessionStats] = useState<SRLastSessionStats | null>(loadLastSessionStats);
-  const [comparisonLastSessionStats, setComparisonLastSessionStats] = useState<SRLastSessionStats | null>(loadLastSessionStats);
+  const [lastSessionStats, setLastSessionStats] = useState<SRLastSessionStats | null>(null);
+  const [comparisonLastSessionStats, setComparisonLastSessionStats] = useState<SRLastSessionStats | null>(null);
   const [completedSessionStats, setCompletedSessionStats] = useState<SessionStats | null>(null);
   const [sessionHistory, setSessionHistory] = useState<SessionEntry[]>([]);
   const [replayIndex, setReplayIndex] = useState(0);
@@ -281,6 +281,18 @@ export const SpacedRepetitionTrainer: React.FC<{
   useEffect(() => {
     if (!selectedFileId && files.length > 0) setSelectedFileId(files[0].id);
   }, [files, selectedFileId]);
+
+  useEffect(() => {
+    if (!selectedScope) {
+      setLastSessionStats(null);
+      setComparisonLastSessionStats(null);
+      return;
+    }
+
+    const scopedStats = loadLastSessionStats(selectedScope);
+    setLastSessionStats(scopedStats);
+    setComparisonLastSessionStats(scopedStats);
+  }, [selectedScope]);
 
   useEffect(() => {
     const updateWidth = () => {
@@ -307,6 +319,10 @@ export const SpacedRepetitionTrainer: React.FC<{
   const currentFile = useMemo(
     () => files.find((file) => file.id === selectedFileId) ?? null,
     [files, selectedFileId],
+  );
+  const selectedScope = useMemo(
+    () => (selectedFileId ? { fileId: selectedFileId, color: selectedColor } : null),
+    [selectedColor, selectedFileId],
   );
   const currentCard = sessionLines[currentLineIndex] ?? null;
   const promptSteps = useMemo(
@@ -348,7 +364,10 @@ export const SpacedRepetitionTrainer: React.FC<{
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
     setCompletedSessionStats(null);
-    setComparisonLastSessionStats(lastSessionStats);
+    setComparisonLastSessionStats(loadLastSessionStats({
+      fileId: nextSelection.fileId,
+      color: nextSelection.color,
+    }));
     const firstFen = linesForSession[0]?.lineStartFen
       ? buildPromptSteps(linesForSession[0], nextSelection.color)[0]?.reviewFen ?? linesForSession[0].front
       : linesForSession[0]?.front ?? INITIAL_FEN;
@@ -510,7 +529,11 @@ export const SpacedRepetitionTrainer: React.FC<{
     const nextLineIndex = currentLineIndex + 1;
     if (nextLineIndex >= sessionLines.length) {
       setCompletedSessionStats(nextPromptStats);
-      const savedStats = saveSessionStats(nextPromptStats.correct, nextPromptStats.incorrect);
+      const savedStats = saveSessionStats(
+        nextPromptStats.correct,
+        nextPromptStats.incorrect,
+        selection ? { fileId: selection.fileId, color: selection.color } : undefined,
+      );
       setLastSessionStats(savedStats.lastSession);
       setPhase('complete');
       return;
@@ -805,7 +828,7 @@ export const SpacedRepetitionTrainer: React.FC<{
         <div className="lg:w-[280px] lg:min-w-[260px] xl:w-[300px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
           {onAnalyzePosition && phase !== 'idle' && (
             <button
-              onClick={() => onAnalyzePosition(displayFen)}
+              onClick={() => selection && onAnalyzePosition(selection.fileId, displayFen)}
               className="btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
             >
               <ArrowUpRight className="w-3.5 h-3.5" />
