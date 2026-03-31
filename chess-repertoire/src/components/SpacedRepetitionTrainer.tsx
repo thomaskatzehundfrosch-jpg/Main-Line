@@ -561,8 +561,11 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       </div>
 
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-auto">
-        <div ref={boardContainerRef} className="flex flex-col items-center p-2 lg:flex-[2.8] lg:min-w-[820px] xl:min-w-[980px] 2xl:min-w-[1120px]">
-          <div className="flex items-start gap-0 w-full max-w-[1120px]">
+        <div
+          ref={boardContainerRef}
+          className="w-full flex flex-col items-center p-2 lg:flex-[2.8] lg:basis-0 lg:min-w-[820px] xl:min-w-[980px] 2xl:min-w-[1120px]"
+        >
+          <div className="flex items-start gap-0 w-full max-w-[1120px] justify-center">
             <div className="mr-1">
               <EvalBar
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
@@ -570,7 +573,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 height={boardWidth}
               />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               <Chessboard
                 position={displayFen}
                 boardWidth={boardWidth}
