@@ -746,8 +746,8 @@ export const App: React.FC = () => {
 
             {/* Analysis Tab */}
             {mobileTab === 'analysis' && (
-              <div className="h-full flex flex-col overflow-hidden">
-                <div className="flex-[3] min-h-[120px] flex flex-col overflow-auto">
+              <div className="h-full overflow-y-auto">
+                <div className="min-h-[calc(100vh-20rem)] flex flex-col">
                   <EnginePanel
                     lines={engine.lines}
                     isThinking={engine.isThinking}
@@ -762,7 +762,7 @@ export const App: React.FC = () => {
                     onThreadsChange={engine.setThreads}
                   />
                 </div>
-                <div className="flex-[2] min-h-0 flex flex-col border-t border-border-subtle">
+                <div className="min-h-[40vh] flex flex-col border-t border-border-subtle">
                   <MoveList
                     currentPath={currentPath}
                     currentNode={currentNode}
@@ -772,7 +772,7 @@ export const App: React.FC = () => {
                     onAddMove={addMoveToNode}
                   />
                 </div>
-                <div className="flex-[1] min-h-0 flex flex-col overflow-auto border-t border-border-subtle">
+                <div className="min-h-[28vh] flex flex-col border-t border-border-subtle">
                   <NotesPanel
                     comment={currentNode.comment}
                     nags={currentNode.nags}
