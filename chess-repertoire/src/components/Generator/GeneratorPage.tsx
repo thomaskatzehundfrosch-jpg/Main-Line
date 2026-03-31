@@ -29,6 +29,7 @@ import { GeneratorProgressBar } from './GeneratorProgress';
 import { GeneratorMoveTree } from './GeneratorMoveTree';
 import { convertToTreeNode } from '../../utils/generatorConverter';
 import { exportGeneratorPGN } from '../../utils/generatorPgn';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 interface GeneratorPageProps {
   onClose: () => void;
@@ -47,6 +48,7 @@ let _cachedPgnSeeds: string[][] = [];
 export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, isVisible = true }) => {
   const engine = useEngine();
   const gen = useGenerator();
+  const isMobile = useIsMobile();
 
   const [settings, _setSettings] = useState<GeneratorSettings>(() => _cachedSettings);
   const [pgnSeeds, _setPgnSeeds] = useState<string[][]>(() => _cachedPgnSeeds);
@@ -301,9 +303,9 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
         </button>
         <Cpu className="w-4 h-4 text-accent-teal" />
         <h2 className="font-mono text-sm uppercase tracking-wider text-text-secondary">
-          Auto-Repertoire Generator
+          Auto Rep Gen
         </h2>
-        <span className="text-xs text-text-muted">
+        <span className="hidden text-xs text-text-muted sm:inline">
           Play moves to build a starting tree, then generate analysis
         </span>
 
@@ -315,7 +317,8 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
               title="Import generated tree into your repertoire"
             >
               <Upload className="w-3.5 h-3.5" />
-              <span>Import to Repertoire</span>
+              <span className="hidden sm:inline">Import to Repertoire</span>
+              <span className="sm:hidden">Import</span>
             </button>
             <button
               onClick={handleExportPGN}
@@ -323,18 +326,18 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
               title="Export generated tree as PGN"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Export PGN</span>
+              <span>Export</span>
             </button>
           </div>
         )}
       </div>
 
       {/* 3-column layout */}
-      <div className="flex flex-1 min-h-0 overflow-hidden">
+      <div className="flex flex-1 min-h-0 flex-col overflow-hidden md:flex-row">
         {/* Left: Settings */}
         <div
-          className="border-r border-border-subtle bg-bg-surface overflow-hidden flex flex-col"
-          style={{ width: '280px', minWidth: '260px' }}
+          className="border-b border-border-subtle bg-bg-surface overflow-hidden flex flex-col md:border-b-0 md:border-r"
+          style={isMobile ? undefined : { width: '280px', minWidth: '260px' }}
         >
           <GeneratorSettingsPanel
             settings={settings}
@@ -353,11 +356,11 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
         <div className="flex-1 flex flex-col overflow-auto p-4 gap-4">
           {/* Chessboard — interactive when not generating */}
           <div className="flex justify-center">
-            <div style={{ width: '360px', maxWidth: '100%' }}>
+            <div style={{ width: isMobile ? 'min(100%, 320px)' : '360px', maxWidth: '100%' }}>
               <Chessboard
                 position={displayFen}
                 boardOrientation={settings.color === 'black' ? 'black' : 'white'}
-                boardWidth={360}
+                boardWidth={isMobile ? 320 : 360}
                 isDraggablePiece={() => !gen.isGenerating}
                 onPieceDrop={handlePieceDrop}
                 onSquareClick={handleSquareClick}
@@ -478,18 +481,20 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
         </div>
 
         {/* Right: Move Tree */}
-        <div
-          className="border-l border-border-subtle bg-bg-surface overflow-hidden flex flex-col"
-          style={{ width: '340px', minWidth: '280px' }}
-        >
-          <GeneratorMoveTree
-            tree={gen.tree}
-            selectedNode={gen.selectedNode}
-            onSelect={handleNodeSelect}
-            color={settings.color}
-            onClear={handleClear}
-          />
-        </div>
+        {!isMobile && (
+          <div
+            className="border-l border-border-subtle bg-bg-surface overflow-hidden flex flex-col"
+            style={{ width: '340px', minWidth: '280px' }}
+          >
+            <GeneratorMoveTree
+              tree={gen.tree}
+              selectedNode={gen.selectedNode}
+              onSelect={handleNodeSelect}
+              color={settings.color}
+              onClear={handleClear}
+            />
+          </div>
+        )}
       </div>
 
       {/* Floating progress chip — shown via portal when generation is running

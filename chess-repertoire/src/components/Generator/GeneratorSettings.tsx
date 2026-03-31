@@ -3,10 +3,12 @@
  */
 
 import React, { useCallback, useRef, useState, useEffect } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { GeneratorSettings, AnalysisMode } from '../../types/generator';
 import { getStyleEvalThreshold } from '../../engine/analyzer';
 import { parsePGN } from '../../utils/generatorPgn';
 import { getStoredToken, getStoredUsername, clearStoredToken, startOAuthFlow } from '../../utils/lichessAuth';
+import { useIsMobile } from '../../hooks/useIsMobile';
 
 interface GeneratorSettingsProps {
   settings: GeneratorSettings;
@@ -31,9 +33,15 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
   pgnSeeds,
   setPgnSeeds,
 }) => {
+  const isMobile = useIsMobile();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [lichessUsername, setLichessUsername] = useState<string | null>(getStoredUsername);
   const [lichessConnected, setLichessConnected] = useState<boolean>(() => !!getStoredToken());
+  const [collapsed, setCollapsed] = useState(() => isMobile);
+
+  useEffect(() => {
+    setCollapsed(isMobile);
+  }, [isMobile]);
 
   // Sync auth state when the component re-mounts after OAuth redirect
   useEffect(() => {
@@ -118,12 +126,27 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
   return (
     <div className="flex flex-col h-full overflow-y-auto custom-scrollbar">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-border-subtle">
+      <div
+        className="px-4 py-3 border-b border-border-subtle flex items-center justify-between cursor-pointer select-none"
+        onClick={() => isMobile && setCollapsed((prev) => !prev)}
+      >
         <h3 className="font-mono text-[10px] uppercase tracking-wider text-text-muted">
           Generator Settings
         </h3>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setCollapsed((prev) => !prev);
+          }}
+          className="btn-icon p-1 md:hidden"
+          title={collapsed ? 'Expand settings' : 'Collapse settings'}
+        >
+          {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        </button>
       </div>
 
+      {!collapsed && (
       <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-5">
         {/* Color */}
         <div>
@@ -564,9 +587,10 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* Action Buttons */}
-      <div className="p-4 border-t border-border-subtle space-y-2">
+      <div className="sticky bottom-0 p-4 border-t border-border-subtle space-y-2 bg-bg-surface/95 backdrop-blur">
         {isGenerating ? (
           <button
             onClick={onStop}
