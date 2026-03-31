@@ -14,8 +14,8 @@ import {
 } from 'lucide-react';
 import { createCard, getDueCards, reviewCard } from '../lib/srScheduler';
 import type { Card } from '../lib/srScheduler';
-import { loadCards, loadLastSessionStats, loadStats, saveCards, saveSessionStats } from '../lib/srStorage';
-import type { SRLastSessionStats, SRLifetimeStats } from '../lib/srStorage';
+import { loadCards, loadLastSessionStats, saveCards, saveSessionStats } from '../lib/srStorage';
+import type { SRLastSessionStats } from '../lib/srStorage';
 import { useFiles } from '../context/FileContext';
 import { useSettings } from '../context/SettingsContext';
 import type { RepertoireFile } from '../types/repertoireFile';
@@ -213,12 +213,10 @@ function percentFromCounts(correct: number, total: number): number {
 const AccuracyComparisonCard: React.FC<{
   currentPercent?: number | null;
   lastSessionPercent: number | null;
-  lifetimePercent: number | null;
-}> = ({ currentPercent, lastSessionPercent, lifetimePercent }) => {
+}> = ({ currentPercent, lastSessionPercent }) => {
   const rows = [
     { label: 'This session', value: currentPercent, colorClass: 'bg-accent-teal' },
     { label: 'Last session', value: lastSessionPercent, colorClass: 'bg-accent-amber' },
-    { label: 'Lifetime', value: lifetimePercent, colorClass: 'bg-accent-blue' },
   ].filter((row) => row.value !== null);
 
   return (
@@ -265,9 +263,9 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const [legalMoves, setLegalMoves] = useState<string[]>([]);
   const [boardOrientation, setBoardOrientation] = useState<'white' | 'black'>('white');
   const [stats, setStats] = useState<SessionStats>({ correct: 0, incorrect: 0 });
-  const [lifetimeStats, setLifetimeStats] = useState<SRLifetimeStats>(loadStats);
   const [lastSessionStats, setLastSessionStats] = useState<SRLastSessionStats | null>(loadLastSessionStats);
   const [comparisonLastSessionStats, setComparisonLastSessionStats] = useState<SRLastSessionStats | null>(loadLastSessionStats);
+  const [lineResults, setLineResults] = useState<boolean[]>([]);
   const [sessionHistory, setSessionHistory] = useState<SessionEntry[]>([]);
   const [replayIndex, setReplayIndex] = useState(0);
 
@@ -345,6 +343,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setSessionHistory([]);
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
+    setLineResults([]);
     setComparisonLastSessionStats(lastSessionStats);
     const firstFen = linesForSession[0]?.lineStartFen
       ? buildPromptSteps(linesForSession[0], nextSelection.color)[0]?.reviewFen ?? linesForSession[0].front
@@ -368,6 +367,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
     setSessionHistory([]);
     setReplayIndex(0);
     setStats({ correct: 0, incorrect: 0 });
+    setLineResults([]);
     setPhase('idle');
     setBoardOrientation('white');
   }, []);
@@ -498,11 +498,11 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       incorrect: stats.incorrect + (lineCorrect ? 0 : 1),
     };
     setStats(nextStats);
+    setLineResults((prev) => [...prev, lineCorrect]);
 
     const nextLineIndex = currentLineIndex + 1;
     if (nextLineIndex >= sessionLines.length) {
       const savedStats = saveSessionStats(nextStats.correct, nextStats.incorrect);
-      setLifetimeStats(savedStats.lifetime);
       setLastSessionStats(savedStats.lastSession);
       setPhase('complete');
       return;
@@ -610,15 +610,15 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
   const progressPercent = sessionLines.length > 0
     ? ((currentLineIndex + (phase === 'complete' ? 1 : 0)) / sessionLines.length) * 100
     : 0;
-  const currentSessionPercent = percentFromCounts(stats.correct, stats.correct + stats.incorrect);
+  const completedLineCount = lineResults.length;
+  const correctLineCount = lineResults.filter(Boolean).length;
+  const incorrectLineCount = completedLineCount - correctLineCount;
+  const currentSessionPercent = percentFromCounts(correctLineCount, completedLineCount);
   const previousSessionPercent = comparisonLastSessionStats
     ? percentFromCounts(comparisonLastSessionStats.totalCorrect, comparisonLastSessionStats.totalReviewed)
     : null;
   const lastSessionOverviewPercent = lastSessionStats
     ? percentFromCounts(lastSessionStats.totalCorrect, lastSessionStats.totalReviewed)
-    : null;
-  const lifetimePercent = lifetimeStats.totalReviewed > 0
-    ? percentFromCounts(lifetimeStats.totalCorrect, lifetimeStats.totalReviewed)
     : null;
 
   if (!selection) {
@@ -696,11 +696,10 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 </p>
               </div>
 
-              {(previousSessionPercent !== null || lifetimePercent !== null) && (
+              {lastSessionOverviewPercent !== null && (
                 <AccuracyComparisonCard
                   currentPercent={null}
                   lastSessionPercent={lastSessionOverviewPercent}
-                  lifetimePercent={lifetimePercent}
                 />
               )}
 
@@ -912,21 +911,22 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
               <div className="text-4xl font-bold text-accent-teal">{currentSessionPercent}%</div>
               <div className="panel p-4 w-full">
                 <div className="grid grid-cols-2 gap-4 text-center">
-                  <div>
-                    <div className="text-accent-teal text-2xl font-bold">{stats.correct}</div>
+                    <div>
+                    <div className="text-accent-teal text-2xl font-bold">{correctLineCount}</div>
                     <div className="text-text-muted text-xs">Correct</div>
                   </div>
                   <div>
-                    <div className="text-accent-red text-2xl font-bold">{stats.incorrect}</div>
+                    <div className="text-accent-red text-2xl font-bold">{incorrectLineCount}</div>
                     <div className="text-text-muted text-xs">Incorrect</div>
                   </div>
                 </div>
               </div>
-              <AccuracyComparisonCard
-                currentPercent={currentSessionPercent}
-                lastSessionPercent={previousSessionPercent}
-                lifetimePercent={lifetimePercent}
-              />
+              {previousSessionPercent !== null && (
+                <AccuracyComparisonCard
+                  currentPercent={currentSessionPercent}
+                  lastSessionPercent={previousSessionPercent}
+                />
+              )}
               <div className="flex items-center gap-3">
                 {sessionHistory.length > 0 && (
                   <button
