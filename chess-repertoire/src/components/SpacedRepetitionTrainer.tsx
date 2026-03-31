@@ -342,8 +342,8 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
       for (const square of legalMoves) {
         const target = sharedChess.get(square as Square);
         styles[square] = target
-          ? { background: `radial-gradient(circle, transparent 55%, ${themeColors.dark}60 55%)` }
-          : { background: `radial-gradient(circle, ${themeColors.dark}55 25%, transparent 25%)` };
+          ? { background: 'radial-gradient(circle, transparent 52%, rgba(255,255,255,0.92) 53% 64%, rgba(15,23,42,0.28) 65% 74%, transparent 75%)' }
+          : { background: 'radial-gradient(circle, rgba(255,255,255,0.9) 0 18%, rgba(15,23,42,0.22) 19% 28%, transparent 29%)' };
       }
     } catch {
       return styles;
