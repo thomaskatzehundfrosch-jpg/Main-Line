@@ -51,6 +51,7 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
   const [isImporting, setIsImporting] = useState(false);
   const workerRef = useRef<Worker | null>(null);
   const cancelledRef = useRef(false);
+  const analysisRunIdRef = useRef(0);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<AnalysisSettings>(DEFAULT_SETTINGS);
@@ -157,6 +158,7 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
     async (game: ImportedGame) => {
       if (analyzingGameId) return; // already analyzing
 
+      const runId = ++analysisRunIdRef.current;
       cancelledRef.current = false;
       resetCancellation();
       setAnalyzing(game.id);
@@ -169,8 +171,13 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
         for (let attempt = 1; attempt <= 2; attempt++) {
           if (cancelledRef.current) break;
 
+          let worker: Worker | null = null;
           try {
-            const worker = await createAnalysisWorker();
+            worker = await createAnalysisWorker();
+            if (runId !== analysisRunIdRef.current) {
+              worker.terminate();
+              break;
+            }
             workerRef.current = worker;
 
             mistakes = await analyzeGame(
@@ -198,8 +205,10 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
               err instanceof Error ? err.message : String(err)
             );
 
-            if (workerRef.current) {
-              workerRef.current.terminate();
+            if (worker) {
+              worker.terminate();
+            }
+            if (workerRef.current === worker) {
               workerRef.current = null;
             }
           }
@@ -217,13 +226,15 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
           err instanceof Error ? err.message : String(err)
         );
       } finally {
-        // Always clean up worker here (handleCancel no longer terminates it)
-        if (workerRef.current) {
+        // Only the currently active run is allowed to clear shared UI state.
+        if (runId === analysisRunIdRef.current && workerRef.current) {
           workerRef.current.terminate();
           workerRef.current = null;
         }
-        setAnalyzing(null);
-        setAnalysisProgress(null);
+        if (runId === analysisRunIdRef.current) {
+          setAnalyzing(null);
+          setAnalysisProgress(null);
+        }
       }
     },
     [
@@ -262,9 +273,7 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
       // Do NOT call worker.terminate() here — that would permanently hang the promise.
       workerRef.current.postMessage('stop');
     }
-    setAnalyzing(null);
-    setAnalysisProgress(null);
-  }, [cancelAnalysis, setAnalyzing, setAnalysisProgress]);
+  }, [cancelAnalysis]);
 
   const unanalyzedCount = importedGames.filter((g) => !g.analyzed).length;
   const progressPct =
