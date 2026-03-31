@@ -241,6 +241,12 @@ function getNodeRadius(node: TreeNode, maxGameCount: number): number {
   return 12 + ratio * 6; // 12-18px range
 }
 
+function getMoveNumberLabel(node: TreeNode): string {
+  if (node.depth <= 0) return '';
+  const moveNumber = Math.ceil(node.depth / 2);
+  return node.depth % 2 === 1 ? `${moveNumber}.` : `${moveNumber}...`;
+}
+
 /**
  * Build a map of FEN → worst mistake tier from all analyzed games.
  * Also store all mistakes at that FEN for tooltip.
@@ -687,44 +693,10 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
         }
       })
       .on('mouseover', (event: MouseEvent, d: any) => {
-        const mi = mistakeMapRef.current.get(d.data.fen) || null;
-        if (d.data._isOverlay) {
-          setTooltip({
-            node: null,
-            overlayMove: {
-              move: d.data.move,
-              gameNames: d.data._overlayGameNames || [],
-              isWhiteMove: d.data.depth % 2 === 1,
-            },
-            mistakeInfo: mi,
-            x: event.clientX,
-            y: event.clientY,
-            visible: true,
-          });
-          return;
-        }
-        setTooltip({
-          node: d.data,
-          mistakeInfo: mi,
-          x: event.clientX,
-          y: event.clientY,
-          visible: true,
-        });
+        setTooltip({ node: null, x: 0, y: 0, visible: false });
       })
-      .on('mousemove', (event: MouseEvent, d: any) => {
-        if (d.data._isOverlay) {
-          const mi = mistakeMapRef.current.get(d.data.fen) || null;
-          setTooltip((prev) => ({ ...prev, x: event.clientX, y: event.clientY, mistakeInfo: mi }));
-          return;
-        }
-        const mi = mistakeMapRef.current.get(d.data.fen) || null;
-        setTooltip({
-          node: d.data,
-          mistakeInfo: mi,
-          x: event.clientX,
-          y: event.clientY,
-          visible: true,
-        });
+      .on('mousemove', () => {
+        setTooltip({ node: null, x: 0, y: 0, visible: false });
       })
       .on('mouseout', () => {
         setTooltip({ node: null, x: 0, y: 0, visible: false });
@@ -1000,12 +972,26 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       .filter((d: any) => d.data.move !== '')
       .append('text')
       .attr('x', 0)
-      .attr('y', 1)
+      .attr('y', 0)
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'middle')
       .attr('font-family', '"JetBrains Mono", monospace')
-      .attr('font-size', (d: any) => d.data._isOverlay ? '9px' : '10px')
-      .attr('font-weight', '600')
+      .attr('font-size', (d: any) => {
+        if (d.data._isOverlay) return '9px';
+        const moveLength = String(d.data.move || '').length;
+        if (moveLength >= 5) return '8px';
+        if (moveLength >= 4) return '9px';
+        return '10px';
+      })
+      .attr('font-weight', '700')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', (d: any) => {
+        if (d.data._isOverlay) return getOverlayNodeColor(d.data);
+        if (d.data.id === currentNode.id) return '#00d4aa';
+        return getNodeColor(d.data);
+      })
+      .attr('stroke-width', (d: any) => d.data._isOverlay ? 2 : 2.5)
+      .attr('stroke-linejoin', 'round')
       .attr('fill', (d: any) => {
         if (d.data._isOverlay) return getOverlayTextColor(d.data);
         if (d.data.id === currentNode.id) return '#0f0f17';
@@ -1015,21 +1001,19 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       .attr('pointer-events', 'none')
       .text((d: any) => d.data.move);
 
-    // Game count labels (for nodes with significant counts, skip overlay nodes)
+    // Move number labels under nodes
     nodeGroups
-      .filter((d: any) => !d.data._isOverlay && d.data.gameCount > 0)
+      .filter((d: any) => !d.data._isOverlay && d.data.depth > 0)
       .append('text')
       .attr('x', 0)
       .attr('y', (d: any) => getNodeRadius(d.data, maxGameCount) + 12)
       .attr('text-anchor', 'middle')
       .attr('font-family', '"JetBrains Mono", monospace')
       .attr('font-size', '8px')
+      .attr('font-weight', '600')
       .attr('fill', '#6a6a82')
       .attr('pointer-events', 'none')
-      .text((d: any) => {
-        if (d.data.gameCount >= 1000) return `${(d.data.gameCount / 1000).toFixed(1)}k`;
-        return d.data.gameCount.toString();
-      });
+      .text((d: any) => getMoveNumberLabel(d.data));
 
     // ── Viewport correction ──────────────────────────────────────────────
     // Two strategies, checked in order:
