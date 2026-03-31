@@ -549,14 +549,14 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
           </div>
         </div>
 
-        <div className="flex-1 flex items-center justify-center p-6">
-          <div className="w-full max-w-2xl panel p-6">
+        <div className="flex-1 overflow-y-auto px-4 py-4 sm:p-6">
+          <div className="mx-auto w-full max-w-2xl panel p-4 sm:p-6">
             <h3 className="text-text-primary text-lg font-semibold">Start New Training Session</h3>
             <p className="text-text-muted text-sm mt-2">
               Pick one repertoire and one side. This session will only train that selection until you go back.
             </p>
 
-            <div className="mt-6 grid gap-6">
+            <div className="mt-5 grid gap-5 sm:mt-6 sm:gap-6">
               <div>
                 <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Repertoire</div>
                 {files.length === 0 ? (
@@ -564,7 +564,7 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                     No saved repertoires yet. Save a repertoire from the main view first.
                   </div>
                 ) : (
-                  <div className="grid gap-2">
+                  <div className="grid gap-2 max-h-[40vh] overflow-y-auto pr-1 sm:max-h-none sm:overflow-visible sm:pr-0">
                     {files.map((file) => (
                       <button
                         key={file.id}
@@ -604,11 +604,11 @@ export const SpacedRepetitionTrainer: React.FC<{ onClose?: () => void }> = ({ on
                 </div>
               </div>
 
-              <div className="flex justify-end">
+              <div className="sticky bottom-0 -mx-4 mt-1 border-t border-border-subtle bg-bg-primary/95 px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur sm:static sm:mx-0 sm:mt-0 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0 sm:backdrop-blur-none">
                 <button
                   onClick={() => currentFile && startTraining({ fileId: currentFile.id, color: selectedColor })}
                   disabled={!currentFile}
-                  className="btn-primary flex items-center gap-2 px-4 py-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="btn-primary flex w-full items-center justify-center gap-2 px-4 py-3 sm:w-auto sm:justify-start sm:py-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Start Training <ArrowRight className="w-4 h-4" />
                 </button>
