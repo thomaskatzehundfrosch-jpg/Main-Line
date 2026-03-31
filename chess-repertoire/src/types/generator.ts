@@ -162,5 +162,5 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   maiaLevel: 2100,
   maiaApiUrl: 'https://maiachess.com/api/maia_move',
   maiaSfMaxDrop: 1.5,
-  trickynessWeight: 0,
+  trickynessWeight: 5,
 };
