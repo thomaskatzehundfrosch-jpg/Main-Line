@@ -1,7 +1,7 @@
 {
   "name": "Main Line",
   "short_name": "Main Line",
-  "description": "Build chess repertoires, expand your opening tree, analyze lines, and compare your games against your prep with Main Line.",
+  "description": "Main Line is a chess repertoire generator and opening tree analyzer for building prep, studying lines, and comparing your games against your repertoire.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
