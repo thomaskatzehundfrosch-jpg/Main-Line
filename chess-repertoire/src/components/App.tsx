@@ -250,12 +250,17 @@ export const App: React.FC = () => {
   // Handle piece drop on board
   const handleBoardMove = useCallback(
     (from: string, to: string, piece: string): boolean => {
-      // Check if this move exists in the tree
-      const chess = new Chess(currentNode.fen);
       try {
+        const sourceFen = exploreOverlayFen || currentNode.fen;
+        const chess = new Chess(sourceFen);
         const promotion = piece[1] === 'P' && (to[1] === '8' || to[1] === '1') ? 'q' : undefined;
         const move = chess.move({ from, to, promotion });
         if (!move) return false;
+
+        if (exploreOverlayFen) {
+          setExploreOverlayFen(chess.fen());
+          return true;
+        }
 
         // Check if this move exists as a real child of current node
         // (skip any overlay nodes that may have leaked from D3 visualization)
@@ -273,7 +278,7 @@ export const App: React.FC = () => {
         return false;
       }
     },
-    [currentNode, navigateToNode, addMove]
+    [currentNode, exploreOverlayFen, navigateToNode, addMove]
   );
 
   const addSanMoveFromFen = useCallback((san: string) => {
