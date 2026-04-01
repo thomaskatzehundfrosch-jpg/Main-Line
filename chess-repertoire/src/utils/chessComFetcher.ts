@@ -149,6 +149,10 @@ export async function fetchChessComGames(
   onProgress?: (progress: FetchProgress) => void
 ): Promise<RawFetchedGame[]> {
   const months = getMonthsBetween(fromMonth, toMonth);
+  const normalizedUsername = username.toLowerCase();
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
 
   if (months.length === 0) {
     throw new Error('No months in selected range.');
@@ -157,27 +161,45 @@ export async function fetchChessComGames(
     throw new Error('Date range too large (max 24 months).');
   }
 
+  // Validate the account once up front. Monthly archive 404s can also mean
+  // "no archive for this month", so they should not be treated as user-not-found.
+  const profileResp = await fetch(
+    `/chess-api/pub/player/${encodeURIComponent(normalizedUsername)}`,
+    {
+      headers: { Accept: 'application/json' },
+    }
+  );
+
+  if (profileResp.status === 404) {
+    throw new Error(`User "${username}" not found on chess.com.`);
+  }
+  if (!profileResp.ok) {
+    throw new Error(`HTTP ${profileResp.status} validating chess.com user`);
+  }
+
   const allGames: RawFetchedGame[] = [];
   let fetched = 0;
 
   for (const { year, month } of months) {
     const mm = String(month).padStart(2, '0');
+    const isCurrentMonthArchive = year === currentYear && month === currentMonth;
     const url = `/chess-api/pub/player/${encodeURIComponent(
-      username.toLowerCase()
+      normalizedUsername
     )}/games/${year}/${mm}`;
 
     const resp = await fetch(url, {
       headers: { Accept: 'application/json' },
     });
 
-    if (resp.status === 404) {
-      throw new Error(`User "${username}" not found on chess.com.`);
-    }
-    if (resp.status === 500) {
-      // Chess.com returns 500 for the current in-progress month (archive not yet finalised).
-      // Skip silently and continue fetching the remaining months.
+    if ((resp.status === 404 || resp.status === 500) && isCurrentMonthArchive) {
+      // Chess.com can lag on the freshly started month archive. Keep the
+      // default date range, but skip the current month until the archive is ready.
       fetched++;
-      onProgress?.({ fetchedMonths: fetched, totalMonths: months.length, gamesFound: allGames.length });
+      onProgress?.({
+        fetchedMonths: fetched,
+        totalMonths: months.length,
+        gamesFound: allGames.length,
+      });
       continue;
     }
     if (!resp.ok) {
