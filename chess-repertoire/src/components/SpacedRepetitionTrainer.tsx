@@ -420,7 +420,6 @@ export const SpacedRepetitionTrainer: React.FC<{
   const userMoveSan = userMove ? uciToSan(promptFen, userMove) : '';
   const isCorrect = !cardHadMistake && userMove !== null && userMove === expectedMove;
   const autoplayMoveCount = autoplaySequence.length;
-  const boardRenderKey = `${phase}-${currentLineIndex}-${currentPromptIndex}-${replayIndex}-${showSolution ? 'solution' : 'normal'}`;
 
   const beginAutoplayToPrompt = useCallback((
     targetCard: Card,
@@ -984,7 +983,6 @@ export const SpacedRepetitionTrainer: React.FC<{
             </div>
             <div className="shrink-0">
               <Chessboard
-                key={boardRenderKey}
                 position={displayFen}
                 boardWidth={boardWidth}
                 boardOrientation={boardOrientation}
