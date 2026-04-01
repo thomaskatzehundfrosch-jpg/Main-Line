@@ -1003,6 +1003,44 @@ export const SpacedRepetitionTrainer: React.FC<{
             <RotateCcw className="w-3.5 h-3.5" />
             Flip Board
           </button>
+
+          {phase === 'question' && currentCard && !showSolution && (
+            <button
+              onClick={() => setShowSolution(true)}
+              className="btn-secondary mt-3 flex w-full max-w-[min(100%,420px)] items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium lg:hidden"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              Show Solution
+            </button>
+          )}
+
+          {phase === 'question' && currentCard && showSolution && (
+            <button
+              onClick={advanceAfterAnswer}
+              className="btn-primary mt-3 flex w-full max-w-[min(100%,420px)] items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium lg:hidden"
+            >
+              Got it, Next Move <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {phase === 'grading' && currentCard && !isCorrect && (
+            <div className="mt-3 flex w-full max-w-[min(100%,420px)] items-center gap-2 lg:hidden">
+              {!showSolution && (
+                <button
+                  onClick={() => setShowSolution(true)}
+                  className="flex-1 btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+                >
+                  <Eye className="w-3.5 h-3.5" /> Show Solution
+                </button>
+              )}
+              <button
+                onClick={advanceAfterAnswer}
+                className="flex-1 btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+              >
+                <SkipForward className="w-3.5 h-3.5" /> Next Move
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="lg:w-[280px] lg:min-w-[260px] xl:w-[300px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
@@ -1078,7 +1116,7 @@ export const SpacedRepetitionTrainer: React.FC<{
                   <p className="text-text-muted text-xs mt-2">Click or drag a piece to make the move.</p>
                   <button
                     onClick={() => setShowSolution(true)}
-                    className="btn-secondary mt-3 flex items-center gap-1.5 text-xs py-1.5 px-3"
+                    className="btn-secondary mt-3 hidden items-center gap-1.5 px-3 py-1.5 text-xs lg:flex"
                   >
                     <Eye className="w-3.5 h-3.5" />
                     Show Solution
@@ -1091,9 +1129,9 @@ export const SpacedRepetitionTrainer: React.FC<{
                   </p>
                   <button
                     onClick={advanceAfterAnswer}
-                    className="btn-primary mt-3 flex items-center gap-1.5 text-xs py-1.5 px-3"
+                    className="btn-primary mt-3 hidden items-center gap-1.5 px-3 py-1.5 text-xs lg:flex"
                   >
-                    Got it, Next Card <ArrowRight className="w-3.5 h-3.5" />
+                    Got it, Next Move <ArrowRight className="w-3.5 h-3.5" />
                   </button>
                 </>
               )}
@@ -1127,16 +1165,16 @@ export const SpacedRepetitionTrainer: React.FC<{
                     {!showSolution && (
                       <button
                         onClick={() => setShowSolution(true)}
-                        className="flex-1 btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+                        className="flex-1 btn-secondary hidden items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium lg:flex"
                       >
                         <Eye className="w-3.5 h-3.5" /> Show Solution
                       </button>
                     )}
                     <button
                       onClick={advanceAfterAnswer}
-                      className="flex-1 btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+                      className="flex-1 btn-secondary hidden items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium lg:flex"
                     >
-                      <SkipForward className="w-3.5 h-3.5" /> Next Card
+                      <SkipForward className="w-3.5 h-3.5" /> Next Move
                     </button>
                   </div>
                 </div>
