@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { Chess } from 'chess.js';
+import { flushSync } from 'react-dom';
 import type { Arrow, Piece, Square } from 'react-chessboard/dist/chessboard/types';
 import {
   ArrowUpRight,
@@ -740,7 +741,9 @@ export const SpacedRepetitionTrainer: React.FC<{
       if (!move) return false;
 
       const uci = from + to + (isPromotion ? 'q' : '');
-      setPreviewFen(sharedChess.fen());
+      flushSync(() => {
+        setPreviewFen(sharedChess.fen());
+      });
       if (showSolution) {
         if (uci === expectedMove) {
           setShowSolution(false);
