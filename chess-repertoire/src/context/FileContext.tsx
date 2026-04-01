@@ -17,6 +17,66 @@ const STORAGE_KEY = 'main-line-files';
 const ACTIVE_KEY = 'main-line-active-file';
 const DEBOUNCE_MS = 500;
 
+function toTimestamp(value: string | undefined): number {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function choosePreferredFile(localFile: RepertoireFile, remoteFile: RepertoireFile): RepertoireFile {
+  return toTimestamp(remoteFile.updatedAt) >= toTimestamp(localFile.updatedAt)
+    ? remoteFile
+    : localFile;
+}
+
+function mergeLocalAndRemoteFiles(
+  localFiles: RepertoireFile[],
+  remoteFiles: RepertoireFile[]
+): RepertoireFile[] {
+  const mergedById = new Map<string, RepertoireFile>();
+
+  for (const remoteFile of remoteFiles) {
+    mergedById.set(remoteFile.id, remoteFile);
+  }
+
+  for (const localFile of localFiles) {
+    const existing = mergedById.get(localFile.id);
+    mergedById.set(
+      localFile.id,
+      existing ? choosePreferredFile(localFile, existing) : localFile
+    );
+  }
+
+  return Array.from(mergedById.values()).sort(
+    (a, b) => toTimestamp(b.updatedAt) - toTimestamp(a.updatedAt)
+  );
+}
+
+function getFilesToUpload(
+  localFiles: RepertoireFile[],
+  remoteFiles: RepertoireFile[]
+): RepertoireFile[] {
+  const remoteById = new Map(remoteFiles.map((file) => [file.id, file]));
+  return localFiles.filter((localFile) => {
+    const remoteFile = remoteById.get(localFile.id);
+    return !remoteFile || toTimestamp(localFile.updatedAt) > toTimestamp(remoteFile.updatedAt);
+  });
+}
+
+function filesAreEquivalent(a: RepertoireFile[], b: RepertoireFile[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((file, index) => {
+    const other = b[index];
+    return (
+      file.id === other.id &&
+      file.name === other.name &&
+      file.updatedAt === other.updatedAt &&
+      file.createdAt === other.createdAt &&
+      file.nodeCount === other.nodeCount
+    );
+  });
+}
+
 // ─── State ────────────────────────────────────────────────────────────
 export interface FileState {
   files: RepertoireFile[];
@@ -205,35 +265,89 @@ export function FileProvider({ children }: { children: ReactNode }): JSX.Element
   const latestFilesRef = useRef(state.files);
   const { user } = useAuth();
   const prevUserRef = useRef<string | null>(null);
+  const syncInFlightRef = useRef<Promise<void> | null>(null);
 
   // Keep ref in sync so flush handlers always have the latest data
   latestFilesRef.current = state.files;
 
-  // ── Cloud sync: when user signs in, fetch remote files and merge ──────
+  const syncWithCloud = useCallback(
+    async (mode: 'initial' | 'refresh') => {
+      const userId = user?.id;
+      if (!userId || syncInFlightRef.current) {
+        await syncInFlightRef.current;
+        return;
+      }
+
+      const run = (async () => {
+        const localFiles = latestFilesRef.current;
+        const remoteFiles = await fetchRemoteFiles(userId);
+        const mergedFiles = mergeLocalAndRemoteFiles(localFiles, remoteFiles);
+        const filesToUpload =
+          mode === 'initial' ? getFilesToUpload(localFiles, remoteFiles) : [];
+
+        if (!filesAreEquivalent(mergedFiles, latestFilesRef.current)) {
+          dispatch({ type: 'SET_FILES', files: mergedFiles });
+          saveFiles(mergedFiles);
+        }
+
+        if (filesToUpload.length > 0) {
+          await pushAllFilesToCloud(userId, filesToUpload);
+        }
+      })()
+        .catch((error) => {
+          logger.warn(
+            'storage',
+            'Could not refresh repertoire files from cloud.',
+            error instanceof Error ? error.message : String(error)
+          );
+        })
+        .finally(() => {
+          syncInFlightRef.current = null;
+        });
+
+      syncInFlightRef.current = run;
+      await run;
+    },
+    [user]
+  );
+
+  // ── Cloud sync: initial hydrate when a signed-in user becomes available ───
   useEffect(() => {
     const userId = user?.id ?? null;
     if (userId && userId !== prevUserRef.current) {
-      // New sign-in: push local files up, then fetch merged set from cloud
-      (async () => {
-        const localFiles = loadFiles();
-        if (localFiles.length > 0) {
-          await pushAllFilesToCloud(userId, localFiles);
-        }
-        const remoteFiles = await fetchRemoteFiles(userId);
-        if (remoteFiles.length > 0) {
-          // Merge: remote wins for any overlapping IDs (more recent)
-          const localById = new Map(localFiles.map((f) => [f.id, f]));
-          const merged: RepertoireFile[] = [...remoteFiles];
-          for (const [id, lf] of localById) {
-            if (!merged.find((r) => r.id === id)) merged.push(lf);
-          }
-          dispatch({ type: 'SET_FILES', files: merged });
-          saveFiles(merged);
-        }
-      })();
+      void syncWithCloud('initial');
     }
     prevUserRef.current = userId;
-  }, [user]);
+  }, [user, syncWithCloud]);
+
+  // ── Refresh cloud state when the tab regains focus or the network returns ─
+  useEffect(() => {
+    if (!user) return;
+
+    const handleWindowFocus = () => {
+      void syncWithCloud('refresh');
+    };
+
+    const handleOnline = () => {
+      void syncWithCloud('refresh');
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void syncWithCloud('refresh');
+      }
+    };
+
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [user, syncWithCloud]);
 
   // ── Debounced localStorage persistence ───────────────────────────────
   useEffect(() => {
