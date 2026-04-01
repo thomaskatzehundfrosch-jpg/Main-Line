@@ -269,14 +269,8 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
       setGroups(grouped);
       setTotalFetched(rawGames.length);
 
-      // Select all games by default
-      const allIds = new Set<string>();
-      for (const group of grouped) {
-        for (const game of group.games) {
-          allIds.add(game.id);
-        }
-      }
-      setSelectedIds(allIds);
+      // Start deselected so larger imports stay intentional.
+      setSelectedIds(new Set());
     } catch (err: any) {
       setError(err.message || 'Failed to fetch games.');
     } finally {
@@ -345,6 +339,14 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
     [sortedGroups]
   );
 
+  const visibleGamesByNewest = useMemo(
+    () =>
+      sortedGroups
+        .flatMap((group) => group.games)
+        .sort((a, b) => (b.raw.end_time ?? 0) - (a.raw.end_time ?? 0)),
+    [sortedGroups]
+  );
+
   // ─── Select / Deselect All ────────────────────────────────────────────
 
   const allVisibleIds = useMemo(() => {
@@ -369,6 +371,15 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
       setSelectedIds(new Set(allVisibleIds));
     }
   }, [allSelected, allVisibleIds]);
+
+  const selectNewest = useCallback(
+    (count: number) => {
+      setSelectedIds(
+        new Set(visibleGamesByNewest.slice(0, count).map((game) => game.id))
+      );
+    },
+    [visibleGamesByNewest]
+  );
 
   // ─── Import selected games ──────────────────────────────────────────────
 
@@ -637,8 +648,27 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
                     {totalGamesInResults} games · {sortedGroups.length} openings
                     · {selectedIds.size} selected
                   </span>
+                  {selectedIds.size > 30 && (
+                    <span className="text-xs font-mono text-amber-400">
+                      Warning: more than 30 selected may get slow
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => selectNewest(10)}
+                    disabled={visibleGamesByNewest.length === 0}
+                    className="text-xs font-mono px-3 py-1 rounded border border-border-subtle text-text-secondary hover:border-accent-teal hover:text-accent-teal disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  >
+                    Newest 10
+                  </button>
+                  <button
+                    onClick={() => selectNewest(20)}
+                    disabled={visibleGamesByNewest.length === 0}
+                    className="text-xs font-mono px-3 py-1 rounded border border-border-subtle text-text-secondary hover:border-accent-teal hover:text-accent-teal disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                  >
+                    Newest 20
+                  </button>
                   <button
                     onClick={toggleSelectAll}
                     className={`text-xs font-mono px-3 py-1 rounded border transition-all ${
@@ -872,9 +902,16 @@ export const GameFetcherPage: React.FC<GameFetcherPageProps> = ({ onClose }) => 
 
               {/* Import bar */}
               <div className="sticky bottom-0 bg-bg-primary border-t border-border-subtle py-3 flex items-center justify-between">
-                <span className="text-xs font-mono text-text-muted">
-                  {selectedIds.size} of {totalGamesInResults} games selected
-                </span>
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-mono text-text-muted">
+                    {selectedIds.size} of {totalGamesInResults} games selected
+                  </span>
+                  {selectedIds.size > 30 && (
+                    <span className="text-[10px] font-mono text-amber-400">
+                      Large imports above 30 games can become heavy.
+                    </span>
+                  )}
+                </div>
                 <div className="flex gap-2">
                   <button onClick={onClose} className="btn-secondary">
                     Cancel
