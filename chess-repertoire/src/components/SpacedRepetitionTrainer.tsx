@@ -982,7 +982,7 @@ export const SpacedRepetitionTrainer: React.FC<{
                 customBoardStyle={{ borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)' }}
                 customDropSquareStyle={{ boxShadow: `inset 0 0 1px 6px ${themeColors.dark}80` }}
                 customSquareStyles={clickStyles}
-                animationDuration={120}
+                animationDuration={0}
                 customArrows={arrows.length > 0 ? arrows : undefined}
                 areArrowsAllowed={false}
               />
