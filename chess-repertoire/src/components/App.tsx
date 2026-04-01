@@ -435,13 +435,13 @@ export const App: React.FC = () => {
 
             <div className="rounded border border-accent-teal/30 bg-accent-teal/5 px-2 py-2">
               <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">Lichess</div>
-              <div className="mt-1 flex items-start justify-between gap-2">
+              <div className="mt-1 flex flex-wrap items-start justify-between gap-2">
                 <span className="min-w-0 flex-1 break-words text-sm font-semibold text-accent-teal">
                   {lichessMostLikelyMove.san}
                 </span>
                 <button
                   onClick={handleAddMostLikelyMove}
-                  className="btn-primary flex shrink-0 items-center gap-1 px-2 py-1 text-[10px]"
+                  className="btn-primary flex shrink-0 items-center gap-1 self-start px-2 py-1 text-[10px]"
                   title="Add most likely move to this node"
                 >
                   <Plus className="w-3 h-3" />
