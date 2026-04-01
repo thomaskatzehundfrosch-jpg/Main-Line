@@ -361,11 +361,6 @@ export const App: React.FC = () => {
     setSettingsOpen(true);
   }, []);
 
-  const handleAddEngineMove = useCallback(() => {
-    if (!engineBestMoveSan) return;
-    addSanMoveFromFen(engineBestMoveSan);
-  }, [addSanMoveFromFen, engineBestMoveSan]);
-
   const handleAddMostLikelyMove = useCallback(() => {
     if (!lichessMostLikelyMove) return;
     addSanMoveFromFen(lichessMostLikelyMove.san);
@@ -393,12 +388,6 @@ export const App: React.FC = () => {
 
   const mostLikelyMovePanel = mostLikelyMoveState?.fen === currentNode.fen ? (
     <div className="border-t border-border-subtle bg-bg-primary px-3 py-2">
-      {engineAndLichessAgree && (
-        <div className="text-[10px] font-mono text-accent-green">
-          Engine and Lichess agree
-        </div>
-      )}
-
       {mostLikelyMoveState.error ? (
         <div className="mt-2 space-y-2">
           <div className="text-xs text-accent-red">{mostLikelyMoveState.error}</div>
@@ -413,26 +402,7 @@ export const App: React.FC = () => {
         </div>
       ) : lichessMostLikelyMove ? (
         <>
-          <div className="mt-2 flex flex-col gap-2">
-            <div className="rounded border border-border-subtle bg-bg-surface px-2 py-2">
-              <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">Engine</div>
-              <div className="mt-1 flex items-start justify-between gap-2">
-                <span className="min-w-0 flex-1 break-words text-sm font-semibold text-text-primary">
-                  {engineBestMoveSan ?? 'No line yet'}
-                </span>
-                {engineBestMoveSan && (
-                  <button
-                    onClick={handleAddEngineMove}
-                    className="btn-secondary flex shrink-0 items-center gap-1 px-2 py-1 text-[10px]"
-                    title="Add engine move to this node"
-                  >
-                    <Plus className="w-3 h-3" />
-                    Add
-                  </button>
-                )}
-              </div>
-            </div>
-
+          <div className="mt-2">
             <div className="rounded border border-accent-teal/30 bg-accent-teal/5 px-2 py-2">
               <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">Lichess</div>
               <div className="mt-1 flex flex-wrap items-start justify-between gap-2">
