@@ -140,31 +140,6 @@ function isPositionTactical(fen: string): boolean {
   }
 }
 
-function countQueens(fen: string): number {
-  const boardFen = fen.split(' ')[0] || '';
-  let queens = 0;
-  for (const ch of boardFen) {
-    if (ch === 'q' || ch === 'Q') queens++;
-  }
-  return queens;
-}
-
-function classifyQueenPreference(fromFen: string, san: string): boolean | null {
-  if (countQueens(fromFen) !== 2) return null;
-  const nextFen = makeMove(fromFen, san);
-  if (!nextFen) return null;
-  return countQueens(nextFen) === 2;
-}
-
-function applyKeepQueensOnBonus(
-  baseScore: number,
-  keepsQueensOn: boolean | null,
-  enabled: boolean
-): number {
-  if (!enabled || keepsQueensOn == null) return baseScore;
-  return baseScore + (keepsQueensOn ? 0.2 : -0.15);
-}
-
 /** Standard piece values in pawns. */
 const PIECE_VALUES: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
 
@@ -344,7 +319,6 @@ export async function buildTree(
     const multiPvDepth = Math.min(sfAnalysisDepth, 15);
     const styleValue = settings.styleValue ?? 0;
     const tw = settings.trickynessWeight ?? 0;
-    const keepQueensOn = settings.tryKeepQueensOn ?? false;
 
     // How many candidates we ultimately want
     const targetPV = isOurTurn
@@ -354,8 +328,7 @@ export async function buildTree(
     // When trickyness is active, approve up to 2 extra candidates beyond
     // targetPV so the combined style+trickyness sort has a real choice to make.
     const trickExtra = (isOurTurn && tw > 0) ? Math.min(2, targetPV) : 0;
-    const queenExtra = (isOurTurn && keepQueensOn) ? Math.min(2, targetPV) : 0;
-    const approvalTarget = targetPV + trickExtra + queenExtra;
+    const approvalTarget = targetPV + trickExtra;
 
     // Style-adjusted eval threshold (only applies to our moves)
     const effectiveThreshold = isOurTurn
@@ -369,7 +342,7 @@ export async function buildTree(
     const skipUpfrontSF = analysisMode === 'lichess+stockfish' && isOurTurn;
 
     // Request extra SF PVs when style OR trickyness needs a wider candidate pool
-    const sfRequestPV = isOurTurn && (styleValue !== 0 || tw > 0 || keepQueensOn)
+    const sfRequestPV = isOurTurn && (styleValue !== 0 || tw > 0)
       ? Math.min(5, targetPV + 2)
       : targetPV;
 
@@ -400,7 +373,6 @@ export async function buildTree(
               uci: tm.uci,
               _sfEval: tm.eval,
               _sfDepth: tm.depth,
-              _keepsQueensOn: isOurTurn ? classifyQueenPreference(fen, san) : null,
             });
           }
         } catch (err: any) {
@@ -509,7 +481,6 @@ export async function buildTree(
               _sfEval: evalPawns,
               _sfDepth: sfAnalysisDepth,
               _lichess: lc._lichess,
-              _keepsQueensOn: classifyQueenPreference(fen, lc.san),
             });
             usedSans.add(lc.san);
           } catch (err: any) {
@@ -537,7 +508,6 @@ export async function buildTree(
                   _sfEval: tm.eval,
                   _sfDepth: tm.depth,
                   _lichess: null,
-                  _keepsQueensOn: classifyQueenPreference(fen, san),
                 });
                 usedSans.add(san);
               }
@@ -560,7 +530,6 @@ export async function buildTree(
             _sfEval: sc._sfEval,
             _sfDepth: sc._sfDepth,
             _lichess: lMatch ? lMatch._lichess : null,
-            _keepsQueensOn: null,
           });
         }
         // Add popular Lichess moves not covered by SF
@@ -640,27 +609,20 @@ export async function buildTree(
       }
     }
 
-    // ── Combined style + trickyness + keep-queens-on re-ranking ────────────
-    // This remains a soft preference layer on top of the existing eval filter.
-    if (isOurTurn && (styleValue !== 0 || tw > 0 || keepQueensOn) && candidates.length > 1) {
+    // ── Combined style + trickyness re-ranking ───────────────────────────────
+    // Replaces the old style-only sort; no-op when both are neutral (style=0,
+    // trickyness=0) or only one candidate is available.
+    if (isOurTurn && (styleValue !== 0 || tw > 0) && candidates.length > 1) {
       candidates = [...candidates].sort((a, b) => {
-        const sA = applyKeepQueensOnBonus(
-          applyTrickynessBonus(
-            styleScore(a, styleValue, color),
-            a._trickynessErrorRate ?? null,
-            tw
-          ),
-          a._keepsQueensOn ?? null,
-          keepQueensOn
+        const sA = applyTrickynessBonus(
+          styleScore(a, styleValue, color),
+          a._trickynessErrorRate ?? null,
+          tw
         );
-        const sB = applyKeepQueensOnBonus(
-          applyTrickynessBonus(
-            styleScore(b, styleValue, color),
-            b._trickynessErrorRate ?? null,
-            tw
-          ),
-          b._keepsQueensOn ?? null,
-          keepQueensOn
+        const sB = applyTrickynessBonus(
+          styleScore(b, styleValue, color),
+          b._trickynessErrorRate ?? null,
+          tw
         );
         return sB - sA;
       });
