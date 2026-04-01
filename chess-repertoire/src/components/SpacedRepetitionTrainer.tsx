@@ -534,7 +534,6 @@ export const SpacedRepetitionTrainer: React.FC<{
     setSelectedSquare(null);
     setLegalMoves([]);
     setShowSolution(false);
-    setPreviewFen(null);
   }, [currentLineIndex, currentPromptIndex]);
 
   useEffect(() => {
