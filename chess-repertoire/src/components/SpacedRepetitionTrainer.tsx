@@ -743,12 +743,16 @@ export const SpacedRepetitionTrainer: React.FC<{
       if (!move) return false;
 
       const uci = from + to + (isPromotion ? 'q' : '');
-      if (showSolution) {
+      const wasShowingSolution = showSolution;
+      if (wasShowingSolution) {
+        setShowSolution(false);
+      }
+
+      if (wasShowingSolution) {
         if (uci === expectedMove) {
           flushSync(() => {
             setPreviewFen(sharedChess.fen());
           });
-          setShowSolution(false);
           advanceAfterAnswer();
           return true;
         }
@@ -768,7 +772,6 @@ export const SpacedRepetitionTrainer: React.FC<{
         flushSync(() => {
           setPreviewFen(sharedChess.fen());
         });
-        setShowSolution(false);
         advanceAfterAnswer();
         return true;
       }
