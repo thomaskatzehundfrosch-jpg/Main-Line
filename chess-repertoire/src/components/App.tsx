@@ -141,6 +141,7 @@ export const App: React.FC = () => {
   const [mostLikelyMoveState, setMostLikelyMoveState] = useState<MostLikelyMoveState | null>(null);
   const [isFetchingMostLikelyMove, setIsFetchingMostLikelyMove] = useState(false);
   const [showMostLikelyMoveSettings, setShowMostLikelyMoveSettings] = useState(false);
+  const [treeExploreMode, setTreeExploreMode] = useState(false);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -165,6 +166,9 @@ export const App: React.FC = () => {
   // Cleared automatically whenever currentNode changes (real navigation).
   const [exploreOverlayFen, setExploreOverlayFen] = useState<string | null>(null);
   useEffect(() => { setExploreOverlayFen(null); }, [currentNode]);
+  useEffect(() => {
+    if (!treeExploreMode) setExploreOverlayFen(null);
+  }, [treeExploreMode]);
 
   /**
    * Compute all FENs for a game's moves so we can step through them.
@@ -257,7 +261,7 @@ export const App: React.FC = () => {
         const move = chess.move({ from, to, promotion });
         if (!move) return false;
 
-        if (exploreOverlayFen) {
+        if (treeExploreMode || exploreOverlayFen) {
           setExploreOverlayFen(chess.fen());
           return true;
         }
@@ -278,7 +282,7 @@ export const App: React.FC = () => {
         return false;
       }
     },
-    [currentNode, exploreOverlayFen, navigateToNode, addMove]
+    [currentNode, exploreOverlayFen, treeExploreMode, navigateToNode, addMove]
   );
 
   const addSanMoveFromFen = useCallback((san: string) => {
@@ -1007,6 +1011,7 @@ export const App: React.FC = () => {
                     importedGames={games.importedGames}
                     showGameOverlay={games.showGameOverlay}
                     onExploreFen={setExploreOverlayFen}
+                    onExploreModeChange={setTreeExploreMode}
                   />
                 </div>
               </div>
@@ -1318,6 +1323,7 @@ export const App: React.FC = () => {
               importedGames={games.importedGames}
               showGameOverlay={games.showGameOverlay}
               onExploreFen={setExploreOverlayFen}
+              onExploreModeChange={setTreeExploreMode}
             />
           </div>
         </div>
