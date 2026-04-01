@@ -643,6 +643,21 @@ export const SpacedRepetitionTrainer: React.FC<{
     }
   }, [displayFen]);
 
+  const canDragPiece = useCallback(({ piece, sourceSquare }: { piece: Piece; sourceSquare: Square }) => {
+    if (!(phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution)))) return false;
+
+    try {
+      sharedChess.load(displayFen);
+      const boardPiece = sharedChess.get(sourceSquare);
+      if (!boardPiece) return false;
+
+      const normalizedPiece = `${boardPiece.color}${boardPiece.type.toUpperCase()}`;
+      return normalizedPiece === piece && boardPiece.color === sharedChess.turn();
+    } catch {
+      return false;
+    }
+  }, [displayFen, isCorrect, phase, showSolution]);
+
   const advanceAfterAnswer = useCallback(() => {
     if (!currentCard || !expectedMove) return;
     setShowSolution(false);
@@ -968,7 +983,7 @@ export const SpacedRepetitionTrainer: React.FC<{
                 onPieceDrop={handlePieceDrop}
                 onSquareClick={handleSquareClick}
                 arePiecesDraggable
-                isDraggablePiece={() => phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution))}
+                isDraggablePiece={canDragPiece}
                 customDarkSquareStyle={{ backgroundColor: themeColors.dark }}
                 customLightSquareStyle={{ backgroundColor: themeColors.light }}
                 customBoardStyle={{ borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)' }}
