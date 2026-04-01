@@ -967,7 +967,7 @@ export const SpacedRepetitionTrainer: React.FC<{
                 boardOrientation={boardOrientation}
                 onPieceDrop={handlePieceDrop}
                 onSquareClick={handleSquareClick}
-                onPieceClick={(_piece, square) => handleSquareClick(square)}
+                arePiecesDraggable
                 isDraggablePiece={() => phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution))}
                 customDarkSquareStyle={{ backgroundColor: themeColors.dark }}
                 customLightSquareStyle={{ backgroundColor: themeColors.light }}
