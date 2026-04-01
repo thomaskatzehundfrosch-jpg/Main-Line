@@ -535,7 +535,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     setLegalMoves([]);
     setShowSolution(false);
     setPreviewFen(null);
-  }, [currentLineIndex, currentPromptIndex, phase]);
+  }, [currentLineIndex, currentPromptIndex]);
 
   useEffect(() => {
     if (engine.enabled && phase !== 'replay' && currentCard) engine.analyze(displayFen);
