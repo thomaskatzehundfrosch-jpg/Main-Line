@@ -858,10 +858,6 @@ export const SpacedRepetitionTrainer: React.FC<{
         <div className="flex-1 overflow-y-auto px-4 py-4 sm:p-6">
           <div className="mx-auto w-full max-w-2xl panel p-4 sm:p-6">
             <h3 className="text-text-primary text-lg font-semibold">Start New Training Session</h3>
-            <p className="text-text-muted text-sm mt-2">
-              Pick one repertoire and one side. This session will only train that selection until you go back.
-            </p>
-
             <div className="mt-5 grid gap-5 sm:mt-6 sm:gap-6">
               <div>
                 <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Repertoire</div>
