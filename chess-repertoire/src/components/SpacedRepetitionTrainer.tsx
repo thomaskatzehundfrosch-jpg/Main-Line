@@ -347,6 +347,7 @@ export const SpacedRepetitionTrainer: React.FC<{
   const [autoplaySequence, setAutoplaySequence] = useState<string[]>([]);
   const [autoplayStepIndex, setAutoplayStepIndex] = useState(0);
   const [autoplayFen, setAutoplayFen] = useState<string | null>(null);
+  const [previewFen, setPreviewFen] = useState<string | null>(null);
 
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [boardWidth, setBoardWidth] = useState(400);
@@ -408,7 +409,7 @@ export const SpacedRepetitionTrainer: React.FC<{
   const currentPrompt = promptSteps[currentPromptIndex] ?? null;
   const displayFen = phase === 'replay'
     ? (sessionHistory[replayIndex]?.reviewFen ?? INITIAL_FEN)
-    : (autoplayFen ?? currentPrompt?.reviewFen ?? currentCard?.front ?? INITIAL_FEN);
+    : (previewFen ?? autoplayFen ?? currentPrompt?.reviewFen ?? currentCard?.front ?? INITIAL_FEN);
   const expectedMove = currentPrompt?.expectedMove ?? currentCard?.back ?? '';
   const isWhiteToMove = displayFen.split(' ')[1] === 'w';
   const correctMoveSan = expectedMove ? uciToSan(displayFen, expectedMove) : '';
@@ -431,6 +432,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     setShowSolution(false);
     setSelectedSquare(null);
     setLegalMoves([]);
+    setPreviewFen(null);
 
     const targetPromptSteps = buildPromptSteps(targetCard, color);
     const targetReviewFen = targetPromptSteps[targetPromptIndex]?.reviewFen ?? targetCard.front;
@@ -478,6 +480,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     setAutoplaySequence([]);
     setAutoplayStepIndex(0);
     setAutoplayFen(null);
+    setPreviewFen(null);
     setStats({ correct: 0, incorrect: 0 });
     setCompletedSessionStats(null);
     setComparisonLastSessionStats(loadLastSessionStats({
@@ -519,6 +522,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     setAutoplaySequence([]);
     setAutoplayStepIndex(0);
     setAutoplayFen(null);
+    setPreviewFen(null);
     setStats({ correct: 0, incorrect: 0 });
     setCompletedSessionStats(null);
     setPhase('idle');
@@ -529,6 +533,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     setSelectedSquare(null);
     setLegalMoves([]);
     setShowSolution(false);
+    setPreviewFen(null);
   }, [currentLineIndex, currentPromptIndex, phase]);
 
   useEffect(() => {
@@ -735,6 +740,7 @@ export const SpacedRepetitionTrainer: React.FC<{
       if (!move) return false;
 
       const uci = from + to + (isPromotion ? 'q' : '');
+      setPreviewFen(sharedChess.fen());
       if (showSolution) {
         if (uci === expectedMove) {
           setShowSolution(false);
