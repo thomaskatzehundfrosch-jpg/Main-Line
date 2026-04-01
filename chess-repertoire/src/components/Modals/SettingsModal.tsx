@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   X,
   Monitor,
@@ -6,24 +6,34 @@ import {
   BookOpen,
   Sliders,
   RotateCcw,
+  Link2,
 } from 'lucide-react';
 import {
   useSettings,
   type BoardTheme,
   type PracticalMoveRating,
 } from '../../context/SettingsContext';
+import {
+  clearStoredToken,
+  getStoredToken,
+  getStoredUsername,
+  startOAuthFlow,
+} from '../../utils/lichessAuth';
 
 interface SettingsModalProps {
   onClose: () => void;
+  initialTab?: Tab;
 }
 
-type Tab = 'board' | 'engine' | 'repertoire' | 'display';
+export type SettingsTab = 'board' | 'engine' | 'repertoire' | 'display' | 'lichess';
+type Tab = SettingsTab;
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'board', label: 'Board', icon: <Monitor className="w-4 h-4" /> },
   { id: 'engine', label: 'Engine', icon: <Cpu className="w-4 h-4" /> },
   { id: 'repertoire', label: 'Repertoire', icon: <BookOpen className="w-4 h-4" /> },
   { id: 'display', label: 'Display', icon: <Sliders className="w-4 h-4" /> },
+  { id: 'lichess', label: 'Lichess', icon: <Link2 className="w-4 h-4" /> },
 ];
 
 const BOARD_THEMES: { id: BoardTheme; label: string; light: string; dark: string }[] = [
@@ -117,12 +127,39 @@ function NumberStepper({
   );
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, initialTab = 'board' }) => {
   const { settings, updateSetting, resetSettings } = useSettings();
-  const [activeTab, setActiveTab] = useState<Tab>('board');
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [lichessUsername, setLichessUsername] = useState<string | null>(getStoredUsername);
+  const [lichessConnected, setLichessConnected] = useState<boolean>(() => !!getStoredToken());
 
   const maxThreads = Math.max(1, Math.min(16, navigator?.hardwareConcurrency ?? 4));
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
+
+  useEffect(() => {
+    const syncAuthState = () => {
+      setLichessConnected(!!getStoredToken());
+      setLichessUsername(getStoredUsername());
+    };
+
+    syncAuthState();
+    window.addEventListener('lichess-auth-updated', syncAuthState);
+    return () => window.removeEventListener('lichess-auth-updated', syncAuthState);
+  }, []);
+
+  const handleLichessConnect = useCallback(() => {
+    startOAuthFlow();
+  }, []);
+
+  const handleLichessDisconnect = useCallback(() => {
+    clearStoredToken();
+    setLichessConnected(false);
+    setLichessUsername(null);
+  }, []);
 
   return (
     <div
@@ -332,22 +369,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   />
                 </SettingRow>
 
-                <SettingRow
-                  label="Most Likely Move Rating"
-                  description='Used only for the "Most Likely Move?" button. Does not affect repertoire generation.'
-                >
-                  <select
-                    value={settings.mostLikelyMoveRating}
-                    onChange={(e) => updateSetting('mostLikelyMoveRating', Number(e.target.value) as PracticalMoveRating)}
-                    className="bg-bg-primary border border-border-subtle rounded-md px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent-teal/50"
-                  >
-                    {PRACTICAL_MOVE_RATINGS.map((rating) => (
-                      <option key={rating} value={rating}>
-                        {rating}+
-                      </option>
-                    ))}
-                  </select>
-                </SettingRow>
               </div>
             )}
 
@@ -384,6 +405,70 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     checked={settings.compactMoveList}
                     onChange={(v) => updateSetting('compactMoveList', v)}
                   />
+                </SettingRow>
+              </div>
+            )}
+
+            {activeTab === 'lichess' && (
+              <div>
+                <p className="text-xs text-text-muted font-mono uppercase tracking-wider py-2 mb-1">Lichess Connection</p>
+
+                <div className="rounded-lg border border-border-subtle bg-bg-panel px-4 py-4 mb-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-text-primary">Account Access</div>
+                      <div className="mt-1 text-xs text-text-muted">
+                        Connect your Lichess account to enable the Most Likely Move feature and Lichess-powered repertoire generation.
+                      </div>
+                    </div>
+                    <div className={`rounded-full px-2 py-1 text-[10px] font-mono uppercase tracking-wide ${
+                      lichessConnected
+                        ? 'bg-accent-green/15 text-accent-green'
+                        : 'bg-bg-hover text-text-muted'
+                    }`}>
+                      {lichessConnected ? 'Connected' : 'Not connected'}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-3">
+                    {lichessConnected ? (
+                      <>
+                        <div className="text-sm text-text-primary">
+                          Signed in as <span className="font-semibold">{lichessUsername ?? 'Lichess user'}</span>
+                        </div>
+                        <button
+                          onClick={handleLichessDisconnect}
+                          className="btn-secondary text-sm px-3 py-1.5"
+                        >
+                          Disconnect
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={handleLichessConnect}
+                        className="btn-primary text-sm px-3 py-1.5"
+                      >
+                        Connect Lichess
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <SettingRow
+                  label="Most Likely Move Rating"
+                  description='Used for the "Most Likely Move?" button when querying Lichess player data.'
+                >
+                  <select
+                    value={settings.mostLikelyMoveRating}
+                    onChange={(e) => updateSetting('mostLikelyMoveRating', Number(e.target.value) as PracticalMoveRating)}
+                    className="bg-bg-primary border border-border-subtle rounded-md px-2 py-1 text-sm text-text-primary focus:outline-none focus:border-accent-teal/50"
+                  >
+                    {PRACTICAL_MOVE_RATINGS.map((rating) => (
+                      <option key={rating} value={rating}>
+                        {rating}+
+                      </option>
+                    ))}
+                  </select>
                 </SettingRow>
               </div>
             )}

@@ -151,7 +151,7 @@ async function fetchLichess(
     // Non-retryable errors — bail out immediately
     if (res.status === 401) {
       throw new Error(
-        'Lichess API returned 401 (not retrying): not connected. Use the "Connect Lichess" button in settings.'
+        'Lichess API returned 401 (not retrying): not connected. Open Settings -> Lichess to connect your account.'
       );
     }
     if (res.status === 400 || res.status === 403 || res.status === 404) {

@@ -16,6 +16,7 @@ import { RepertoireFilesPanel } from './RepertoireFilesPanel';
 import { ImportModal } from './Modals/ImportModal';
 import { ExportModal } from './Modals/ExportModal';
 import { SettingsModal } from './Modals/SettingsModal';
+import type { SettingsTab } from './Modals/SettingsModal';
 import { useRepertoireTree } from '../hooks/useRepertoireTree';
 import { useEngine } from '../hooks/useEngine';
 import { usePgnParser } from '../hooks/usePgnParser';
@@ -40,6 +41,7 @@ import { GameFetcherPage } from './GameFetcher/GameFetcherPage';
 import { GeneratorPage } from './Generator/GeneratorPage';
 import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
 import { handleOAuthCallback } from '../utils/lichessAuth';
+import { getStoredToken } from '../utils/lichessAuth';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useGenerator } from '../hooks/useGenerator';
 import { useSettings, type PracticalMoveRating } from '../context/SettingsContext';
@@ -124,6 +126,7 @@ export const App: React.FC = () => {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('board');
   const [gameFetcherOpen, setGameFetcherOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [trainerOpen, setTrainerOpen] = useState(false);
@@ -304,6 +307,15 @@ export const App: React.FC = () => {
   const engineAndLichessAgree = !!engineBestMoveSan && !!lichessMostLikelyMove && engineBestMoveSan === lichessMostLikelyMove.san;
 
   const handleFetchMostLikelyMove = useCallback(async () => {
+    if (!getStoredToken()) {
+      setMostLikelyMoveState({
+        fen: currentNode.fen,
+        move: null,
+        error: 'Connect your Lichess account to use Most Likely Move.',
+      });
+      return;
+    }
+
     setIsFetchingMostLikelyMove(true);
     setMostLikelyMoveState({
       fen: currentNode.fen,
@@ -344,6 +356,11 @@ export const App: React.FC = () => {
     }
   }, [currentNode.fen, settings.mostLikelyMoveRating]);
 
+  const openLichessSettings = useCallback(() => {
+    setSettingsInitialTab('lichess');
+    setSettingsOpen(true);
+  }, []);
+
   const handleAddEngineMove = useCallback(() => {
     if (!engineBestMoveSan) return;
     addSanMoveFromFen(engineBestMoveSan);
@@ -383,7 +400,17 @@ export const App: React.FC = () => {
       )}
 
       {mostLikelyMoveState.error ? (
-        <div className="mt-2 text-xs text-accent-red">{mostLikelyMoveState.error}</div>
+        <div className="mt-2 space-y-2">
+          <div className="text-xs text-accent-red">{mostLikelyMoveState.error}</div>
+          {mostLikelyMoveState.error.includes('Connect your Lichess account') && (
+            <button
+              onClick={openLichessSettings}
+              className="btn-secondary px-2 py-1 text-[10px]"
+            >
+              Open Lichess settings
+            </button>
+          )}
+        </div>
       ) : lichessMostLikelyMove ? (
         <>
           <div className="mt-2 flex flex-col gap-2">
@@ -817,12 +844,12 @@ export const App: React.FC = () => {
         onGameFetcher={() => { setGeneratorOpen(false); setTrainerOpen(false); setGameFetcherOpen(true); }}
         onGenerator={() => { setGameFetcherOpen(false); setTrainerOpen(false); setGeneratorOpen(true); }}
         onTrainer={() => { setGameFetcherOpen(false); setGeneratorOpen(false); setTrainerOpen(true); }}
-        onSettings={() => setSettingsOpen(true)}
+        onSettings={() => { setSettingsInitialTab('board'); setSettingsOpen(true); }}
         activeFileName={getActiveFile()?.name ?? null}
         generatorProgress={generator.progress}
         isGenerating={generator.isGenerating}
       />
-      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsModal initialTab={settingsInitialTab} onClose={() => setSettingsOpen(false)} />}
 
       {/* GeneratorPage: always mounted so in-progress generation keeps running
           when the user navigates back to the main repertoire view. Hidden via

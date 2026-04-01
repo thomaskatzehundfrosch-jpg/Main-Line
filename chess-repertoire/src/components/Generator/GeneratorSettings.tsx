@@ -533,7 +533,9 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                     className="w-full py-3 rounded border border-accent-blue text-accent-blue font-mono text-sm hover:bg-accent-blue/10 transition-colors flex flex-col items-center gap-1"
                   >
                     <span className="font-semibold">Connect Lichess</span>
-                    <span className="text-[10px] text-text-secondary leading-tight">for generation lichess connect is necessary</span>
+                    <span className="text-[10px] text-text-secondary leading-tight">
+                      Required for Lichess-powered generation. You can also manage this in Settings → Lichess.
+                    </span>
                   </button>
                 )}
               </div>
