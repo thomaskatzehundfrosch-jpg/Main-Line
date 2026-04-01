@@ -740,11 +740,11 @@ export const SpacedRepetitionTrainer: React.FC<{
       if (!move) return false;
 
       const uci = from + to + (isPromotion ? 'q' : '');
-      flushSync(() => {
-        setPreviewFen(sharedChess.fen());
-      });
       if (showSolution) {
         if (uci === expectedMove) {
+          flushSync(() => {
+            setPreviewFen(sharedChess.fen());
+          });
           setShowSolution(false);
           advanceAfterAnswer();
           return true;
@@ -753,6 +753,7 @@ export const SpacedRepetitionTrainer: React.FC<{
       }
 
       if (uci !== expectedMove) {
+        setPreviewFen(null);
         setUserMove((prev) => prev ?? uci);
         setCardHadMistake(true);
         setLineHadMistake(true);
@@ -761,11 +762,17 @@ export const SpacedRepetitionTrainer: React.FC<{
       }
 
       if (cardHadMistake) {
+        flushSync(() => {
+          setPreviewFen(sharedChess.fen());
+        });
         setShowSolution(false);
         advanceAfterAnswer();
         return true;
       }
 
+      flushSync(() => {
+        setPreviewFen(sharedChess.fen());
+      });
       setUserMove(uci);
       setPhase('grading');
       return true;
