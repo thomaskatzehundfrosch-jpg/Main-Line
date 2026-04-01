@@ -51,6 +51,8 @@ export interface GeneratorSettings {
    *   5 = maximum — may surface lower-eval moves if they're trickier
    */
   trickynessWeight: number;       // 0–5
+  /** Soft preference: among acceptable moves, prefer lines where both queens stay on. */
+  tryKeepQueensOn: boolean;
 }
 
 /** Stockfish evaluation attached to a generator node. */
@@ -133,6 +135,9 @@ export interface MoveCandidate {
    *  response in the position reached after this move. Computed on-demand
    *  when trickynessWeight > 0. */
   _trickynessErrorRate?: number | null;
+  /** True if both queens remain on the board after this move, false if this
+   *  move immediately leads to a queenless position, null if not applicable. */
+  _keepsQueensOn?: boolean | null;
 }
 
 /** Default generator settings. */
@@ -161,4 +166,5 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   maiaApiUrl: 'https://maiachess.com/api/maia_move',
   maiaSfMaxDrop: 1.5,
   trickynessWeight: 5,
+  tryKeepQueensOn: false,
 };
