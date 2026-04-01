@@ -408,13 +408,16 @@ export const SpacedRepetitionTrainer: React.FC<{
     [currentCard, selection],
   );
   const currentPrompt = promptSteps[currentPromptIndex] ?? null;
-  const displayFen = phase === 'replay'
+  const promptFen = phase === 'replay'
     ? (sessionHistory[replayIndex]?.reviewFen ?? INITIAL_FEN)
-    : (previewFen ?? autoplayFen ?? currentPrompt?.reviewFen ?? currentCard?.front ?? INITIAL_FEN);
+    : (currentPrompt?.reviewFen ?? currentCard?.front ?? INITIAL_FEN);
+  const displayFen = phase === 'replay'
+    ? promptFen
+    : (previewFen ?? autoplayFen ?? promptFen);
   const expectedMove = currentPrompt?.expectedMove ?? currentCard?.back ?? '';
-  const isWhiteToMove = displayFen.split(' ')[1] === 'w';
-  const correctMoveSan = expectedMove ? uciToSan(displayFen, expectedMove) : '';
-  const userMoveSan = userMove ? uciToSan(displayFen, userMove) : '';
+  const isWhiteToMove = promptFen.split(' ')[1] === 'w';
+  const correctMoveSan = expectedMove ? uciToSan(promptFen, expectedMove) : '';
+  const userMoveSan = userMove ? uciToSan(promptFen, userMove) : '';
   const isCorrect = !cardHadMistake && userMove !== null && userMove === expectedMove;
   const autoplayMoveCount = autoplaySequence.length;
 
@@ -655,7 +658,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     const promptCorrect = !cardHadMistake && userMove !== null && userMove === expectedMove;
     const nextSessionHistory = [...sessionHistory, {
       card: currentCard,
-      reviewFen: displayFen,
+      reviewFen: promptFen,
       expectedMove,
       userMove,
       correct: promptCorrect,
@@ -669,13 +672,13 @@ export const SpacedRepetitionTrainer: React.FC<{
     const nextSeenPromptKeys = new Set(nextSessionHistory.map((entry) => promptKey(entry)));
     const nextPromptIndex = getFirstUnseenPromptIndex(promptSteps, nextSeenPromptKeys, currentPromptIndex + 1);
     if (nextPromptIndex >= 0) {
-      const currentAnswerFen = applyUciMoveToFen(displayFen, expectedMove);
+      const currentAnswerFen = applyUciMoveToFen(promptFen, expectedMove);
       beginAutoplayToPrompt(
         currentCard,
         currentLineIndex,
         nextPromptIndex,
         selection?.color ?? 'white',
-        currentAnswerFen ?? displayFen,
+        currentAnswerFen ?? promptFen,
       );
       return;
     }
@@ -717,7 +720,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     }
 
     beginAutoplayToPrompt(nextCard, nextLineTarget.lineIndex, nextLineTarget.promptIndex, selection?.color ?? 'white');
-  }, [beginAutoplayToPrompt, cardHadMistake, cards, currentCard, currentLineIndex, currentPromptIndex, displayFen, expectedMove, lineHadMistake, promptSteps, selection, sessionHistory, sessionLines, stats, userMove]);
+  }, [beginAutoplayToPrompt, cardHadMistake, cards, currentCard, currentLineIndex, currentPromptIndex, expectedMove, lineHadMistake, promptFen, promptSteps, selection, sessionHistory, sessionLines, stats, userMove]);
 
   const submitMove = useCallback((from: string, to: string, piece?: string) => {
     if ((phase !== 'question' && phase !== 'grading') || !currentCard) return false;
