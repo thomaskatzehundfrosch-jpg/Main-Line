@@ -144,15 +144,22 @@ export const TopBar: React.FC<TopBarProps> = ({
           <div className="bg-bg-surface border-b border-border-subtle px-3 py-2 flex flex-wrap gap-2">
             <button
               onClick={() => { onExport(); setMenuOpen(false); }}
-              className="btn-secondary flex items-center gap-1.5 text-sm py-1.5 px-3"
+              className="btn-ghost flex items-center gap-1.5 text-sm py-1.5 px-3"
             >
               <Download className="w-3.5 h-3.5" />
-              Export PGN
+              Export
+            </button>
+            <button
+              onClick={() => { onImport(); setMenuOpen(false); }}
+              className="btn-ghost flex items-center gap-1.5 text-sm py-1.5 px-3"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Import
             </button>
             {onGameFetcher && (
               <button
                 onClick={() => { onGameFetcher(); setMenuOpen(false); }}
-                className="btn-primary flex items-center gap-1.5 text-sm py-1.5 px-3"
+                className="btn-secondary flex items-center gap-1.5 text-sm py-1.5 px-3"
               >
                 <Globe className="w-3.5 h-3.5" />
                 Game Fetcher
@@ -161,7 +168,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             {onPerformanceReport && (
               <button
                 onClick={() => { onPerformanceReport(); setMenuOpen(false); }}
-                className="btn-primary flex items-center gap-1.5 text-sm py-1.5 px-3"
+                className="btn-secondary flex items-center gap-1.5 text-sm py-1.5 px-3"
               >
                 <BarChart3 className="w-3.5 h-3.5" />
                 Performance
@@ -215,26 +222,28 @@ export const TopBar: React.FC<TopBarProps> = ({
       <div className="flex items-center gap-2">
         <button
           onClick={onImport}
-          className="btn-primary flex items-center gap-2"
+          className="btn-ghost flex items-center gap-2"
           title="Import PGN file"
         >
           <Upload className="w-4 h-4" />
-          <span>Import PGN</span>
+          <span>Import</span>
         </button>
 
         <button
           onClick={onExport}
-          className="btn-secondary flex items-center gap-2"
+          className="btn-ghost flex items-center gap-2"
           title="Export to PGN"
         >
           <Download className="w-4 h-4" />
-          <span>Export PGN</span>
+          <span>Export</span>
         </button>
+
+        <div className="h-7 w-px bg-border-subtle" aria-hidden="true" />
 
         {onGameFetcher && (
           <button
             onClick={onGameFetcher}
-            className="btn-primary flex items-center gap-2"
+            className="btn-secondary flex items-center gap-2"
             title="Fetch games from Chess.com or Lichess"
           >
             <Globe className="w-4 h-4" />
@@ -245,13 +254,15 @@ export const TopBar: React.FC<TopBarProps> = ({
         {onPerformanceReport && (
           <button
             onClick={onPerformanceReport}
-            className="btn-primary flex items-center gap-2"
+            className="btn-secondary flex items-center gap-2"
             title="See live platform performance by repertoire"
           >
             <BarChart3 className="w-4 h-4" />
             <span>Performance</span>
           </button>
         )}
+
+        <div className="h-7 w-px bg-border-subtle" aria-hidden="true" />
 
         {onGenerator && (
           <button

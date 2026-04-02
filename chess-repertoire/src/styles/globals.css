@@ -58,6 +58,10 @@
     @apply btn bg-bg-hover text-text-secondary border border-border-subtle hover:text-text-primary hover:border-border-active;
   }
 
+  .btn-ghost {
+    @apply btn bg-transparent text-text-muted border border-transparent hover:bg-bg-hover hover:text-text-primary;
+  }
+
   .btn-icon {
     @apply p-1.5 rounded-md text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors duration-150;
   }
