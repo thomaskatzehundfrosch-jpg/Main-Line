@@ -23,6 +23,8 @@ interface OpeningTreeProps {
   showGameOverlay?: boolean;
   /** Called in explore mode when a greyed-out overlay node is clicked — receives its FEN for board display only, no tree mutation */
   onExploreFen?: (fen: string) => void;
+  /** Controlled explore mode state from parent */
+  exploreModeEnabled?: boolean;
   /** Called whenever tree explore mode is toggled */
   onExploreModeChange?: (enabled: boolean) => void;
 }
@@ -429,6 +431,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   importedGames = [],
   showGameOverlay = false,
   onExploreFen,
+  exploreModeEnabled,
   onExploreModeChange,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -483,6 +486,12 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
     exploreModeRef.current = exploreMode;
     onExploreModeChange?.(exploreMode);
   }, [exploreMode, onExploreModeChange]);
+
+  useEffect(() => {
+    if (typeof exploreModeEnabled === 'boolean' && exploreModeEnabled !== exploreMode) {
+      setExploreMode(exploreModeEnabled);
+    }
+  }, [exploreModeEnabled, exploreMode]);
 
   // Build mistake map from imported games (memoized).
   // We use a stringified key to avoid reference-equality issues with Map

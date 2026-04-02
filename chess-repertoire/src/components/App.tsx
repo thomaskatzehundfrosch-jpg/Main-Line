@@ -1033,6 +1033,7 @@ export const App: React.FC = () => {
                     importedGames={games.importedGames}
                     showGameOverlay={games.showGameOverlay}
                     onExploreFen={setExploreOverlayFen}
+                    exploreModeEnabled={treeExploreMode}
                     onExploreModeChange={setTreeExploreMode}
                   />
                 </div>
@@ -1345,6 +1346,7 @@ export const App: React.FC = () => {
               importedGames={games.importedGames}
               showGameOverlay={games.showGameOverlay}
               onExploreFen={setExploreOverlayFen}
+              exploreModeEnabled={treeExploreMode}
               onExploreModeChange={setTreeExploreMode}
             />
           </div>
@@ -1415,6 +1417,17 @@ export const App: React.FC = () => {
                 sizeToggleMode="expand"
               />
             )}
+            <button
+              onClick={() => setTreeExploreMode((prev) => !prev)}
+              className={`mt-2 w-full max-w-[400px] rounded-md border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                treeExploreMode
+                  ? 'border-[#00d4aa]/60 bg-[#00d4aa]/12 text-[#00d4aa]'
+                  : 'border-border-subtle bg-bg-surface text-text-secondary hover:border-[#00d4aa]/40 hover:text-[#00d4aa]'
+              }`}
+              title={treeExploreMode ? 'Explore mode ON — click to disable' : 'Enable explore mode (navigate without adding moves)'}
+            >
+              {treeExploreMode ? 'Explore Mode On' : 'Explore Mode'}
+            </button>
           </div>
 
           {/* Tab Bar */}
