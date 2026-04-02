@@ -70,7 +70,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           {/* Logo */}
           <div className="flex items-center gap-2">
             <img
-              src="/icon-192.png"
+              src="/logo-source-tight.png"
               alt="Main Line logo"
               className="w-10 h-10 object-contain shrink-0"
             />
@@ -205,7 +205,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Left side: Logo and App name */}
       <div className="flex items-center gap-2 min-w-0">
         <img
-          src="/icon-192.png"
+          src="/logo-source-tight.png"
           alt="Main Line logo"
           className="w-12 h-12 object-contain shrink-0"
         />
