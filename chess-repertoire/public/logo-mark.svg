@@ -1,16 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1016 1210">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 920">
   <defs>
     <clipPath id="markClip">
-      <ellipse cx="508" cy="605" rx="468" ry="565" />
+      <circle cx="460" cy="460" r="448" />
     </clipPath>
   </defs>
   <image
-    href="/social-preview.png"
-    x="-900"
-    y="-40"
-    width="2816"
-    height="1536"
-    preserveAspectRatio="xMidYMid meet"
+    href="/logo-source-tight.png"
+    x="0"
+    y="0"
+    width="920"
+    height="920"
+    preserveAspectRatio="xMidYMid slice"
     clip-path="url(#markClip)"
   />
 </svg>

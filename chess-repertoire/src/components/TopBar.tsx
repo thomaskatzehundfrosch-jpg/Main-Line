@@ -72,7 +72,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             <img
               src="/logo-mark.svg"
               alt="Main Line logo"
-              className="w-9 h-9 object-contain shrink-0"
+              className="w-10 h-10 object-contain shrink-0"
             />
             <span className="font-mono text-accent-teal text-base font-semibold">Main Line</span>
             <GeneratorStatus progress={generatorProgress} isGenerating={isGenerating} />
@@ -207,7 +207,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <img
           src="/logo-mark.svg"
           alt="Main Line logo"
-          className="w-11 h-11 object-contain shrink-0"
+          className="w-12 h-12 object-contain shrink-0"
         />
         <span className="font-mono text-accent-teal text-lg font-semibold">Main Line</span>
         <GeneratorStatus progress={generatorProgress} isGenerating={isGenerating} />
