@@ -368,13 +368,6 @@ export const App: React.FC = () => {
     addSanMoveFromFen(lichessMostLikelyMove.san);
   }, [addSanMoveFromFen, lichessMostLikelyMove]);
 
-  const handleAddBothMoves = useCallback(() => {
-    if (engineBestMoveSan) addSanMoveFromFen(engineBestMoveSan);
-    if (lichessMostLikelyMove && lichessMostLikelyMove.san !== engineBestMoveSan) {
-      addSanMoveFromFen(lichessMostLikelyMove.san);
-    }
-  }, [addSanMoveFromFen, engineBestMoveSan, lichessMostLikelyMove]);
-
   const mostLikelyMovePanel = mostLikelyMoveState?.fen === currentNode.fen ? (
     <div className="border-t border-border-subtle bg-bg-primary px-3 py-2">
       {mostLikelyMoveState.error ? (
@@ -415,22 +408,6 @@ export const App: React.FC = () => {
               </div>
             </div>
           </div>
-
-          {engineBestMoveSan && lichessMostLikelyMove.san !== engineBestMoveSan && (
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <div className="text-[11px] text-text-secondary">
-                Best move differs from the most played practical move.
-              </div>
-              <button
-                onClick={handleAddBothMoves}
-                className="btn-secondary flex items-center gap-1 px-2 py-1 text-[10px]"
-                title="Add both engine and Lichess moves to this node"
-              >
-                <Plus className="w-3 h-3" />
-                Add both
-              </button>
-            </div>
-          )}
         </>
       ) : (
         <div className="mt-2 text-xs text-text-muted">No move data loaded yet.</div>
@@ -1399,7 +1376,7 @@ export const App: React.FC = () => {
             )}
             <button
               onClick={() => setTreeExploreMode((prev) => !prev)}
-              className={`mt-2 w-full max-w-[400px] rounded-md border px-4 py-2.5 text-sm font-semibold transition-colors ${
+              className={`mt-1.5 w-full max-w-[200px] rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
                 treeExploreMode
                   ? 'border-[#00d4aa]/60 bg-[#00d4aa]/12 text-[#00d4aa]'
                   : 'border-border-subtle bg-bg-surface text-text-secondary hover:border-[#00d4aa]/40 hover:text-[#00d4aa]'
