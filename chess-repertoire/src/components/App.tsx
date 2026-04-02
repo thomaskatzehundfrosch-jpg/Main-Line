@@ -368,19 +368,6 @@ export const App: React.FC = () => {
     addSanMoveFromFen(lichessMostLikelyMove.san);
   }, [addSanMoveFromFen, lichessMostLikelyMove]);
 
-  const handleExploreMostLikelyMove = useCallback(() => {
-    if (!lichessMostLikelyMove) return;
-
-    try {
-      const chess = new Chess(currentNode.fen);
-      const move = chess.move(lichessMostLikelyMove.san);
-      if (!move) return;
-      setExploreOverlayFen(chess.fen());
-    } catch {
-      // Ignore preview failures and leave the current board state unchanged.
-    }
-  }, [currentNode.fen, lichessMostLikelyMove]);
-
   const handleAddBothMoves = useCallback(() => {
     if (engineBestMoveSan) addSanMoveFromFen(engineBestMoveSan);
     if (lichessMostLikelyMove && lichessMostLikelyMove.san !== engineBestMoveSan) {
@@ -426,13 +413,6 @@ export const App: React.FC = () => {
               <div className="mt-0.5 text-[10px] text-text-muted">
                 W {lichessMostLikelyMove.winRate.toFixed(0)}% · D {lichessMostLikelyMove.drawRate.toFixed(0)}% · L {lichessMostLikelyMove.lossRate.toFixed(0)}%
               </div>
-              <button
-                onClick={handleExploreMostLikelyMove}
-                className="btn-secondary mt-3 flex w-full items-center justify-center px-3 py-2.5 text-sm font-semibold"
-                title="Preview the resulting position on the board without adding the move"
-              >
-                Explore Only Move
-              </button>
             </div>
           </div>
 
