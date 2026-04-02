@@ -27,16 +27,35 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
 
   const { importedGames } = useGames();
 
-  const handleNewTree = useCallback(() => {
-    onLoadTree(createRootNode());
-    setActive(null);
-  }, [onLoadTree, setActive]);
-
   const [saveMode, setSaveMode] = useState(false);
   const [newFileName, setNewFileName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  const getNextUntitledName = useCallback(() => {
+    const existingNames = new Set(files.map((file) => file.name.trim().toLowerCase()));
+    if (!existingNames.has('untitled repertoire')) {
+      return 'Untitled Repertoire';
+    }
+
+    let index = 2;
+    while (existingNames.has(`untitled repertoire ${index}`)) {
+      index += 1;
+    }
+    return `Untitled Repertoire ${index}`;
+  }, [files]);
+
+  const handleNewTree = useCallback(() => {
+    const tree = createRootNode();
+    const file = saveFile(getNextUntitledName(), tree, []);
+    onLoadTree(tree);
+    setSaveMode(false);
+    setNewFileName('');
+    setDeleteConfirmId(null);
+    setEditingId(file.id);
+    setEditName(file.name);
+  }, [getNextUntitledName, onLoadTree, saveFile]);
 
   const handleSaveNew = useCallback(() => {
     const name = newFileName.trim();
@@ -282,7 +301,7 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
         </div>
       ) : (
         <div className="text-center text-text-muted text-xs py-4">
-          No saved repertoires yet. Import a PGN and save it here.
+          No saved repertoires yet. Create a new tree or import a PGN to get started.
         </div>
       )}
     </div>
