@@ -70,9 +70,9 @@ export const TopBar: React.FC<TopBarProps> = ({
           {/* Logo */}
           <div className="flex items-center gap-2">
             <img
-              src="/app-logo.png"
+              src="/logo-mark.svg"
               alt="Main Line logo"
-              className="w-7 h-7 rounded-sm object-contain bg-black p-0.5"
+              className="w-9 h-9 object-contain shrink-0"
             />
             <span className="font-mono text-accent-teal text-base font-semibold">Main Line</span>
             <GeneratorStatus progress={generatorProgress} isGenerating={isGenerating} />
@@ -205,9 +205,9 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Left side: Logo and App name */}
       <div className="flex items-center gap-2 min-w-0">
         <img
-          src="/app-logo.png"
+          src="/logo-mark.svg"
           alt="Main Line logo"
-          className="w-9 h-9 rounded-md object-contain bg-black p-0.5"
+          className="w-11 h-11 object-contain shrink-0"
         />
         <span className="font-mono text-accent-teal text-lg font-semibold">Main Line</span>
         <GeneratorStatus progress={generatorProgress} isGenerating={isGenerating} />
