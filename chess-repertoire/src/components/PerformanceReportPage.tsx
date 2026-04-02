@@ -175,8 +175,8 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
   const { user } = useAuth();
   const [source, setSource] = useState<GameSource>('chesscom');
   const usernameStorageKey = user
-    ? `performance_username_${source}_${user.id}`
-    : `performance_username_${source}`;
+    ? `gamefetcher_username_${source}_${user.id}`
+    : `gamefetcher_username_${source}`;
 
   const [username, setUsername] = useState('');
   const [windowDays, setWindowDays] = useState<30 | 60 | 90>(30);
@@ -569,224 +569,227 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
               </div>
             ) : (
               <div className="divide-y divide-border-subtle">
-                {sortedSummaries.map((summary) => (
-                  <button
-                    key={summary.file.id}
-                    type="button"
-                    onClick={() => setSelectedFileId(summary.file.id)}
-                    className={`w-full text-left p-4 flex items-center justify-between gap-4 flex-wrap transition-colors ${
-                      selectedFileId === summary.file.id ? 'bg-accent-teal/5' : 'hover:bg-bg-hover/50'
-                    }`}
-                  >
-                    <div className="min-w-[220px] flex-1">
-                      <div className="text-sm font-medium text-text-primary flex items-center gap-2">
-                        <span>{summary.file.name}</span>
-                        <ChevronRight className={`w-3.5 h-3.5 text-text-muted transition-transform ${selectedFileId === summary.file.id ? 'rotate-90 text-accent-teal' : ''}`} />
-                      </div>
-                      {summary.linePreview.length > 0 && (
-                        <div className="text-xs text-text-secondary mt-1 font-mono">
-                          {summary.linePreview.join(' ')}
-                        </div>
-                      )}
-                      <div className="text-xs text-text-muted mt-1">
-                        {summary.matchedGames} matched game{summary.matchedGames !== 1 ? 's' : ''} • avg {formatAverage(summary.averageMatchedMoves)} moves • deepest {summary.deepestMatchMoves} moves
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-6 flex-wrap">
-                      <div className="min-w-[220px]">
-                        <ResultStrip
-                          wins={summary.wins}
-                          draws={summary.draws}
-                          losses={summary.losses}
-                          total={summary.matchedGames}
-                        />
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+                {sortedSummaries.map((summary) => {
+                  const isSelected = selectedFileId === summary.file.id;
+                  const detail = isSelected ? selectedDetail : null;
 
-          {selectedDetail && (
-            <div className="panel overflow-hidden">
-              <div className="panel-header">
-                {selectedDetail.summary.file.name}
-              </div>
-              <div className="p-4 space-y-5">
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <div className="bg-bg-panel rounded-md border border-border-subtle p-3">
-                    <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Winrate</div>
-                    <div className="text-xl font-semibold text-text-primary mt-1">
-                      {formatPercent(selectedDetail.summary.winRate)}
-                    </div>
-                  </div>
-                  <div className="bg-bg-panel rounded-md border border-border-subtle p-3">
-                    <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Matched games</div>
-                    <div className="text-xl font-semibold text-text-primary mt-1">
-                      {selectedDetail.summary.matchedGames}
-                    </div>
-                  </div>
-                  <div className="bg-bg-panel rounded-md border border-border-subtle p-3">
-                    <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Avg matched</div>
-                    <div className="text-xl font-semibold text-text-primary mt-1">
-                      {formatAverage(selectedDetail.summary.averageMatchedMoves)} moves
-                    </div>
-                  </div>
-                  <div className="bg-bg-panel rounded-md border border-border-subtle p-3">
-                    <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">W-D-L</div>
-                    <div className="text-xl font-semibold text-text-primary mt-1">
-                      {selectedDetail.summary.wins}-{selectedDetail.summary.draws}-{selectedDetail.summary.losses}
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">
-                    Matched Games By Result
-                  </div>
-                  <div className="rounded-md border border-border-subtle bg-bg-panel px-3 py-3">
-                    <ResultStrip
-                      wins={selectedDetail.summary.wins}
-                      draws={selectedDetail.summary.draws}
-                      losses={selectedDetail.summary.losses}
-                      total={selectedDetail.summary.matchedGames}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-3">
-                    Results By Game Phase
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {selectedDetail.stageResults.map((stage) => (
-                      <div key={stage.phase} className="rounded-md border border-border-subtle bg-bg-panel p-3">
-                        <StageBar
-                          wins={stage.wins}
-                          draws={stage.draws}
-                          losses={stage.losses}
-                          total={stage.total}
-                        />
-                        <div className="mt-3 text-sm font-medium text-text-primary text-center">
-                          {stageLabel(stage.phase)}
-                        </div>
-                        <div className="mt-2">
-                          <ResultStrip
-                            wins={stage.wins}
-                            draws={stage.draws}
-                            losses={stage.losses}
-                            total={stage.total}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-3">
-                    Worst Performing Lines
-                  </div>
-                  {worstLines.length === 0 ? (
-                    <div className="text-sm text-text-muted">
-                      Not enough matched lines yet to rank weak branches.
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {worstLines.map((line, index) => (
-                        <div key={line.key} className="rounded-md border border-border-subtle bg-bg-panel px-3 py-3">
-                          <div className="flex items-center justify-between gap-3 flex-wrap">
-                            <div className="text-sm text-text-primary">
-                              #{index + 1} worst line
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <div className="text-xs text-text-muted">
-                                {line.games} game{line.games !== 1 ? 's' : ''}
-                              </div>
-                              <button
-                                onClick={() => handleAddWorstLine(line)}
-                                disabled={addedLineKeys.has(line.key)}
-                                className="btn-primary text-xs py-1 px-2 disabled:opacity-50"
-                              >
-                                {addedLineKeys.has(line.key) ? 'Added' : 'Add to repertoire'}
-                              </button>
-                            </div>
+                  return (
+                    <div key={summary.file.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedFileId((current) => current === summary.file.id ? null : summary.file.id)}
+                        className={`w-full text-left p-4 flex items-center justify-between gap-4 flex-wrap transition-colors ${
+                          isSelected ? 'bg-accent-teal/5' : 'hover:bg-bg-hover/50'
+                        }`}
+                      >
+                        <div className="min-w-[220px] flex-1">
+                          <div className="text-sm font-medium text-text-primary flex items-center gap-2">
+                            <span>{summary.file.name}</span>
+                            <ChevronRight className={`w-3.5 h-3.5 text-text-muted transition-transform ${isSelected ? 'rotate-90 text-accent-teal' : ''}`} />
                           </div>
-                          <div className="text-sm text-text-primary font-mono mt-2 break-words">
-                            {line.moves.join(' ')}
+                          {summary.linePreview.length > 0 && (
+                            <div className="text-xs text-text-secondary mt-1 font-mono">
+                              {summary.linePreview.join(' ')}
+                            </div>
+                          )}
+                          <div className="text-xs text-text-muted mt-1">
+                            {summary.matchedGames} matched game{summary.matchedGames !== 1 ? 's' : ''} • avg {formatAverage(summary.averageMatchedMoves)} moves • deepest {summary.deepestMatchMoves} moves
                           </div>
-                          <div className="mt-2">
+                        </div>
+                        <div className="flex items-center gap-6 flex-wrap">
+                          <div className="min-w-[220px]">
                             <ResultStrip
-                              wins={line.wins}
-                              draws={line.draws}
-                              losses={line.losses}
-                              total={line.games}
+                              wins={summary.wins}
+                              draws={summary.draws}
+                              losses={summary.losses}
+                              total={summary.matchedGames}
                             />
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                      </button>
 
-                <div>
-                  <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-                    <div>
-                      <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
-                        Mistakes Made At Least Twice
-                      </div>
-                      <div className="text-sm text-text-secondary mt-1">
-                        Analyze the latest matched games for recurring inaccuracies, mistakes, and blunders.
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => void handleAnalyzeRecurringMistakes()}
-                      disabled={analyzingMistakes || selectedDetail.games.length === 0}
-                      className="btn-primary"
-                    >
-                      {analyzingMistakes ? 'Analyzing...' : 'Analyze mistakes'}
-                    </button>
-                  </div>
-
-                  {mistakeProgress && (
-                    <div className="text-xs text-text-muted mb-2">{mistakeProgress}</div>
-                  )}
-                  {mistakeError && (
-                    <div className="text-sm text-accent-red bg-accent-red/10 border border-accent-red/20 rounded-md px-3 py-2 mb-3">
-                      {mistakeError}
-                    </div>
-                  )}
-
-                  {recurringMistakes.length === 0 ? (
-                    <div className="text-sm text-text-muted">
-                      {analyzingMistakes
-                        ? 'Looking for repeated mistakes...'
-                        : 'No recurring mistakes yet. Run the analysis to populate this section.'}
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {recurringMistakes.map((mistake) => (
-                        <div key={mistake.key} className="rounded-md border border-border-subtle bg-bg-panel px-3 py-2">
-                          <div className="flex items-center justify-between gap-3 flex-wrap">
-                            <div className="text-sm text-text-primary">
-                              Move {mistake.moveNumber} • {mistake.side} played <span className="font-mono">{mistake.movePlayed}</span> instead of <span className="font-mono text-accent-green">{mistake.bestMove}</span>
+                      {detail && (
+                        <div className="border-t border-border-subtle bg-bg-primary/70">
+                          <div className="p-4 space-y-5">
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                              <div className="bg-bg-panel rounded-md border border-border-subtle p-3">
+                                <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Winrate</div>
+                                <div className="text-xl font-semibold text-text-primary mt-1">
+                                  {formatPercent(detail.summary.winRate)}
+                                </div>
+                              </div>
+                              <div className="bg-bg-panel rounded-md border border-border-subtle p-3">
+                                <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Matched games</div>
+                                <div className="text-xl font-semibold text-text-primary mt-1">
+                                  {detail.summary.matchedGames}
+                                </div>
+                              </div>
+                              <div className="bg-bg-panel rounded-md border border-border-subtle p-3">
+                                <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">Avg matched</div>
+                                <div className="text-xl font-semibold text-text-primary mt-1">
+                                  {formatAverage(detail.summary.averageMatchedMoves)} moves
+                                </div>
+                              </div>
+                              <div className="bg-bg-panel rounded-md border border-border-subtle p-3">
+                                <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">W-D-L</div>
+                                <div className="text-xl font-semibold text-text-primary mt-1">
+                                  {detail.summary.wins}-{detail.summary.draws}-{detail.summary.losses}
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-xs text-text-muted">
-                              repeated {mistake.count}x
+
+                            <div>
+                              <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-2">
+                                Matched Games By Result
+                              </div>
+                              <div className="rounded-md border border-border-subtle bg-bg-panel px-3 py-3">
+                                <ResultStrip
+                                  wins={detail.summary.wins}
+                                  draws={detail.summary.draws}
+                                  losses={detail.summary.losses}
+                                  total={detail.summary.matchedGames}
+                                />
+                              </div>
                             </div>
-                          </div>
-                          <div className="text-xs text-text-secondary mt-1">
-                            Average eval drop: {mistake.averageEvalDrop.toFixed(1)}
+
+                            <div>
+                              <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-3">
+                                Results By Game Phase
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {detail.stageResults.map((stage) => (
+                                  <div key={stage.phase} className="rounded-md border border-border-subtle bg-bg-panel p-3">
+                                    <StageBar
+                                      wins={stage.wins}
+                                      draws={stage.draws}
+                                      losses={stage.losses}
+                                      total={stage.total}
+                                    />
+                                    <div className="mt-3 text-sm font-medium text-text-primary text-center">
+                                      {stageLabel(stage.phase)}
+                                    </div>
+                                    <div className="mt-2">
+                                      <ResultStrip
+                                        wins={stage.wins}
+                                        draws={stage.draws}
+                                        losses={stage.losses}
+                                        total={stage.total}
+                                      />
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div>
+                              <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider mb-3">
+                                Worst Performing Lines
+                              </div>
+                              {worstLines.length === 0 ? (
+                                <div className="text-sm text-text-muted">
+                                  Not enough matched lines yet to rank weak branches.
+                                </div>
+                              ) : (
+                                <div className="space-y-2">
+                                  {worstLines.map((line, index) => (
+                                    <div key={line.key} className="rounded-md border border-border-subtle bg-bg-panel px-3 py-3">
+                                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                                        <div className="text-sm text-text-primary">
+                                          #{index + 1} worst line
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                          <div className="text-xs text-text-muted">
+                                            {line.games} game{line.games !== 1 ? 's' : ''}
+                                          </div>
+                                          <button
+                                            onClick={() => handleAddWorstLine(line)}
+                                            disabled={addedLineKeys.has(line.key)}
+                                            className="btn-primary text-xs py-1 px-2 disabled:opacity-50"
+                                          >
+                                            {addedLineKeys.has(line.key) ? 'Added' : 'Add to repertoire'}
+                                          </button>
+                                        </div>
+                                      </div>
+                                      <div className="text-sm text-text-primary font-mono mt-2 break-words">
+                                        {line.moves.join(' ')}
+                                      </div>
+                                      <div className="mt-2">
+                                        <ResultStrip
+                                          wins={line.wins}
+                                          draws={line.draws}
+                                          losses={line.losses}
+                                          total={line.games}
+                                        />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            <div>
+                              <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
+                                <div>
+                                  <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
+                                    Mistakes Made At Least Twice
+                                  </div>
+                                  <div className="text-sm text-text-secondary mt-1">
+                                    Analyze the latest matched games for recurring inaccuracies, mistakes, and blunders.
+                                  </div>
+                                </div>
+                                <button
+                                  onClick={() => void handleAnalyzeRecurringMistakes()}
+                                  disabled={analyzingMistakes || detail.games.length === 0}
+                                  className="btn-primary"
+                                >
+                                  {analyzingMistakes ? 'Analyzing...' : 'Analyze mistakes'}
+                                </button>
+                              </div>
+
+                              {mistakeProgress && (
+                                <div className="text-xs text-text-muted mb-2">{mistakeProgress}</div>
+                              )}
+                              {mistakeError && (
+                                <div className="text-sm text-accent-red bg-accent-red/10 border border-accent-red/20 rounded-md px-3 py-2 mb-3">
+                                  {mistakeError}
+                                </div>
+                              )}
+
+                              {recurringMistakes.length === 0 ? (
+                                <div className="text-sm text-text-muted">
+                                  {analyzingMistakes
+                                    ? 'Looking for repeated mistakes...'
+                                    : 'No recurring mistakes yet. Run the analysis to populate this section.'}
+                                </div>
+                              ) : (
+                                <div className="space-y-2">
+                                  {recurringMistakes.map((mistake) => (
+                                    <div key={mistake.key} className="rounded-md border border-border-subtle bg-bg-panel px-3 py-2">
+                                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                                        <div className="text-sm text-text-primary">
+                                          Move {mistake.moveNumber} • {mistake.side} played <span className="font-mono">{mistake.movePlayed}</span> instead of <span className="font-mono text-accent-green">{mistake.bestMove}</span>
+                                        </div>
+                                        <div className="text-xs text-text-muted">
+                                          repeated {mistake.count}x
+                                        </div>
+                                      </div>
+                                      <div className="text-xs text-text-secondary mt-1">
+                                        Average eval drop: {mistake.averageEvalDrop.toFixed(1)}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
+                  );
+                })}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
