@@ -217,34 +217,8 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
   const worstLines = useMemo<WorstLineEntry[]>(() => {
     if (!selectedDetail) return [];
 
-    const forcedPrefix = selectedDetail.summary.linePreview;
-    const grouped = new Map<string, WorstLineEntry>();
-    for (const entry of selectedDetail.games) {
-      const moves = buildTierListLine(entry, forcedPrefix);
-      if (moves.length === 0) continue;
-      const key = moves.join(' ');
-      const existing = grouped.get(key);
-      if (existing) {
-        existing.games += 1;
-        if (entry.game.result === 'win') existing.wins += 1;
-        else if (entry.game.result === 'draw') existing.draws += 1;
-        else existing.losses += 1;
-      } else {
-        grouped.set(key, {
-          key,
-          moves,
-          games: 1,
-          wins: entry.game.result === 'win' ? 1 : 0,
-          draws: entry.game.result === 'draw' ? 1 : 0,
-          losses: entry.game.result === 'loss' ? 1 : 0,
-          winRate: 0,
-          score: 0,
-        });
-      }
-    }
-
-    return Array.from(grouped.values())
-      .map((line) => {
+    const buildEntries = (grouped: Map<string, WorstLineEntry>) =>
+      Array.from(grouped.values()).map((line) => {
         line.winRate = line.games > 0 ? (line.wins / line.games) * 100 : 0;
         const lossRate = line.games > 0 ? line.losses / line.games : 0;
         line.score = lossRate * 100 + line.games * 0.5 - line.winRate * 0.25;
@@ -254,8 +228,58 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
         if (b.score !== a.score) return b.score - a.score;
         if (b.games !== a.games) return b.games - a.games;
         return a.key.localeCompare(b.key);
-      })
-      .slice(0, 5);
+      });
+
+    const accumulate = (
+      grouped: Map<string, WorstLineEntry>,
+      moves: string[],
+      result: 'win' | 'draw' | 'loss'
+    ) => {
+      if (moves.length === 0) return;
+      const key = moves.join(' ');
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.games += 1;
+        if (result === 'win') existing.wins += 1;
+        else if (result === 'draw') existing.draws += 1;
+        else existing.losses += 1;
+        return;
+      }
+
+      grouped.set(key, {
+        key,
+        moves,
+        games: 1,
+        wins: result === 'win' ? 1 : 0,
+        draws: result === 'draw' ? 1 : 0,
+        losses: result === 'loss' ? 1 : 0,
+        winRate: 0,
+        score: 0,
+      });
+    };
+
+    const forcedPrefix = selectedDetail.summary.linePreview;
+    const primaryGrouped = new Map<string, WorstLineEntry>();
+    for (const entry of selectedDetail.games) {
+      accumulate(primaryGrouped, buildTierListLine(entry, forcedPrefix), entry.game.result);
+    }
+
+    const primary = buildEntries(primaryGrouped).slice(0, 5);
+    if (primary.length >= 5) {
+      return primary;
+    }
+
+    const fallbackGrouped = new Map<string, WorstLineEntry>();
+    for (const entry of selectedDetail.games) {
+      accumulate(fallbackGrouped, normalizeLineForTierList(entry), entry.game.result);
+    }
+
+    const seen = new Set(primary.map((line) => line.key));
+    const fallback = buildEntries(fallbackGrouped)
+      .filter((line) => !seen.has(line.key))
+      .slice(0, 5 - primary.length);
+
+    return [...primary, ...fallback].slice(0, 5);
   }, [selectedDetail]);
 
   const resetRecurringMistakes = useCallback(() => {
