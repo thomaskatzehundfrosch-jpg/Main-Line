@@ -8,6 +8,7 @@ interface NotesPanelProps {
   onAddNag: (nag: number) => void;
   onRemoveNag: (nag: number) => void;
   nodeId: string;
+  hideHeader?: boolean;
 }
 
 // Common NAGs for quick access
@@ -27,6 +28,7 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({
   onAddNag,
   onRemoveNag,
   nodeId,
+  hideHeader = false,
 }) => {
   const handleNagToggle = (nag: number) => {
     if (nags.includes(nag)) {
@@ -42,7 +44,7 @@ export const NotesPanel: React.FC<NotesPanelProps> = ({
 
   return (
     <div className="panel flex flex-col">
-      <div className="panel-header">NOTES</div>
+      {!hideHeader && <div className="panel-header">NOTES</div>}
 
       <div className="p-3 space-y-3 flex-1 overflow-auto">
         {/* NAG Buttons */}

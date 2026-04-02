@@ -143,6 +143,8 @@ export const App: React.FC = () => {
     mistake:    MISTAKE_THRESHOLDS.mistake,
     blunder:    MISTAKE_THRESHOLDS.blunder,
   });
+  const [moveListExpanded, setMoveListExpanded] = useState(false);
+  const [notesExpanded, setNotesExpanded] = useState(false);
   const [mostLikelyMoveState, setMostLikelyMoveState] = useState<MostLikelyMoveState | null>(null);
   const [isFetchingMostLikelyMove, setIsFetchingMostLikelyMove] = useState(false);
   const [showMostLikelyMoveSettings, setShowMostLikelyMoveSettings] = useState(false);
@@ -1439,27 +1441,61 @@ export const App: React.FC = () => {
                 {mostLikelyMoveSection}
 
                 {/* Move List */}
-                <div className="flex-[2] min-h-0 flex flex-col border-t border-border-subtle">
-                  <MoveList
-                    currentPath={currentPath}
-                    currentNode={currentNode}
-                    onNavigateToNode={navigateToNode}
-                    importedGames={games.importedGames}
-                    showGameOverlay={games.showGameOverlay}
-                    onAddMove={addMoveToNode}
-                  />
+                <div className="flex flex-col border-t border-border-subtle">
+                  <button
+                    onClick={() => setMoveListExpanded((prev) => !prev)}
+                    className="panel-header flex items-center justify-between cursor-pointer select-none"
+                    title={moveListExpanded ? 'Collapse moves' : 'Expand moves'}
+                  >
+                    <span>MOVES</span>
+                    {moveListExpanded ? (
+                      <ChevronDown className="w-3 h-3" />
+                    ) : (
+                      <ChevronUp className="w-3 h-3" />
+                    )}
+                  </button>
+                  {moveListExpanded && (
+                    <div className="flex-[2] min-h-0 flex flex-col">
+                      <MoveList
+                        currentPath={currentPath}
+                        currentNode={currentNode}
+                        onNavigateToNode={navigateToNode}
+                        importedGames={games.importedGames}
+                        showGameOverlay={games.showGameOverlay}
+                        onAddMove={addMoveToNode}
+                        hideHeader
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Notes Panel */}
-                <div className="flex-[1] min-h-0 flex flex-col overflow-auto border-t border-border-subtle">
-                  <NotesPanel
-                    comment={currentNode.comment}
-                    nags={currentNode.nags}
-                    nodeId={currentNode.id}
-                    onCommentChange={(comment) => setComment(currentNode.id, comment)}
-                    onAddNag={(nag) => addNag(currentNode.id, nag)}
-                    onRemoveNag={(nag) => removeNag(currentNode.id, nag)}
-                  />
+                <div className="flex flex-col overflow-hidden border-t border-border-subtle">
+                  <button
+                    onClick={() => setNotesExpanded((prev) => !prev)}
+                    className="panel-header flex items-center justify-between cursor-pointer select-none"
+                    title={notesExpanded ? 'Collapse notes' : 'Expand notes'}
+                  >
+                    <span>NOTES</span>
+                    {notesExpanded ? (
+                      <ChevronDown className="w-3 h-3" />
+                    ) : (
+                      <ChevronUp className="w-3 h-3" />
+                    )}
+                  </button>
+                  {notesExpanded && (
+                    <div className="flex-[1] min-h-0 flex flex-col overflow-auto">
+                      <NotesPanel
+                        comment={currentNode.comment}
+                        nags={currentNode.nags}
+                        nodeId={currentNode.id}
+                        onCommentChange={(comment) => setComment(currentNode.id, comment)}
+                        onAddNag={(nag) => addNag(currentNode.id, nag)}
+                        onRemoveNag={(nag) => removeNag(currentNode.id, nag)}
+                        hideHeader
+                      />
+                    </div>
+                  )}
                 </div>
               </>
             ) : (

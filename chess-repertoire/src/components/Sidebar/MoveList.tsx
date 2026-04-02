@@ -19,6 +19,7 @@ interface MoveListProps {
   showGameOverlay?: boolean;
   /** Add a game move to the repertoire tree */
   onAddMove?: (parentId: string, move: string, fen: string) => void;
+  hideHeader?: boolean;
 }
 
 /** Return a Tailwind text-color class based on centipawn score (White's perspective). */
@@ -43,6 +44,7 @@ export const MoveList: React.FC<MoveListProps> = ({
   importedGames = [],
   showGameOverlay = false,
   onAddMove,
+  hideHeader = false,
 }) => {
   const { getEval, getNodeAnnotation, isAnalyzing } = useRepertoireEval();
 
@@ -339,7 +341,7 @@ export const MoveList: React.FC<MoveListProps> = ({
 
   return (
     <div className="panel flex flex-col">
-      <div className="panel-header">MOVES</div>
+      {!hideHeader && <div className="panel-header">MOVES</div>}
       <div className="p-3 overflow-auto flex-1">
         <div className="text-sm leading-relaxed">
           {currentPath.length > 1 ? renderMoves() : (
