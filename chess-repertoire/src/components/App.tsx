@@ -40,6 +40,7 @@ import type { RepertoireEval } from '../types';
 import { GameFetcherPage } from './GameFetcher/GameFetcherPage';
 import { GeneratorPage } from './Generator/GeneratorPage';
 import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
+import { PerformanceReportPage } from './PerformanceReportPage';
 import { handleOAuthCallback } from '../utils/lichessAuth';
 import { getStoredToken } from '../utils/lichessAuth';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -128,6 +129,7 @@ export const App: React.FC = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('board');
   const [gameFetcherOpen, setGameFetcherOpen] = useState(false);
+  const [performanceReportOpen, setPerformanceReportOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
   const [trainerOpen, setTrainerOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState({
@@ -811,9 +813,30 @@ export const App: React.FC = () => {
       <TopBar
         onImport={() => setImportModalOpen(true)}
         onExport={() => setExportModalOpen(true)}
-        onGameFetcher={() => { setGeneratorOpen(false); setTrainerOpen(false); setGameFetcherOpen(true); }}
-        onGenerator={() => { setGameFetcherOpen(false); setTrainerOpen(false); setGeneratorOpen(true); }}
-        onTrainer={() => { setGameFetcherOpen(false); setGeneratorOpen(false); setTrainerOpen(true); }}
+        onGameFetcher={() => {
+          setGeneratorOpen(false);
+          setTrainerOpen(false);
+          setPerformanceReportOpen(false);
+          setGameFetcherOpen(true);
+        }}
+        onPerformanceReport={() => {
+          setGeneratorOpen(false);
+          setTrainerOpen(false);
+          setGameFetcherOpen(false);
+          setPerformanceReportOpen(true);
+        }}
+        onGenerator={() => {
+          setGameFetcherOpen(false);
+          setTrainerOpen(false);
+          setPerformanceReportOpen(false);
+          setGeneratorOpen(true);
+        }}
+        onTrainer={() => {
+          setGameFetcherOpen(false);
+          setGeneratorOpen(false);
+          setPerformanceReportOpen(false);
+          setTrainerOpen(true);
+        }}
         onSettings={() => { setSettingsInitialTab('board'); setSettingsOpen(true); }}
         activeFileName={getActiveFile()?.name ?? null}
         generatorProgress={generator.progress}
@@ -838,6 +861,8 @@ export const App: React.FC = () => {
       {/* Other full-page views and main app */}
       {!generatorOpen && (gameFetcherOpen ? (
         <GameFetcherPage onClose={() => setGameFetcherOpen(false)} />
+      ) : performanceReportOpen ? (
+        <PerformanceReportPage onClose={() => setPerformanceReportOpen(false)} />
       ) : trainerOpen ? (
         <SpacedRepetitionTrainer
           onClose={() => setTrainerOpen(false)}

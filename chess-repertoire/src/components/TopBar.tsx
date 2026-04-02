@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X, Heart, Mail, Youtube } from 'lucide-react';
+import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X, Heart, Mail, Youtube, BarChart3 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './Auth/AuthModal';
 import { UserMenu } from './Auth/UserMenu';
@@ -10,6 +10,7 @@ interface TopBarProps {
   onImport: () => void;
   onExport: () => void;
   onGameFetcher?: () => void;
+  onPerformanceReport?: () => void;
   onGenerator?: () => void;
   onTrainer?: () => void;
   onSettings?: () => void;
@@ -49,6 +50,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   onImport,
   onExport,
   onGameFetcher,
+  onPerformanceReport,
   onGenerator,
   onTrainer,
   onSettings,
@@ -156,6 +158,15 @@ export const TopBar: React.FC<TopBarProps> = ({
                 Game Fetcher
               </button>
             )}
+            {onPerformanceReport && (
+              <button
+                onClick={() => { onPerformanceReport(); setMenuOpen(false); }}
+                className="btn-primary flex items-center gap-1.5 text-sm py-1.5 px-3"
+              >
+                <BarChart3 className="w-3.5 h-3.5" />
+                Performance
+              </button>
+            )}
             {onGenerator && (
               <button
                 onClick={() => { onGenerator(); setMenuOpen(false); }}
@@ -228,6 +239,17 @@ export const TopBar: React.FC<TopBarProps> = ({
           >
             <Globe className="w-4 h-4" />
             <span>Game Fetcher</span>
+          </button>
+        )}
+
+        {onPerformanceReport && (
+          <button
+            onClick={onPerformanceReport}
+            className="btn-primary flex items-center gap-2"
+            title="See live platform performance by repertoire"
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Performance</span>
           </button>
         )}
 
