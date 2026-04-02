@@ -1,7 +1,6 @@
 import React, { useState, useCallback } from 'react';
-import { Save, FolderOpen, Trash2, Edit3, Check, X, Plus, FileText, FilePlus } from 'lucide-react';
+import { Save, FolderOpen, Trash2, Edit3, Check, X, FileText, FilePlus } from 'lucide-react';
 import { useFiles } from '../context/FileContext';
-import { useGames } from '../context/GameContext';
 import type { TreeNode } from '../types';
 import type { RepertoireFile } from '../types/repertoireFile';
 import { cloneTree, createRootNode } from '../utils/treeBuilder';
@@ -25,10 +24,6 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
     setActive,
   } = useFiles();
 
-  const { importedGames } = useGames();
-
-  const [saveMode, setSaveMode] = useState(false);
-  const [newFileName, setNewFileName] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
@@ -50,20 +45,10 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
     const tree = createRootNode();
     const file = saveFile(getNextUntitledName(), tree, []);
     onLoadTree(tree);
-    setSaveMode(false);
-    setNewFileName('');
     setDeleteConfirmId(null);
     setEditingId(file.id);
     setEditName(file.name);
   }, [getNextUntitledName, onLoadTree, saveFile]);
-
-  const handleSaveNew = useCallback(() => {
-    const name = newFileName.trim();
-    if (!name) return;
-    saveFile(name, currentTree, importedGames);
-    setNewFileName('');
-    setSaveMode(false);
-  }, [newFileName, currentTree, importedGames, saveFile]);
 
   const handleSaveOver = useCallback(
     (id: string) => {
@@ -129,45 +114,15 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
           <FilePlus className="w-3.5 h-3.5" />
           New Tree
         </button>
-        {!saveMode ? (
-          <button
-            onClick={() => setSaveMode(true)}
-            className="btn-primary flex items-center gap-1.5 text-xs"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Save Current
-          </button>
-        ) : (
-          <div className="flex items-center gap-1.5 flex-1">
-            <input
-              type="text"
-              value={newFileName}
-              onChange={(e) => setNewFileName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSaveNew();
-                if (e.key === 'Escape') setSaveMode(false);
-              }}
-              placeholder="Repertoire name..."
-              autoFocus
-              className="flex-1 bg-bg-primary border border-border-subtle rounded-md px-2 py-1 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-teal/50"
-            />
-            <button
-              onClick={handleSaveNew}
-              disabled={!newFileName.trim()}
-              className="btn-icon p-1 text-accent-green disabled:opacity-30"
-              title="Save"
-            >
-              <Check className="w-3.5 h-3.5" />
-            </button>
-            <button
-              onClick={() => setSaveMode(false)}
-              className="btn-icon p-1"
-              title="Cancel"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        )}
+        <button
+          onClick={() => activeFileId && handleSaveOver(activeFileId)}
+          disabled={!activeFileId}
+          className="btn-primary flex items-center gap-1.5 text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+          title={activeFileId ? 'Save changes to the current repertoire' : 'Create or open a repertoire first'}
+        >
+          <Save className="w-3.5 h-3.5" />
+          Save
+        </button>
       </div>
 
       {/* File list */}
