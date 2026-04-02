@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, BarChart3, ChevronRight, Loader, Search } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useFiles } from '../context/FileContext';
-import { analyzeGame, createAnalysisWorker } from '../engine/analyzer';
 import { Chess } from 'chess.js';
 import {
   fetchGames,
@@ -18,7 +17,6 @@ import {
   type RepertoirePerformanceDetail,
   type RepertoirePerformanceSummary,
 } from '../utils/performanceReport';
-import type { ImportedGame } from '../types/game';
 import { addLineToTree, cloneTree } from '../utils/treeBuilder';
 
 interface PerformanceReportPageProps {
@@ -117,16 +115,6 @@ function ResultStrip({
   );
 }
 
-interface RecurringMistake {
-  key: string;
-  count: number;
-  moveNumber: number;
-  side: 'white' | 'black';
-  movePlayed: string;
-  bestMove: string;
-  averageEvalDrop: number;
-}
-
 interface WorstLineEntry {
   key: string;
   moves: string[];
@@ -189,10 +177,6 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
   const [summaries, setSummaries] = useState<RepertoirePerformanceSummary[]>([]);
   const [reportData, setReportData] = useState<PerformanceReportData | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
-  const [analyzingMistakes, setAnalyzingMistakes] = useState(false);
-  const [mistakeProgress, setMistakeProgress] = useState('');
-  const [mistakeError, setMistakeError] = useState<string | null>(null);
-  const [recurringMistakes, setRecurringMistakes] = useState<RecurringMistake[]>([]);
   const [addedLineKeys, setAddedLineKeys] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -282,13 +266,6 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
     return [...primary, ...fallback].slice(0, 5);
   }, [selectedDetail]);
 
-  const resetRecurringMistakes = useCallback(() => {
-    setRecurringMistakes([]);
-    setMistakeError(null);
-    setMistakeProgress('');
-    setAnalyzingMistakes(false);
-  }, []);
-
   const handleFetch = useCallback(async () => {
     const trimmedUsername = username.trim();
     if (!trimmedUsername) {
@@ -303,7 +280,6 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
     setLoading(true);
     setError(null);
     setProgress(null);
-    resetRecurringMistakes();
 
     try {
       localStorage.setItem(usernameStorageKey, trimmedUsername);
@@ -333,98 +309,11 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
     } finally {
       setLoading(false);
     }
-  }, [username, source, files, usernameStorageKey, windowDays, minMatchMoves, resetRecurringMistakes]);
-
-  useEffect(() => {
-    resetRecurringMistakes();
-  }, [selectedFileId, resetRecurringMistakes]);
+  }, [username, source, files, usernameStorageKey, windowDays, minMatchMoves]);
 
   useEffect(() => {
     setAddedLineKeys(new Set());
   }, [selectedFileId]);
-
-  const handleAnalyzeRecurringMistakes = useCallback(async () => {
-    if (!selectedDetail || selectedDetail.games.length === 0 || analyzingMistakes) return;
-
-    setAnalyzingMistakes(true);
-    setMistakeError(null);
-    setRecurringMistakes([]);
-
-    let worker: Worker | null = null;
-    try {
-      worker = await createAnalysisWorker();
-      const gamesToAnalyze = selectedDetail.games.slice(0, 8);
-      const grouped = new Map<string, {
-        count: number;
-        moveNumber: number;
-        side: 'white' | 'black';
-        movePlayed: string;
-        bestMove: string;
-        totalEvalDrop: number;
-      }>();
-
-      for (let gameIndex = 0; gameIndex < gamesToAnalyze.length; gameIndex++) {
-        const entry = gamesToAnalyze[gameIndex];
-        const importedGame: ImportedGame = {
-          id: entry.game.id,
-          pgn: entry.game.raw.pgn,
-          white: entry.game.raw.white.username,
-          black: entry.game.raw.black.username,
-          date: new Date(entry.game.endedAt * 1000).toISOString().split('T')[0],
-          result: entry.game.result,
-          moves: entry.game.moves,
-          mistakes: [],
-          analyzed: false,
-        };
-
-        setMistakeProgress(`Analyzing game ${gameIndex + 1}/${gamesToAnalyze.length}`);
-        const mistakes = await analyzeGame(importedGame, worker, 25, undefined, undefined, undefined, 24);
-
-        for (const mistake of mistakes) {
-          const key = `${mistake.side}|${mistake.moveNumber}|${mistake.movePlayed}|${mistake.bestMove}`;
-          const existing = grouped.get(key);
-          if (existing) {
-            existing.count += 1;
-            existing.totalEvalDrop += mistake.evalDrop;
-          } else {
-            grouped.set(key, {
-              count: 1,
-              moveNumber: mistake.moveNumber,
-              side: mistake.side,
-              movePlayed: mistake.movePlayed,
-              bestMove: mistake.bestMove,
-              totalEvalDrop: mistake.evalDrop,
-            });
-          }
-        }
-      }
-
-      const recurring = Array.from(grouped.entries())
-        .map(([key, value]) => ({
-          key,
-          count: value.count,
-          moveNumber: value.moveNumber,
-          side: value.side,
-          movePlayed: value.movePlayed,
-          bestMove: value.bestMove,
-          averageEvalDrop: value.totalEvalDrop / value.count,
-        }))
-        .filter((item) => item.count >= 2)
-        .sort((a, b) => {
-          if (b.count !== a.count) return b.count - a.count;
-          return b.averageEvalDrop - a.averageEvalDrop;
-        })
-        .slice(0, 8);
-
-      setRecurringMistakes(recurring);
-      setMistakeProgress('');
-    } catch (err) {
-      setMistakeError(err instanceof Error ? err.message : String(err));
-    } finally {
-      if (worker) worker.terminate();
-      setAnalyzingMistakes(false);
-    }
-  }, [selectedDetail, analyzingMistakes]);
 
   const handleAddWorstLine = useCallback((line: WorstLineEntry) => {
     if (!selectedDetail) return;
@@ -472,9 +361,6 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
                 <div>
                   <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
                     Report Setup
-                  </div>
-                  <div className="text-sm text-text-secondary mt-1">
-                    Games count for a repertoire when they match its move tree for at least the selected number of moves.
                   </div>
                 </div>
                 <div className="flex items-center gap-1 bg-bg-panel rounded border border-border-subtle p-0.5 h-9">
@@ -619,6 +505,9 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
                           <div className="text-xs text-text-muted mt-1">
                             {summary.matchedGames} matched game{summary.matchedGames !== 1 ? 's' : ''} • avg {formatAverage(summary.averageMatchedMoves)} moves • deepest {summary.deepestMatchMoves} moves
                           </div>
+                          <div className="text-[11px] text-text-muted mt-1">
+                            Click for more details
+                          </div>
                         </div>
                         <div className="flex items-center gap-6 flex-wrap">
                           <div className="min-w-[220px]">
@@ -751,60 +640,6 @@ export const PerformanceReportPage: React.FC<PerformanceReportPageProps> = ({ on
                               )}
                             </div>
 
-                            <div>
-                              <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-                                <div>
-                                  <div className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
-                                    Mistakes Made At Least Twice
-                                  </div>
-                                  <div className="text-sm text-text-secondary mt-1">
-                                    Analyze the latest matched games for recurring inaccuracies, mistakes, and blunders.
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={() => void handleAnalyzeRecurringMistakes()}
-                                  disabled={analyzingMistakes || detail.games.length === 0}
-                                  className="btn-primary"
-                                >
-                                  {analyzingMistakes ? 'Analyzing...' : 'Analyze mistakes'}
-                                </button>
-                              </div>
-
-                              {mistakeProgress && (
-                                <div className="text-xs text-text-muted mb-2">{mistakeProgress}</div>
-                              )}
-                              {mistakeError && (
-                                <div className="text-sm text-accent-red bg-accent-red/10 border border-accent-red/20 rounded-md px-3 py-2 mb-3">
-                                  {mistakeError}
-                                </div>
-                              )}
-
-                              {recurringMistakes.length === 0 ? (
-                                <div className="text-sm text-text-muted">
-                                  {analyzingMistakes
-                                    ? 'Looking for repeated mistakes...'
-                                    : 'No recurring mistakes yet. Run the analysis to populate this section.'}
-                                </div>
-                              ) : (
-                                <div className="space-y-2">
-                                  {recurringMistakes.map((mistake) => (
-                                    <div key={mistake.key} className="rounded-md border border-border-subtle bg-bg-panel px-3 py-2">
-                                      <div className="flex items-center justify-between gap-3 flex-wrap">
-                                        <div className="text-sm text-text-primary">
-                                          Move {mistake.moveNumber} • {mistake.side} played <span className="font-mono">{mistake.movePlayed}</span> instead of <span className="font-mono text-accent-green">{mistake.bestMove}</span>
-                                        </div>
-                                        <div className="text-xs text-text-muted">
-                                          repeated {mistake.count}x
-                                        </div>
-                                      </div>
-                                      <div className="text-xs text-text-secondary mt-1">
-                                        Average eval drop: {mistake.averageEvalDrop.toFixed(1)}
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
                           </div>
                         </div>
                       )}
