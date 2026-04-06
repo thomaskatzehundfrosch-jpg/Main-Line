@@ -633,11 +633,11 @@ export const App: React.FC = () => {
   const mostLikelyMoveSection = (
     <div className="flex flex-col border-t border-border-subtle">
       <div className="px-3 py-2">
-        <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-2">
           <button
             onClick={handleFetchMostLikelyMove}
             disabled={isFetchingMostLikelyMove}
-            className={`min-w-0 w-full rounded-md border px-3 py-2 text-xs font-mono transition-colors ${
+            className={`min-w-0 flex-1 rounded-md border px-3 py-2 text-xs font-mono transition-colors ${
               isFetchingMostLikelyMove
                 ? 'border-accent-teal/40 bg-accent-teal/10 text-accent-teal'
                 : 'border-border-subtle text-text-secondary hover:border-accent-teal/40 hover:text-accent-teal'
@@ -649,15 +649,10 @@ export const App: React.FC = () => {
           </button>
           <button
             onClick={() => setShowMostLikelyMoveSettings((prev) => !prev)}
-            className={`flex w-full items-center justify-center rounded-md border border-border-subtle px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-colors ${
-              showMostLikelyMoveSettings
-                ? 'bg-bg-hover text-accent-teal'
-                : 'text-text-secondary hover:border-accent-teal/40 hover:text-accent-teal'
-            }`}
+            className={`btn-icon border border-border-subtle ${showMostLikelyMoveSettings ? 'bg-bg-hover text-accent-teal' : ''}`}
             title="Set Most Likely Next Move rating"
           >
-            <Settings2 className="mr-1.5 h-3.5 w-3.5" />
-            Rating Filter
+            <Settings2 className="w-3.5 h-3.5" />
           </button>
         </div>
         {showMostLikelyMoveSettings && (
