@@ -165,6 +165,7 @@ export const App: React.FC = () => {
   const [trickyMoveSuggestion, setTrickyMoveSuggestion] = useState<TrickyMoveSuggestion | null>(null);
   const [recommendationError, setRecommendationError] = useState<string | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
+  const [hasLoadedRecommendations, setHasLoadedRecommendations] = useState(false);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -224,6 +225,7 @@ export const App: React.FC = () => {
     setTrickyMoveSuggestion(null);
     setRecommendationError(null);
     setIsLoadingRecommendations(false);
+    setHasLoadedRecommendations(false);
   }, [currentNode.fen]);
 
   const handleViewGame = useCallback((game: ImportedGame) => {
@@ -348,135 +350,121 @@ export const App: React.FC = () => {
   const ourRepertoireColor = settings.defaultColor;
   const isOurTurnInCurrentPosition = currentSideToMove === ourRepertoireColor;
 
-  useEffect(() => {
-    let cancelled = false;
+  const handleLoadRecommendations = useCallback(async () => {
+    setIsLoadingRecommendations(true);
+    setHasLoadedRecommendations(true);
+    setRecommendationError(null);
+    setGapSuggestions([]);
+    setTrickyMoveSuggestion(null);
 
-    const loadRecommendations = async () => {
-      setIsLoadingRecommendations(true);
-      setRecommendationError(null);
-      setGapSuggestions([]);
-      setTrickyMoveSuggestion(null);
+    try {
+      const baseSettings = {
+        color: currentSideToMove,
+        useMasters: false,
+        ratingMin: settings.mostLikelyMoveRating,
+        ratingMax: settings.mostLikelyMoveRating,
+        speeds: ['blitz', 'rapid', 'classical'],
+      };
 
-      try {
-        const baseSettings = {
-          color: currentSideToMove,
-          useMasters: false,
-          ratingMin: settings.mostLikelyMoveRating,
-          ratingMax: settings.mostLikelyMoveRating,
-          speeds: ['blitz', 'rapid', 'classical'],
-        };
+      const playedMoves = await getMostPlayedMoves(
+        currentNode.fen,
+        baseSettings as any,
+        (level, message) => {
+          if (level === 'error') logger.error('general', message);
+          else if (level === 'warning') logger.warn('general', message);
+          else logger.info('general', message);
+        },
+        5
+      );
 
-        const playedMoves = await getMostPlayedMoves(
-          currentNode.fen,
-          baseSettings as any,
-          (level, message) => {
-            if (level === 'error') logger.error('general', message);
-            else if (level === 'warning') logger.warn('general', message);
-            else logger.info('general', message);
-          },
-          5
+      if (!isOurTurnInCurrentPosition) {
+        const existingMoves = new Set(
+          currentNode.children
+            .filter((child) => !(child as any)._isOverlay)
+            .map((child) => child.move)
         );
+        const gaps = playedMoves
+          .filter((move) => !existingMoves.has(move.san))
+          .filter((move) => move.playRate >= 8 || move.totalGames >= 2000)
+          .slice(0, 3)
+          .map((move) => ({
+            ...move,
+            severity: move.playRate >= 15 || move.totalGames >= 10000 ? 'high' as const : 'medium' as const,
+          }));
 
-        if (cancelled) return;
-
-        if (!isOurTurnInCurrentPosition) {
-          const existingMoves = new Set(
-            currentNode.children
-              .filter((child) => !(child as any)._isOverlay)
-              .map((child) => child.move)
-          );
-          const gaps = playedMoves
-            .filter((move) => !existingMoves.has(move.san))
-            .filter((move) => move.playRate >= 8 || move.totalGames >= 2000)
-            .slice(0, 3)
-            .map((move) => ({
-              ...move,
-              severity: move.playRate >= 15 || move.totalGames >= 10000 ? 'high' as const : 'medium' as const,
-            }));
-
-          setGapSuggestions(gaps);
-          return;
-        }
-
-        const engineCandidates = engine.lines
-          .filter((line) => line.pv.length > 0)
-          .slice(0, 3);
-
-        if (engineCandidates.length === 0) return;
-
-        const suggestions: Array<TrickyMoveSuggestion | null> = await Promise.all(
-          engineCandidates.map(async (line) => {
-            const candidateSan = line.pv[0];
-            const candidateLine = buildLineFromFen(currentNode.fen, [candidateSan]);
-            if (!candidateLine || candidateLine.length === 0) return null;
-
-            const opponentFen = candidateLine[0].fen;
-            const opponentColor = opponentFen.split(' ')[1] === 'w' ? 'white' : 'black';
-            const replies = await getMostPlayedMoves(
-              opponentFen,
-              {
-                color: opponentColor,
-                useMasters: false,
-                ratingMin: settings.mostLikelyMoveRating,
-                ratingMax: settings.mostLikelyMoveRating,
-                speeds: ['blitz', 'rapid', 'classical'],
-              } as any,
-              (level, message) => {
-                if (level === 'error') logger.error('general', message);
-                else if (level === 'warning') logger.warn('general', message);
-                else logger.info('general', message);
-              },
-              3
-            );
-
-            if (replies.length === 0) return null;
-
-            const topReply = replies[0];
-            const opponentSpread = Math.max(0, 100 - topReply.playRate);
-            const soundness = Math.max(0, Math.min(100, 50 + line.score / 20));
-            const score = opponentSpread * 0.6 + soundness * 0.4;
-
-            const suggestion: TrickyMoveSuggestion = {
-              move: {
-                san: candidateSan,
-                uci: line.pvUci[0],
-                totalGames: 0,
-                playRate: 0,
-                winRate: 0,
-                lossRate: 0,
-                drawRate: 0,
-                averageRating: null,
-              },
-              score,
-              soundness,
-              opponentSpread,
-              topReply,
-            };
-
-            return suggestion;
-          })
-        );
-
-        if (cancelled) return;
-
-        const best = suggestions
-          .filter((item): item is TrickyMoveSuggestion => item !== null)
-          .sort((a, b) => b.score - a.score)[0] ?? null;
-
-        setTrickyMoveSuggestion(best);
-      } catch (error) {
-        if (cancelled) return;
-        setRecommendationError(error instanceof Error ? error.message : 'Failed to load recommendations.');
-      } finally {
-        if (!cancelled) setIsLoadingRecommendations(false);
+        setGapSuggestions(gaps);
+        return;
       }
-    };
 
-    void loadRecommendations();
+      const engineCandidates = engine.lines
+        .filter((line) => line.pv.length > 0)
+        .slice(0, 3);
 
-    return () => {
-      cancelled = true;
-    };
+      if (engineCandidates.length === 0) return;
+
+      const suggestions: Array<TrickyMoveSuggestion | null> = await Promise.all(
+        engineCandidates.map(async (line) => {
+          const candidateSan = line.pv[0];
+          const candidateLine = buildLineFromFen(currentNode.fen, [candidateSan]);
+          if (!candidateLine || candidateLine.length === 0) return null;
+
+          const opponentFen = candidateLine[0].fen;
+          const opponentColor = opponentFen.split(' ')[1] === 'w' ? 'white' : 'black';
+          const replies = await getMostPlayedMoves(
+            opponentFen,
+            {
+              color: opponentColor,
+              useMasters: false,
+              ratingMin: settings.mostLikelyMoveRating,
+              ratingMax: settings.mostLikelyMoveRating,
+              speeds: ['blitz', 'rapid', 'classical'],
+            } as any,
+            (level, message) => {
+              if (level === 'error') logger.error('general', message);
+              else if (level === 'warning') logger.warn('general', message);
+              else logger.info('general', message);
+            },
+            3
+          );
+
+          if (replies.length === 0) return null;
+
+          const topReply = replies[0];
+          const opponentSpread = Math.max(0, 100 - topReply.playRate);
+          const soundness = Math.max(0, Math.min(100, 50 + line.score / 20));
+          const score = opponentSpread * 0.6 + soundness * 0.4;
+
+          const suggestion: TrickyMoveSuggestion = {
+            move: {
+              san: candidateSan,
+              uci: line.pvUci[0],
+              totalGames: 0,
+              playRate: 0,
+              winRate: 0,
+              lossRate: 0,
+              drawRate: 0,
+              averageRating: null,
+            },
+            score,
+            soundness,
+            opponentSpread,
+            topReply,
+          };
+
+          return suggestion;
+        })
+      );
+
+      const best = suggestions
+        .filter((item): item is TrickyMoveSuggestion => item !== null)
+        .sort((a, b) => b.score - a.score)[0] ?? null;
+
+      setTrickyMoveSuggestion(best);
+    } catch (error) {
+      setRecommendationError(error instanceof Error ? error.message : 'Failed to load recommendations.');
+    } finally {
+      setIsLoadingRecommendations(false);
+    }
   }, [
     buildLineFromFen,
     currentNode.children,
@@ -698,13 +686,27 @@ export const App: React.FC = () => {
   const recommendationSection = (
     <div className="flex flex-col border-t border-border-subtle">
       <div className="px-3 py-2">
-        <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">
-          Repertoire Signals
+        <div className="flex flex-col gap-2">
+          <button
+            onClick={handleLoadRecommendations}
+            disabled={isLoadingRecommendations}
+            className={`w-full rounded-md border px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-colors ${
+              isLoadingRecommendations
+                ? 'border-accent-blue/40 bg-accent-blue/10 text-accent-blue'
+                : 'border-border-subtle text-text-secondary hover:border-accent-blue/40 hover:text-accent-blue'
+            }`}
+          >
+            {isLoadingRecommendations ? 'Checking Repertoire Signals...' : 'Check Repertoire Signals'}
+          </button>
         </div>
         {isLoadingRecommendations ? (
           <div className="mt-2 flex items-center gap-2 text-xs text-text-muted">
             <Loader className="h-3.5 w-3.5 animate-spin" />
             Scanning practical moves...
+          </div>
+        ) : !hasLoadedRecommendations ? (
+          <div className="mt-2 text-xs text-text-muted">
+            Run this when you want gap detection or a tricky move suggestion for the current position.
           </div>
         ) : recommendationError ? (
           <div className="mt-2 text-xs text-accent-red">{recommendationError}</div>
