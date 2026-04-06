@@ -165,7 +165,7 @@ export const App: React.FC = () => {
   const [trickyMoveSuggestion, setTrickyMoveSuggestion] = useState<TrickyMoveSuggestion | null>(null);
   const [recommendationError, setRecommendationError] = useState<string | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
-  const [hasLoadedRecommendations, setHasLoadedRecommendations] = useState(false);
+  const [activeSignal, setActiveSignal] = useState<'tricky' | 'gaps' | null>(null);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -225,7 +225,7 @@ export const App: React.FC = () => {
     setTrickyMoveSuggestion(null);
     setRecommendationError(null);
     setIsLoadingRecommendations(false);
-    setHasLoadedRecommendations(false);
+    setActiveSignal(null);
   }, [currentNode.fen]);
 
   const handleViewGame = useCallback((game: ImportedGame) => {
@@ -350,25 +350,22 @@ export const App: React.FC = () => {
   const ourRepertoireColor = settings.defaultColor;
   const isOurTurnInCurrentPosition = currentSideToMove === ourRepertoireColor;
 
-  const handleLoadRecommendations = useCallback(async () => {
+  const handleLoadGaps = useCallback(async () => {
     setIsLoadingRecommendations(true);
-    setHasLoadedRecommendations(true);
+    setActiveSignal('gaps');
     setRecommendationError(null);
     setGapSuggestions([]);
-    setTrickyMoveSuggestion(null);
 
     try {
-      const baseSettings = {
-        color: currentSideToMove,
-        useMasters: false,
-        ratingMin: settings.mostLikelyMoveRating,
-        ratingMax: settings.mostLikelyMoveRating,
-        speeds: ['blitz', 'rapid', 'classical'],
-      };
-
       const playedMoves = await getMostPlayedMoves(
         currentNode.fen,
-        baseSettings as any,
+        {
+          color: currentSideToMove,
+          useMasters: false,
+          ratingMin: settings.mostLikelyMoveRating,
+          ratingMax: settings.mostLikelyMoveRating,
+          speeds: ['blitz', 'rapid', 'classical'],
+        } as any,
         (level, message) => {
           if (level === 'error') logger.error('general', message);
           else if (level === 'warning') logger.warn('general', message);
@@ -377,25 +374,40 @@ export const App: React.FC = () => {
         5
       );
 
-      if (!isOurTurnInCurrentPosition) {
-        const existingMoves = new Set(
-          currentNode.children
-            .filter((child) => !(child as any)._isOverlay)
-            .map((child) => child.move)
-        );
-        const gaps = playedMoves
-          .filter((move) => !existingMoves.has(move.san))
-          .filter((move) => move.playRate >= 8 || move.totalGames >= 2000)
-          .slice(0, 3)
-          .map((move) => ({
-            ...move,
-            severity: move.playRate >= 15 || move.totalGames >= 10000 ? 'high' as const : 'medium' as const,
-          }));
+      const existingMoves = new Set(
+        currentNode.children
+          .filter((child) => !(child as any)._isOverlay)
+          .map((child) => child.move)
+      );
+      const gaps = playedMoves
+        .filter((move) => !existingMoves.has(move.san))
+        .filter((move) => move.playRate >= 8 || move.totalGames >= 2000)
+        .slice(0, 3)
+        .map((move) => ({
+          ...move,
+          severity: move.playRate >= 15 || move.totalGames >= 10000 ? 'high' as const : 'medium' as const,
+        }));
 
-        setGapSuggestions(gaps);
-        return;
-      }
+      setGapSuggestions(gaps);
+    } catch (error) {
+      setRecommendationError(error instanceof Error ? error.message : 'Failed to load recommendations.');
+    } finally {
+      setIsLoadingRecommendations(false);
+    }
+  }, [
+    currentNode.children,
+    currentNode.fen,
+    settings.mostLikelyMoveRating,
+    currentSideToMove,
+  ]);
 
+  const handleLoadTrickyMove = useCallback(async () => {
+    setIsLoadingRecommendations(true);
+    setActiveSignal('tricky');
+    setRecommendationError(null);
+    setTrickyMoveSuggestion(null);
+
+    try {
       const engineCandidates = engine.lines
         .filter((line) => line.pv.length > 0)
         .slice(0, 3);
@@ -467,13 +479,9 @@ export const App: React.FC = () => {
     }
   }, [
     buildLineFromFen,
-    currentNode.children,
     currentNode.fen,
     engine.lines,
-    isOurTurnInCurrentPosition,
-    settings.defaultColor,
     settings.mostLikelyMoveRating,
-    currentSideToMove,
   ]);
 
   const engineBestMoveSan = engine.lines[0]?.pv?.[0] ?? null;
@@ -683,29 +691,40 @@ export const App: React.FC = () => {
       <div className="px-3 py-2">
         <div className="flex flex-col gap-2">
           <button
-            onClick={handleLoadRecommendations}
-            disabled={isLoadingRecommendations}
+            onClick={handleLoadTrickyMove}
+            disabled={isLoadingRecommendations || !isOurTurnInCurrentPosition}
             className={`w-full rounded-md border px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-colors ${
-              isLoadingRecommendations
+              isLoadingRecommendations && activeSignal === 'tricky'
                 ? 'border-accent-blue/40 bg-accent-blue/10 text-accent-blue'
                 : 'border-border-subtle text-text-secondary hover:border-accent-blue/40 hover:text-accent-blue'
             }`}
           >
-            {isLoadingRecommendations ? 'Checking Repertoire Signals...' : 'Check Repertoire Signals'}
+            {isLoadingRecommendations && activeSignal === 'tricky' ? 'Checking Next Tricky Move...' : 'Next Tricky Move'}
+          </button>
+          <button
+            onClick={handleLoadGaps}
+            disabled={isLoadingRecommendations}
+            className={`w-full rounded-md border px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-colors ${
+              isLoadingRecommendations && activeSignal === 'gaps'
+                ? 'border-accent-amber/40 bg-accent-amber/10 text-accent-amber'
+                : 'border-border-subtle text-text-secondary hover:border-accent-amber/40 hover:text-accent-amber'
+            }`}
+          >
+            {isLoadingRecommendations && activeSignal === 'gaps' ? 'Checking for Gaps...' : 'Check for Gaps'}
           </button>
         </div>
         {isLoadingRecommendations ? (
           <div className="mt-2 flex items-center gap-2 text-xs text-text-muted">
             <Loader className="h-3.5 w-3.5 animate-spin" />
-            Scanning practical moves...
+            {activeSignal === 'gaps' ? 'Scanning for missing lines...' : 'Scanning practical moves...'}
           </div>
-        ) : !hasLoadedRecommendations ? (
+        ) : !activeSignal ? (
           <div className="mt-2 text-xs text-text-muted">
-            Run this when you want gap detection or a tricky move suggestion for the current position.
+            Use `Next Tricky Move` for your side or `Check for Gaps` to scan missing practical replies.
           </div>
         ) : recommendationError ? (
           <div className="mt-2 text-xs text-accent-red">{recommendationError}</div>
-        ) : !isOurTurnInCurrentPosition ? (
+        ) : activeSignal === 'gaps' ? (
           gapSuggestions.length > 0 ? (
             <div className="mt-2 space-y-2">
               <div className="text-xs text-text-secondary">
@@ -751,7 +770,7 @@ export const App: React.FC = () => {
           )
         ) : trickyMoveSuggestion ? (
           <div className="mt-2 rounded border border-accent-blue/25 bg-accent-blue/5 px-2 py-2">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">Next Most Tricky Move</div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">Next Tricky Move</div>
             <div className="mt-1 flex items-start justify-between gap-2">
               <div className="text-sm font-semibold text-accent-blue">{trickyMoveSuggestion.move.san}</div>
               <div className="text-[10px] font-mono text-text-muted">
