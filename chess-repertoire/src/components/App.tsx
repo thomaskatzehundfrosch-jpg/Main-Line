@@ -46,7 +46,7 @@ import { getStoredToken } from '../utils/lichessAuth';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useGenerator } from '../hooks/useGenerator';
 import { useSettings, type PracticalMoveRating } from '../context/SettingsContext';
-import { getMostLikelyMove, type LichessMove } from '../utils/lichessApi';
+import { getMostLikelyMove, getMostPlayedMoves, type LichessMove } from '../utils/lichessApi';
 import { logger } from '../utils/errorLogger';
 
 type SidebarTab = 'analysis' | 'games';
@@ -56,6 +56,18 @@ interface MostLikelyMoveState {
   fen: string;
   move: LichessMove | null;
   error: string | null;
+}
+
+interface GapSuggestion extends LichessMove {
+  severity: 'high' | 'medium';
+}
+
+interface TrickyMoveSuggestion {
+  move: LichessMove;
+  score: number;
+  soundness: number;
+  opponentSpread: number;
+  topReply: LichessMove | null;
 }
 
 export const App: React.FC = () => {
@@ -149,6 +161,10 @@ export const App: React.FC = () => {
   const [isFetchingMostLikelyMove, setIsFetchingMostLikelyMove] = useState(false);
   const [showMostLikelyMoveSettings, setShowMostLikelyMoveSettings] = useState(false);
   const [treeExploreMode, setTreeExploreMode] = useState(false);
+  const [gapSuggestions, setGapSuggestions] = useState<GapSuggestion[]>([]);
+  const [trickyMoveSuggestion, setTrickyMoveSuggestion] = useState<TrickyMoveSuggestion | null>(null);
+  const [recommendationError, setRecommendationError] = useState<string | null>(null);
+  const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -204,6 +220,10 @@ export const App: React.FC = () => {
     setMostLikelyMoveState(null);
     setIsFetchingMostLikelyMove(false);
     setShowMostLikelyMoveSettings(false);
+    setGapSuggestions([]);
+    setTrickyMoveSuggestion(null);
+    setRecommendationError(null);
+    setIsLoadingRecommendations(false);
   }, [currentNode.fen]);
 
   const handleViewGame = useCallback((game: ImportedGame) => {
@@ -304,6 +324,170 @@ export const App: React.FC = () => {
     }
   }, [addMoveToNode, currentNode.fen, currentNode.id]);
 
+  const buildLineFromFen = useCallback((startFen: string, sans: string[]) => {
+    const chess = new Chess(startFen);
+    const moves: { move: string; fen: string }[] = [];
+
+    for (const san of sans) {
+      const move = chess.move(san);
+      if (!move) return null;
+      moves.push({ move: move.san, fen: chess.fen() });
+    }
+
+    return moves;
+  }, []);
+
+  const addLineFromCurrentFen = useCallback((sans: string[]) => {
+    const line = buildLineFromFen(currentNode.fen, sans);
+    if (!line || line.length === 0) return false;
+    addLineToNode(currentNode.id, line);
+    return true;
+  }, [addLineToNode, buildLineFromFen, currentNode.fen, currentNode.id]);
+
+  const currentSideToMove = currentNode.fen.split(' ')[1] === 'w' ? 'white' : 'black';
+  const ourRepertoireColor = settings.defaultColor;
+  const isOurTurnInCurrentPosition = currentSideToMove === ourRepertoireColor;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRecommendations = async () => {
+      setIsLoadingRecommendations(true);
+      setRecommendationError(null);
+      setGapSuggestions([]);
+      setTrickyMoveSuggestion(null);
+
+      try {
+        const baseSettings = {
+          color: currentSideToMove,
+          useMasters: false,
+          ratingMin: settings.mostLikelyMoveRating,
+          ratingMax: settings.mostLikelyMoveRating,
+          speeds: ['blitz', 'rapid', 'classical'],
+        };
+
+        const playedMoves = await getMostPlayedMoves(
+          currentNode.fen,
+          baseSettings as any,
+          (level, message) => {
+            if (level === 'error') logger.error('general', message);
+            else if (level === 'warning') logger.warn('general', message);
+            else logger.info('general', message);
+          },
+          5
+        );
+
+        if (cancelled) return;
+
+        if (!isOurTurnInCurrentPosition) {
+          const existingMoves = new Set(
+            currentNode.children
+              .filter((child) => !(child as any)._isOverlay)
+              .map((child) => child.move)
+          );
+          const gaps = playedMoves
+            .filter((move) => !existingMoves.has(move.san))
+            .filter((move) => move.playRate >= 8 || move.totalGames >= 2000)
+            .slice(0, 3)
+            .map((move) => ({
+              ...move,
+              severity: move.playRate >= 15 || move.totalGames >= 10000 ? 'high' as const : 'medium' as const,
+            }));
+
+          setGapSuggestions(gaps);
+          return;
+        }
+
+        const engineCandidates = engine.lines
+          .filter((line) => line.pv.length > 0)
+          .slice(0, 3);
+
+        if (engineCandidates.length === 0) return;
+
+        const suggestions: Array<TrickyMoveSuggestion | null> = await Promise.all(
+          engineCandidates.map(async (line) => {
+            const candidateSan = line.pv[0];
+            const candidateLine = buildLineFromFen(currentNode.fen, [candidateSan]);
+            if (!candidateLine || candidateLine.length === 0) return null;
+
+            const opponentFen = candidateLine[0].fen;
+            const opponentColor = opponentFen.split(' ')[1] === 'w' ? 'white' : 'black';
+            const replies = await getMostPlayedMoves(
+              opponentFen,
+              {
+                color: opponentColor,
+                useMasters: false,
+                ratingMin: settings.mostLikelyMoveRating,
+                ratingMax: settings.mostLikelyMoveRating,
+                speeds: ['blitz', 'rapid', 'classical'],
+              } as any,
+              (level, message) => {
+                if (level === 'error') logger.error('general', message);
+                else if (level === 'warning') logger.warn('general', message);
+                else logger.info('general', message);
+              },
+              3
+            );
+
+            if (replies.length === 0) return null;
+
+            const topReply = replies[0];
+            const opponentSpread = Math.max(0, 100 - topReply.playRate);
+            const soundness = Math.max(0, Math.min(100, 50 + line.score / 20));
+            const score = opponentSpread * 0.6 + soundness * 0.4;
+
+            const suggestion: TrickyMoveSuggestion = {
+              move: {
+                san: candidateSan,
+                uci: line.pvUci[0],
+                totalGames: 0,
+                playRate: 0,
+                winRate: 0,
+                lossRate: 0,
+                drawRate: 0,
+                averageRating: null,
+              },
+              score,
+              soundness,
+              opponentSpread,
+              topReply,
+            };
+
+            return suggestion;
+          })
+        );
+
+        if (cancelled) return;
+
+        const best = suggestions
+          .filter((item): item is TrickyMoveSuggestion => item !== null)
+          .sort((a, b) => b.score - a.score)[0] ?? null;
+
+        setTrickyMoveSuggestion(best);
+      } catch (error) {
+        if (cancelled) return;
+        setRecommendationError(error instanceof Error ? error.message : 'Failed to load recommendations.');
+      } finally {
+        if (!cancelled) setIsLoadingRecommendations(false);
+      }
+    };
+
+    void loadRecommendations();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    buildLineFromFen,
+    currentNode.children,
+    currentNode.fen,
+    engine.lines,
+    isOurTurnInCurrentPosition,
+    settings.defaultColor,
+    settings.mostLikelyMoveRating,
+    currentSideToMove,
+  ]);
+
   const engineBestMoveSan = engine.lines[0]?.pv?.[0] ?? null;
   const lichessMostLikelyMove = mostLikelyMoveState?.fen === currentNode.fen
     ? mostLikelyMoveState.move
@@ -369,6 +553,47 @@ export const App: React.FC = () => {
     if (!lichessMostLikelyMove) return;
     addSanMoveFromFen(lichessMostLikelyMove.san);
   }, [addSanMoveFromFen, lichessMostLikelyMove]);
+
+  const handleAddGapMove = useCallback((move: GapSuggestion) => {
+    addSanMoveFromFen(move.san);
+  }, [addSanMoveFromFen]);
+
+  const handleAddGapLine = useCallback(async (move: GapSuggestion) => {
+    const starter = buildLineFromFen(currentNode.fen, [move.san]);
+    if (!starter || starter.length === 0) return;
+
+    try {
+      const responseFen = starter[0].fen;
+      const nextColor = responseFen.split(' ')[1] === 'w' ? 'white' : 'black';
+      const reply = await getMostLikelyMove(
+        responseFen,
+        {
+          color: nextColor,
+          useMasters: false,
+          ratingMin: settings.mostLikelyMoveRating,
+          ratingMax: settings.mostLikelyMoveRating,
+          speeds: ['blitz', 'rapid', 'classical'],
+        },
+        (level, message) => {
+          if (level === 'error') logger.error('general', message);
+          else if (level === 'warning') logger.warn('general', message);
+          else logger.info('general', message);
+        }
+      );
+
+      const sans = reply ? [move.san, reply.san] : [move.san];
+      addLineFromCurrentFen(sans);
+    } catch {
+      addLineFromCurrentFen([move.san]);
+    }
+  }, [addLineFromCurrentFen, buildLineFromFen, currentNode.fen, settings.mostLikelyMoveRating]);
+
+  const handleAddTrickyLine = useCallback(() => {
+    if (!trickyMoveSuggestion) return;
+    const sans = [trickyMoveSuggestion.move.san];
+    if (trickyMoveSuggestion.topReply) sans.push(trickyMoveSuggestion.topReply.san);
+    addLineFromCurrentFen(sans);
+  }, [addLineFromCurrentFen, trickyMoveSuggestion]);
 
   const mostLikelyMovePanel = mostLikelyMoveState?.fen === currentNode.fen ? (
     <div className="border-t border-border-subtle bg-bg-primary px-3 py-2">
@@ -462,6 +687,105 @@ export const App: React.FC = () => {
         )}
       </div>
       {mostLikelyMovePanel}
+    </div>
+  );
+
+  const recommendationSection = (
+    <div className="flex flex-col border-t border-border-subtle">
+      <div className="px-3 py-2">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">
+          Repertoire Signals
+        </div>
+        {isLoadingRecommendations ? (
+          <div className="mt-2 flex items-center gap-2 text-xs text-text-muted">
+            <Loader className="h-3.5 w-3.5 animate-spin" />
+            Scanning practical moves...
+          </div>
+        ) : recommendationError ? (
+          <div className="mt-2 text-xs text-accent-red">{recommendationError}</div>
+        ) : !isOurTurnInCurrentPosition ? (
+          gapSuggestions.length > 0 ? (
+            <div className="mt-2 space-y-2">
+              <div className="text-xs text-text-secondary">
+                {gapSuggestions.length} opening gap{gapSuggestions.length !== 1 ? 's' : ''} found for the opponent.
+              </div>
+              {gapSuggestions.map((move) => (
+                <div key={move.san} className="rounded border border-accent-amber/25 bg-accent-amber/5 px-2 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-accent-amber">{move.san}</div>
+                      <div className="mt-0.5 text-[11px] text-text-secondary">
+                        {move.playRate.toFixed(1)}% of {move.totalGames.toLocaleString()} games
+                      </div>
+                    </div>
+                    <span className={`rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
+                      move.severity === 'high'
+                        ? 'bg-accent-red/15 text-accent-red'
+                        : 'bg-accent-amber/20 text-accent-amber'
+                    }`}>
+                      {move.severity}
+                    </span>
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => handleAddGapMove(move)}
+                      className="btn-primary flex items-center gap-1 px-2 py-1 text-[10px]"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Add move
+                    </button>
+                    <button
+                      onClick={() => void handleAddGapLine(move)}
+                      className="btn-secondary px-2 py-1 text-[10px]"
+                    >
+                      Add line
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-2 text-xs text-text-muted">No significant opponent gaps detected here.</div>
+          )
+        ) : trickyMoveSuggestion ? (
+          <div className="mt-2 rounded border border-accent-blue/25 bg-accent-blue/5 px-2 py-2">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">Next Most Tricky Move</div>
+            <div className="mt-1 flex items-start justify-between gap-2">
+              <div className="text-sm font-semibold text-accent-blue">{trickyMoveSuggestion.move.san}</div>
+              <div className="text-[10px] font-mono text-text-muted">
+                score {trickyMoveSuggestion.score.toFixed(0)}
+              </div>
+            </div>
+            <div className="mt-1 text-[11px] text-text-secondary">
+              Opponent spread {trickyMoveSuggestion.opponentSpread.toFixed(0)}% · Soundness {trickyMoveSuggestion.soundness.toFixed(0)}%
+            </div>
+            {trickyMoveSuggestion.topReply && (
+              <div className="mt-0.5 text-[10px] text-text-muted">
+                Likely reply: {trickyMoveSuggestion.topReply.san} ({trickyMoveSuggestion.topReply.playRate.toFixed(1)}%)
+              </div>
+            )}
+            <div className="mt-2 flex gap-2">
+              <button
+                onClick={() => addSanMoveFromFen(trickyMoveSuggestion.move.san)}
+                className="btn-primary flex items-center gap-1 px-2 py-1 text-[10px]"
+              >
+                <Plus className="w-3 h-3" />
+                Add move
+              </button>
+              <button
+                onClick={handleAddTrickyLine}
+                className="btn-secondary px-2 py-1 text-[10px]"
+              >
+                Auto-complete line
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-2 text-xs text-text-muted">
+            Enable engine analysis here to surface a tricky continuation.
+          </div>
+        )}
+      </div>
     </div>
   );
 
@@ -1018,6 +1342,7 @@ export const App: React.FC = () => {
                   />
                 </div>
                 {mostLikelyMoveSection}
+                {recommendationSection}
                 <div className="min-h-[40vh] flex flex-col border-t border-border-subtle">
                   <MoveList
                     currentPath={currentPath}
@@ -1439,6 +1764,7 @@ export const App: React.FC = () => {
                   />
                 </div>
                 {mostLikelyMoveSection}
+                {recommendationSection}
 
                 {/* Move List */}
                 <div className="flex flex-col border-t border-border-subtle">
