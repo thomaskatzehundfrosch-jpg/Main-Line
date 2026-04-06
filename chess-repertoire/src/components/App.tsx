@@ -1767,9 +1767,9 @@ export const App: React.FC = () => {
           {/* Tab Content */}
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             {sidebarTab === 'analysis' ? (
-              <>
+              <div className="flex-1 min-h-0 overflow-auto">
                 {/* Engine Panel */}
-                <div className="flex-[3] min-h-[140px] flex flex-col overflow-auto">
+                <div className="min-h-[140px] flex flex-col shrink-0">
                   <EnginePanel
                     lines={engine.lines}
                     isThinking={engine.isThinking}
@@ -1788,7 +1788,7 @@ export const App: React.FC = () => {
                 {recommendationSection}
 
                 {/* Move List */}
-                <div className="flex flex-col border-t border-border-subtle">
+                <div className="flex flex-col border-t border-border-subtle shrink-0">
                   <button
                     onClick={() => setMoveListExpanded((prev) => !prev)}
                     className="panel-header flex items-center justify-between cursor-pointer select-none"
@@ -1802,7 +1802,7 @@ export const App: React.FC = () => {
                     )}
                   </button>
                   {moveListExpanded && (
-                    <div className="flex-[2] min-h-0 flex flex-col">
+                    <div className="flex flex-col max-h-[320px]">
                       <MoveList
                         currentPath={currentPath}
                         currentNode={currentNode}
@@ -1817,7 +1817,7 @@ export const App: React.FC = () => {
                 </div>
 
                 {/* Notes Panel */}
-                <div className="flex flex-col overflow-hidden border-t border-border-subtle">
+                <div className="flex flex-col overflow-hidden border-t border-border-subtle shrink-0">
                   <button
                     onClick={() => setNotesExpanded((prev) => !prev)}
                     className="panel-header flex items-center justify-between cursor-pointer select-none"
@@ -1831,7 +1831,7 @@ export const App: React.FC = () => {
                     )}
                   </button>
                   {notesExpanded && (
-                    <div className="flex-[1] min-h-0 flex flex-col overflow-auto">
+                    <div className="flex flex-col max-h-[280px] overflow-auto">
                       <NotesPanel
                         comment={currentNode.comment}
                         nags={currentNode.nags}
@@ -1844,7 +1844,7 @@ export const App: React.FC = () => {
                     </div>
                   )}
                 </div>
-              </>
+              </div>
             ) : (
               <ErrorBoundary>
                 <div className="flex-1 min-h-0 overflow-auto">
