@@ -48,6 +48,10 @@ import { useGenerator } from '../hooks/useGenerator';
 import { useSettings, type PracticalMoveRating } from '../context/SettingsContext';
 import { getMostLikelyMove, getMostPlayedMoves, type LichessMove } from '../utils/lichessApi';
 import { logger } from '../utils/errorLogger';
+import {
+  buildImportantLineRecommendations,
+  type ImportantLineRecommendation,
+} from '../utils/gameGapRecommendations';
 
 type SidebarTab = 'analysis' | 'games';
 type MobileTab = 'tree' | 'analysis' | 'games';
@@ -163,9 +167,10 @@ export const App: React.FC = () => {
   const [treeExploreMode, setTreeExploreMode] = useState(false);
   const [gapSuggestions, setGapSuggestions] = useState<GapSuggestion[]>([]);
   const [trickyMoveSuggestion, setTrickyMoveSuggestion] = useState<TrickyMoveSuggestion | null>(null);
+  const [importantLineSuggestions, setImportantLineSuggestions] = useState<ImportantLineRecommendation[]>([]);
   const [recommendationError, setRecommendationError] = useState<string | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
-  const [activeSignal, setActiveSignal] = useState<'tricky' | 'gaps' | null>(null);
+  const [activeSignal, setActiveSignal] = useState<'tricky' | 'gaps' | 'important' | null>(null);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -223,10 +228,13 @@ export const App: React.FC = () => {
     setShowMostLikelyMoveSettings(false);
     setGapSuggestions([]);
     setTrickyMoveSuggestion(null);
-    setRecommendationError(null);
-    setIsLoadingRecommendations(false);
-    setActiveSignal(null);
-  }, [currentNode.fen]);
+    if (activeSignal !== 'important') {
+      setImportantLineSuggestions([]);
+      setRecommendationError(null);
+      setIsLoadingRecommendations(false);
+      setActiveSignal(null);
+    }
+  }, [activeSignal, currentNode.fen]);
 
   const handleViewGame = useCallback((game: ImportedGame) => {
     if (viewingGame?.id === game.id) {
@@ -484,6 +492,39 @@ export const App: React.FC = () => {
     settings.mostLikelyMoveRating,
   ]);
 
+  const handleLoadImportantLines = useCallback(() => {
+    setIsLoadingRecommendations(true);
+    setActiveSignal('important');
+    setRecommendationError(null);
+    setImportantLineSuggestions([]);
+
+    try {
+      const analyzedGames = games.importedGames.filter((game) => game.analyzed);
+      if (analyzedGames.length === 0) {
+        setRecommendationError('Analyze a few imported games first to rank the lines you should add.');
+        return;
+      }
+
+      const suggestions = buildImportantLineRecommendations(
+        tree,
+        analyzedGames,
+        settings.defaultColor,
+        4
+      ).slice(0, 5);
+
+      if (suggestions.length === 0) {
+        setRecommendationError(
+          'No missing line recommendations found from your analyzed games. Your mistakes were either already covered or outside this repertoire.'
+        );
+        return;
+      }
+
+      setImportantLineSuggestions(suggestions);
+    } finally {
+      setIsLoadingRecommendations(false);
+    }
+  }, [games.importedGames, settings.defaultColor, tree]);
+
   const engineBestMoveSan = engine.lines[0]?.pv?.[0] ?? null;
   const lichessMostLikelyMove = mostLikelyMoveState?.fen === currentNode.fen
     ? mostLikelyMoveState.move
@@ -590,6 +631,19 @@ export const App: React.FC = () => {
     if (trickyMoveSuggestion.topReply) sans.push(trickyMoveSuggestion.topReply.san);
     addLineFromCurrentFen(sans);
   }, [addLineFromCurrentFen, trickyMoveSuggestion]);
+
+  const handleGoToImportantLine = useCallback((suggestion: ImportantLineRecommendation) => {
+    const targetNode = findNodeById(tree, suggestion.parentNodeId);
+    if (!targetNode) return;
+    navigateToNode(targetNode);
+  }, [navigateToNode, tree]);
+
+  const handleAddImportantLine = useCallback((suggestion: ImportantLineRecommendation) => {
+    const line = buildLineFromFen(suggestion.parentFen, suggestion.line);
+    if (!line || line.length === 0) return;
+    addLineToNode(suggestion.parentNodeId, line);
+    setImportantLineSuggestions((prev) => prev.filter((item) => item.key !== suggestion.key));
+  }, [addLineToNode, buildLineFromFen]);
 
   const mostLikelyMovePanel = mostLikelyMoveState?.fen === currentNode.fen ? (
     <div className="border-t border-border-subtle bg-bg-primary px-3 py-2">
@@ -712,18 +766,91 @@ export const App: React.FC = () => {
           >
             {isLoadingRecommendations && activeSignal === 'gaps' ? 'Checking for Gaps...' : 'Check for Gaps'}
           </button>
+          <button
+            onClick={handleLoadImportantLines}
+            disabled={isLoadingRecommendations}
+            className={`w-full rounded-md border px-3 py-2 text-[10px] font-mono uppercase tracking-wider transition-colors ${
+              isLoadingRecommendations && activeSignal === 'important'
+                ? 'border-accent-teal/40 bg-accent-teal/10 text-accent-teal'
+                : 'border-border-subtle text-text-secondary hover:border-accent-teal/40 hover:text-accent-teal'
+            }`}
+          >
+            {isLoadingRecommendations && activeSignal === 'important'
+              ? 'Ranking Important Lines...'
+              : 'Find Important Lines'}
+          </button>
         </div>
         {isLoadingRecommendations ? (
           <div className="mt-2 flex items-center gap-2 text-xs text-text-muted">
             <Loader className="h-3.5 w-3.5 animate-spin" />
-            {activeSignal === 'gaps' ? 'Scanning for missing lines...' : 'Scanning practical moves...'}
+            {activeSignal === 'gaps'
+              ? 'Scanning for missing lines...'
+              : activeSignal === 'important'
+                ? 'Scoring your biggest missing branches...'
+                : 'Scanning practical moves...'}
           </div>
         ) : !activeSignal ? (
           <div className="mt-2 text-xs text-text-muted">
-            Use `Next Tricky Move` for your side or `Check for Gaps` to scan missing practical replies.
+            Use `Next Tricky Move` for your side, `Check for Gaps` for this node, or `Find Important Lines` to rank what your analyzed games say you should add next.
           </div>
         ) : recommendationError ? (
           <div className="mt-2 text-xs text-accent-red">{recommendationError}</div>
+        ) : activeSignal === 'important' ? (
+          importantLineSuggestions.length > 0 ? (
+            <div className="mt-2 space-y-2">
+              <div className="text-xs text-text-secondary">
+                Ranked from your analyzed games: earlier, repeated, and more costly misses rise to the top.
+              </div>
+              {importantLineSuggestions.map((suggestion) => (
+                <div key={suggestion.key} className="rounded border border-accent-teal/25 bg-accent-teal/5 px-2 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-accent-teal">
+                        {suggestion.line.join(' ')}
+                      </div>
+                      <div className="mt-0.5 text-[11px] text-text-secondary">
+                        Start at move {suggestion.startMoveNumber} with {suggestion.triggerMove}
+                      </div>
+                    </div>
+                    <span className={`rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
+                      suggestion.worstTier === 'blunder'
+                        ? 'bg-accent-red/15 text-accent-red'
+                        : suggestion.worstTier === 'mistake'
+                          ? 'bg-accent-amber/20 text-accent-amber'
+                          : 'bg-yellow-300/15 text-yellow-300'
+                    }`}>
+                      {suggestion.worstTier}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-text-secondary">
+                    {suggestion.gamesCount} game{suggestion.gamesCount !== 1 ? 's' : ''} · avg drop {suggestion.averageEvalDrop.toFixed(2)} · score {suggestion.score.toFixed(1)}
+                  </div>
+                  {suggestion.sampleGameNames.length > 0 && (
+                    <div className="mt-0.5 text-[10px] text-text-muted">
+                      Seen in {suggestion.sampleGameNames.join(', ')}
+                    </div>
+                  )}
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => handleGoToImportantLine(suggestion)}
+                      className="btn-secondary px-2 py-1 text-[10px]"
+                    >
+                      Go there
+                    </button>
+                    <button
+                      onClick={() => handleAddImportantLine(suggestion)}
+                      className="btn-primary flex items-center gap-1 px-2 py-1 text-[10px]"
+                    >
+                      <Plus className="w-3 h-3" />
+                      Add line
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-2 text-xs text-text-muted">No high-priority missing lines found.</div>
+          )
         ) : activeSignal === 'gaps' ? (
           gapSuggestions.length > 0 ? (
             <div className="mt-2 space-y-2">
