@@ -228,13 +228,11 @@ export const App: React.FC = () => {
     setShowMostLikelyMoveSettings(false);
     setGapSuggestions([]);
     setTrickyMoveSuggestion(null);
-    if (activeSignal !== 'important') {
-      setImportantLineSuggestions([]);
-      setRecommendationError(null);
-      setIsLoadingRecommendations(false);
-      setActiveSignal(null);
-    }
-  }, [activeSignal, currentNode.fen]);
+    setImportantLineSuggestions([]);
+    setRecommendationError(null);
+    setIsLoadingRecommendations(false);
+    setActiveSignal(null);
+  }, [currentNode.fen]);
 
   const handleViewGame = useCallback((game: ImportedGame) => {
     if (viewingGame?.id === game.id) {
