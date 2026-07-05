@@ -414,11 +414,25 @@ export const App: React.FC = () => {
     setTrickyMoveSuggestion(null);
 
     try {
+      if (!engine.enabled) {
+        setRecommendationError('Enable engine analysis to rank tricky moves.');
+        return;
+      }
+
+      if (!engine.workerReady) {
+        setRecommendationError('Engine is still loading. Wait a moment and try again.');
+        return;
+      }
+
       const engineCandidates = engine.lines
         .filter((line) => line.pv.length > 0)
         .slice(0, 3);
 
-      if (engineCandidates.length === 0) return;
+      if (engine.currentFen !== currentNode.fen || engine.isThinking || engineCandidates.length === 0) {
+        engine.analyze(currentNode.fen);
+        setRecommendationError('Engine is still analyzing this position. Try again in a second.');
+        return;
+      }
 
       const suggestions: Array<TrickyMoveSuggestion | null> = await Promise.all(
         engineCandidates.map(async (line) => {
@@ -477,6 +491,11 @@ export const App: React.FC = () => {
         .filter((item): item is TrickyMoveSuggestion => item !== null)
         .sort((a, b) => b.score - a.score)[0] ?? null;
 
+      if (!best) {
+        setRecommendationError('No tricky continuation found from the current engine candidates.');
+        return;
+      }
+
       setTrickyMoveSuggestion(best);
     } catch (error) {
       setRecommendationError(error instanceof Error ? error.message : 'Failed to load recommendations.');
@@ -486,6 +505,7 @@ export const App: React.FC = () => {
   }, [
     buildLineFromFen,
     currentNode.fen,
+    engine,
     engine.lines,
     settings.mostLikelyMoveRating,
   ]);
