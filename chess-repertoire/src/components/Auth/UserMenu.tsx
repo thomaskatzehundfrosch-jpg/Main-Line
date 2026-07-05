@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { LogOut, User, Cloud } from 'lucide-react';
+import { LogOut, User, Cloud, RefreshCw } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useFiles } from '../../context/FileContext';
 
 export const UserMenu: React.FC = () => {
   const { user, signOut } = useAuth();
+  const { syncNow, isSyncing } = useFiles();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -46,9 +48,20 @@ export const UserMenu: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 mt-1">
               <Cloud className="w-3 h-3 text-accent-teal" />
-              <span className="text-xs text-accent-teal">Cloud sync active</span>
+              <span className="text-xs text-accent-teal">
+                {isSyncing ? 'Syncing cloud files...' : 'Cloud sync active'}
+              </span>
             </div>
           </div>
+
+          <button
+            onClick={() => { void syncNow(); }}
+            disabled={isSyncing}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-text-muted hover:text-accent-teal hover:bg-accent-teal/10 transition-colors disabled:opacity-60"
+          >
+            <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+            {isSyncing ? 'Syncing...' : 'Sync now'}
+          </button>
 
           {/* Sign out */}
           <button

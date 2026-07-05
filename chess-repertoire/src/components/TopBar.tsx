@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X, Heart, Mail, Youtube, BarChart3 } from 'lucide-react';
+import { Upload, Download, Settings, Globe, Cpu, Brain, LogIn, Menu, X, Heart, Mail, Youtube, BarChart3, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { AuthModal } from './Auth/AuthModal';
 import { UserMenu } from './Auth/UserMenu';
@@ -14,9 +14,11 @@ interface TopBarProps {
   onGenerator?: () => void;
   onTrainer?: () => void;
   onSettings?: () => void;
+  onSync?: () => void;
   activeFileName?: string | null;
   generatorProgress?: GeneratorProgress;
   isGenerating?: boolean;
+  isSyncing?: boolean;
 }
 
 function GeneratorStatus({ progress, isGenerating }: { progress?: GeneratorProgress; isGenerating?: boolean }) {
@@ -54,9 +56,11 @@ export const TopBar: React.FC<TopBarProps> = ({
   onGenerator,
   onTrainer,
   onSettings,
+  onSync,
   activeFileName,
   generatorProgress,
   isGenerating,
+  isSyncing,
 }) => {
   const { user, loading } = useAuth();
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -190,6 +194,16 @@ export const TopBar: React.FC<TopBarProps> = ({
               >
                 <Brain className="w-3.5 h-3.5" />
                 Train
+              </button>
+            )}
+            {user && onSync && (
+              <button
+                onClick={() => { onSync(); setMenuOpen(false); }}
+                disabled={isSyncing}
+                className="btn-ghost flex items-center gap-1.5 text-sm py-1.5 px-3 disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                {isSyncing ? 'Syncing' : 'Sync'}
               </button>
             )}
           </div>

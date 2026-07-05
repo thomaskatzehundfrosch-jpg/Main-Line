@@ -257,6 +257,8 @@ function getInitialState(): FileState {
 const FileContext = createContext<{
   state: FileState;
   dispatch: React.Dispatch<FileAction>;
+  syncWithCloud: (mode: 'initial' | 'refresh') => Promise<void>;
+  isSyncing: boolean;
 } | null>(null);
 
 export function FileProvider({ children }: { children: ReactNode }): JSX.Element {
@@ -266,6 +268,7 @@ export function FileProvider({ children }: { children: ReactNode }): JSX.Element
   const { user } = useAuth();
   const prevUserRef = useRef<string | null>(null);
   const syncInFlightRef = useRef<Promise<void> | null>(null);
+  const [isSyncing, setIsSyncing] = React.useState(false);
 
   // Keep ref in sync so flush handlers always have the latest data
   latestFilesRef.current = state.files;
@@ -279,6 +282,7 @@ export function FileProvider({ children }: { children: ReactNode }): JSX.Element
       }
 
       const run = (async () => {
+        setIsSyncing(true);
         const localFiles = latestFilesRef.current;
         const remoteFiles = await fetchRemoteFiles(userId);
         const mergedFiles = mergeLocalAndRemoteFiles(localFiles, remoteFiles);
@@ -302,6 +306,7 @@ export function FileProvider({ children }: { children: ReactNode }): JSX.Element
           );
         })
         .finally(() => {
+          setIsSyncing(false);
           syncInFlightRef.current = null;
         });
 
@@ -391,7 +396,7 @@ export function FileProvider({ children }: { children: ReactNode }): JSX.Element
   }, [state.activeFileId]);
 
   return (
-    <FileContext.Provider value={{ state, dispatch }}>
+    <FileContext.Provider value={{ state, dispatch, syncWithCloud, isSyncing }}>
       {children}
     </FileContext.Provider>
   );
@@ -407,7 +412,7 @@ export function useFileContext() {
 }
 
 export function useFiles() {
-  const { state, dispatch } = useFileContext();
+  const { state, dispatch, syncWithCloud, isSyncing } = useFileContext();
   const { user } = useAuth();
 
   const saveFile = useCallback(
@@ -503,10 +508,17 @@ export function useFiles() {
     return state.files.find((f) => f.id === state.activeFileId) || null;
   }, [state.files, state.activeFileId]);
 
+  const syncNow = useCallback(async () => {
+    if (!user) return;
+    await syncWithCloud('refresh');
+  }, [syncWithCloud, user]);
+
   return {
     files: state.files,
     activeFileId: state.activeFileId,
+    isSyncing,
     saveFile,
+    syncNow,
     updateFile,
     updateFileGames,
     deleteFile,

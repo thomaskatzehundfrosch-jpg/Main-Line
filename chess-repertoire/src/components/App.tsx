@@ -102,7 +102,7 @@ export const App: React.FC = () => {
   const engine = useEngine();
   const pgnParser = usePgnParser();
   const games = useGames();
-  const { files, activeFileId, getActiveFile, updateFileGames, setActive } = useFiles();
+  const { files, activeFileId, getActiveFile, updateFileGames, setActive, syncNow, isSyncing } = useFiles();
   const repertoireEval = useRepertoireEval();
   const generator = useGenerator();
   const { settings, updateSetting } = useSettings();
@@ -1287,9 +1287,11 @@ export const App: React.FC = () => {
           setTrainerOpen(true);
         }}
         onSettings={() => { setSettingsInitialTab('board'); setSettingsOpen(true); }}
+        onSync={() => { void syncNow(); }}
         activeFileName={getActiveFile()?.name ?? null}
         generatorProgress={generator.progress}
         isGenerating={generator.isGenerating}
+        isSyncing={isSyncing}
       />
       {settingsOpen && <SettingsModal initialTab={settingsInitialTab} onClose={() => setSettingsOpen(false)} />}
 
