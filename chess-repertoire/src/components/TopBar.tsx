@@ -196,14 +196,21 @@ export const TopBar: React.FC<TopBarProps> = ({
                 Train
               </button>
             )}
-            {user && onSync && (
+            {onSync && (
               <button
-                onClick={() => { onSync(); setMenuOpen(false); }}
-                disabled={isSyncing}
+                onClick={() => {
+                  if (user) {
+                    onSync();
+                  } else {
+                    setShowAuthModal(true);
+                  }
+                  setMenuOpen(false);
+                }}
+                disabled={!!user && isSyncing}
                 className="btn-ghost flex items-center gap-1.5 text-sm py-1.5 px-3 disabled:opacity-60"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                {isSyncing ? 'Syncing' : 'Sync'}
+                <RefreshCw className={`w-3.5 h-3.5 ${user && isSyncing ? 'animate-spin' : ''}`} />
+                {user ? (isSyncing ? 'Syncing' : 'Sync') : 'Sign in to sync'}
               </button>
             )}
           </div>
@@ -251,6 +258,24 @@ export const TopBar: React.FC<TopBarProps> = ({
           <Download className="w-4 h-4" />
           <span>Export</span>
         </button>
+
+        {onSync && (
+          <button
+            onClick={() => {
+              if (user) {
+                onSync();
+              } else {
+                setShowAuthModal(true);
+              }
+            }}
+            disabled={!!user && isSyncing}
+            className="btn-ghost flex items-center gap-2 disabled:opacity-60"
+            title={user ? 'Refresh cloud repertoires' : 'Sign in to sync repertoires'}
+          >
+            <RefreshCw className={`w-4 h-4 ${user && isSyncing ? 'animate-spin' : ''}`} />
+            <span>{user ? (isSyncing ? 'Syncing...' : 'Sync') : 'Sign in to Sync'}</span>
+          </button>
+        )}
 
         <div className="h-7 w-px bg-border-subtle" aria-hidden="true" />
 

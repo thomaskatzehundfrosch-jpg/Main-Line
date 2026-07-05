@@ -2107,7 +2107,7 @@ export const App: React.FC = () => {
       />
 
       {/* Error logging UI */}
-      <ErrorToast />
+      {!import.meta.env.DEV && <ErrorToast />}
       <ErrorLogPanel />
       </>
       ))}
