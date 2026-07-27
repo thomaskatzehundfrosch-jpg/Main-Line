@@ -5,7 +5,6 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
-import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   Download,
@@ -24,7 +23,7 @@ import { Chess } from 'chess.js';
 import type { TreeNode } from '../../types';
 import type { GeneratorNode, GeneratorSettings } from '../../types/generator';
 import { DEFAULT_GENERATOR_SETTINGS } from '../../types/generator';
-import { useGenerator } from '../../hooks/useGenerator';
+import type { UseGeneratorReturn } from '../../hooks/useGenerator';
 import { useEngine } from '../../hooks/useEngine';
 import { GeneratorSettingsPanel } from './GeneratorSettings';
 import { GeneratorProgressBar } from './GeneratorProgress';
@@ -34,13 +33,12 @@ import { exportGeneratorPGN } from '../../utils/generatorPgn';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSettings } from '../../context/SettingsContext';
 import { BOARD_THEME_COLORS } from '../Board/theme';
+import { getStoredToken } from '../../utils/lichessAuth';
 
 interface GeneratorPageProps {
   onClose: () => void;
   onImportTree: (tree: TreeNode) => void;
-  /** True when this page is the active visible view. When false (user navigated
-   *  away), generation still runs but a floating portal chip shows progress. */
-  isVisible?: boolean;
+  gen: UseGeneratorReturn;
 }
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -49,9 +47,8 @@ const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 let _cachedSettings: GeneratorSettings = DEFAULT_GENERATOR_SETTINGS;
 let _cachedPgnSeeds: string[][] = [];
 
-export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, isVisible = true }) => {
+export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, gen }) => {
   const engine = useEngine();
-  const gen = useGenerator();
   const isMobile = useIsMobile();
   const { settings: appSettings } = useSettings();
 
@@ -252,12 +249,25 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
   const canGenerate = (() => {
     if (gen.isGenerating) return false;
+    if ((settings.analysisMode || 'stockfish') === 'lichess+stockfish' && !getStoredToken()) {
+      return false;
+    }
     return engine.enabled && engine.workerReady;
   })();
 
-  const handleGenerate = useCallback(() => {
-    const mode = settings.analysisMode || 'stockfish';
-    let sfWorker = engine.workerRef.current;
+  const runGeneration = useCallback((generationMode: 'generate' | 'finish') => {
+    const analysisMode = settings.analysisMode || 'stockfish';
+    if (analysisMode === 'lichess+stockfish' && !getStoredToken()) {
+      gen.addLogEntry({
+        id: `log_lichess_auth_${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+        level: 'error',
+        message: 'Connect your Lichess account before using Lichess + SF generation.',
+        context: null,
+      });
+      return;
+    }
+    const sfWorker = engine.workerRef.current;
 
     engine.stopAnalysis();
 
@@ -265,8 +275,32 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
     const treeSeeds = gen.getSeeds();
     const allSeeds = [...pgnSeeds, ...treeSeeds];
 
+    if (generationMode === 'finish' && allSeeds.length === 0) {
+      gen.addLogEntry({
+        id: `log_finish_empty_${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+        level: 'warning',
+        message: 'Add moves in the generator or load PGN seeds before finishing a repertoire.',
+        context: null,
+      });
+      return;
+    }
+
+    if (generationMode === 'finish') {
+      gen.addLogEntry({
+        id: `log_finish_${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+        level: 'info',
+        message: `Finishing ${allSeeds.length} repertoire line${allSeeds.length !== 1 ? 's' : ''} to move ${settings.maxMoveNumber}.`,
+        context: null,
+      });
+    }
+
     gen.startGeneration(settings, allSeeds.length > 0 ? allSeeds : null, sfWorker);
   }, [settings, pgnSeeds, engine, gen]);
+
+  const handleGenerate = useCallback(() => runGeneration('generate'), [runGeneration]);
+  const handleFinishRepertoire = useCallback(() => runGeneration('finish'), [runGeneration]);
 
   const handleStop = useCallback(() => gen.stopGeneration(), [gen]);
   const handleClear = useCallback(() => gen.clearTree(), [gen]);
@@ -297,6 +331,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
   const node = gen.selectedNode;
   const generatorBoardWidth = isMobile ? 320 : (boardExpanded ? 480 : 360);
+  const canFinishRepertoire = pgnSeeds.length > 0 || gen.getSeeds().length > 0;
 
   /* ---------------------------------------------------------------- */
   /*  Render                                                           */
@@ -351,10 +386,12 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
             settings={settings}
             setSettings={setSettings}
             onGenerate={handleGenerate}
+            onFinishRepertoire={handleFinishRepertoire}
             onStop={handleStop}
             isGenerating={gen.isGenerating}
             sfReady={engine.enabled && engine.workerReady}
             canGenerate={canGenerate}
+            canFinishRepertoire={canFinishRepertoire}
             pgnSeeds={pgnSeeds}
             setPgnSeeds={setPgnSeeds}
           />
@@ -517,22 +554,6 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
           </div>
         )}
       </div>
-
-      {/* Floating progress chip — shown via portal when generation is running
-          but the user has navigated away from this page (isVisible = false). */}
-      {gen.isGenerating && !isVisible && createPortal(
-        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5
-          bg-bg-surface border border-accent-teal/60 rounded-full px-4 py-2 shadow-xl
-          font-mono text-xs text-accent-teal select-none pointer-events-none">
-          <span className="w-2 h-2 rounded-full bg-accent-teal animate-pulse flex-shrink-0" />
-          <span>
-            Generating repertoire&hellip;&nbsp;
-            {gen.progress.nodes}/{gen.progress.maxNodes} nodes
-            &nbsp;({Math.round((gen.progress.nodes / Math.max(1, gen.progress.maxNodes)) * 100)}%)
-          </span>
-        </div>,
-        document.body
-      )}
     </div>
   );
 };

@@ -14,10 +14,12 @@ interface GeneratorSettingsProps {
   settings: GeneratorSettings;
   setSettings: React.Dispatch<React.SetStateAction<GeneratorSettings>>;
   onGenerate: () => void;
+  onFinishRepertoire: () => void;
   onStop: () => void;
   isGenerating: boolean;
   sfReady: boolean;
   canGenerate: boolean;
+  canFinishRepertoire: boolean;
   pgnSeeds: string[][];
   setPgnSeeds: React.Dispatch<React.SetStateAction<string[][]>>;
 }
@@ -26,10 +28,12 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
   settings,
   setSettings,
   onGenerate,
+  onFinishRepertoire,
   onStop,
   isGenerating,
   sfReady,
   canGenerate,
+  canFinishRepertoire,
   pgnSeeds,
   setPgnSeeds,
 }) => {
@@ -720,17 +724,31 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
             Stop Generation
           </button>
         ) : (
-          <button
-            onClick={onGenerate}
-            disabled={!canGenerate}
-            className={`w-full py-2 rounded font-mono text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 ${
-              canGenerate
-                ? 'bg-accent-teal text-white hover:bg-accent-teal/90'
-                : 'bg-bg-hover text-text-muted cursor-not-allowed'
-            }`}
-          >
-            Generate Repertoire
-          </button>
+          <>
+            <button
+              onClick={onFinishRepertoire}
+              disabled={!canGenerate || !canFinishRepertoire}
+              className={`w-full py-2 rounded font-mono text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 ${
+                canGenerate && canFinishRepertoire
+                  ? 'bg-accent-blue text-white hover:bg-accent-blue/90'
+                  : 'bg-bg-hover text-text-muted cursor-not-allowed'
+              }`}
+              title="Continue every current generator leaf line to the configured max move number"
+            >
+              Finish Repertoire
+            </button>
+            <button
+              onClick={onGenerate}
+              disabled={!canGenerate}
+              className={`w-full py-2 rounded font-mono text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 ${
+                canGenerate
+                  ? 'bg-accent-teal text-white hover:bg-accent-teal/90'
+                  : 'bg-bg-hover text-text-muted cursor-not-allowed'
+              }`}
+            >
+              Generate Repertoire
+            </button>
+          </>
         )}
       </div>
     </div>
