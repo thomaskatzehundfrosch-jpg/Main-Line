@@ -213,6 +213,7 @@ interface QueueItem {
   depth: number;
   effectiveMaxDepth: number;
   fullMoveNumber: number;
+  branchPriority: AdaptiveDepthCategory;
   /** Moves still allowed past maxMoveNumber due to a sacrifice earlier in the line. */
   sacrificeMovesLeft: number;
 }
@@ -258,6 +259,29 @@ function applyAdaptiveDepth(
     return Math.max(currentDepth + 2, baseDepth - Math.max(0, rareReductionMoves) * 2);
   }
   return baseDepth;
+}
+
+function getAdaptiveOpponentResponseCount(
+  baseCount: number,
+  branchPriority: AdaptiveDepthCategory,
+  likelyExtraResponses: number
+): number {
+  if (branchPriority === 'likely') {
+    return Math.max(1, baseCount + Math.max(0, likelyExtraResponses));
+  }
+  if (branchPriority === 'rare') {
+    return 1;
+  }
+  return Math.max(1, baseCount);
+}
+
+function getOurMoveBranchPriority(
+  parentPriority: AdaptiveDepthCategory,
+  candidateIndex: number
+): AdaptiveDepthCategory {
+  if (candidateIndex === 0) return parentPriority;
+  if (candidateIndex === 1) return parentPriority === 'rare' ? 'rare' : 'possible';
+  return 'rare';
 }
 
 /**
@@ -394,7 +418,8 @@ export async function buildTree(
   async function gatherCandidates(
     fen: string,
     isOurTurn: boolean,
-    fullMoveNumber: number
+    fullMoveNumber: number,
+    opponentResponseTarget?: number
   ): Promise<MoveCandidate[]> {
     const sfAnalysisDepth = settings.sfDepth || 12;
     // MultiPV analysis is much slower than single-PV: cap at depth 15 so we
@@ -408,7 +433,7 @@ export async function buildTree(
     // How many candidates we ultimately want
     const targetPV = isOurTurn
       ? (settings.maxBranchesOur || 1)
-      : (settings.maxOpponentResponses || 2);
+      : (opponentResponseTarget || settings.maxOpponentResponses || 2);
 
     // When trickyness is active, approve up to 2 extra candidates beyond
     // targetPV so the combined style+trickyness sort has a real choice to make.
@@ -791,6 +816,7 @@ export async function buildTree(
         depth: seedDepth,
         effectiveMaxDepth: maxDepth,
         fullMoveNumber: seedFullMove,
+        branchPriority: 'likely',
         sacrificeMovesLeft: 0,
       });
     }
@@ -801,6 +827,7 @@ export async function buildTree(
       depth: 0,
       effectiveMaxDepth: maxDepth,
       fullMoveNumber: 1,
+      branchPriority: 'likely',
       sacrificeMovesLeft: 0,
     });
   }
@@ -815,6 +842,8 @@ export async function buildTree(
   const adaptiveDepth = settings.adaptiveDepth ?? false;
   const adaptiveLikelyBonusMoves = settings.adaptiveDepthLikelyBonusMoves ?? 4;
   const adaptiveRareReductionMoves = settings.adaptiveDepthRareReductionMoves ?? 4;
+  const adaptiveBranching = settings.adaptiveBranching ?? false;
+  const adaptiveLikelyExtraResponses = settings.adaptiveBranchingLikelyExtraResponses ?? 2;
 
   // Deferred branch items, kept sorted by depth ascending (shallowest first).
   const deferredBranches: QueueItem[] = [];
@@ -859,15 +888,35 @@ export async function buildTree(
     // Check depth limit
     if (item.depth >= item.effectiveMaxDepth) continue;
 
+    const opponentResponseTarget = !item.isOurTurn && adaptiveBranching
+      ? getAdaptiveOpponentResponseCount(
+          settings.maxOpponentResponses || 2,
+          item.branchPriority,
+          adaptiveLikelyExtraResponses
+        )
+      : (settings.maxOpponentResponses || 2);
+
+    if (!item.isOurTurn && adaptiveBranching && opponentResponseTarget !== (settings.maxOpponentResponses || 2)) {
+      logError(
+        'info',
+        `Adaptive branching: ${item.branchPriority} branch → ${opponentResponseTarget} opponent response${opponentResponseTarget !== 1 ? 's' : ''}.`
+      );
+    }
+
     // Gather candidates from Stockfish / Lichess
-    let candidates = await gatherCandidates(item.node.fen, item.isOurTurn, item.fullMoveNumber);
+    let candidates = await gatherCandidates(
+      item.node.fen,
+      item.isOurTurn,
+      item.fullMoveNumber,
+      opponentResponseTarget
+    );
 
     // Smart filtering: reduce opponent responses when one move is clearly dominant
     if (!item.isOurTurn && settings.smartFiltering && useStockfish && candidates.length > 1) {
       const opponentIsBlack = color === 'white';
       const { filtered, reason } = selectSignificantMoves(
         candidates,
-        settings.maxOpponentResponses || 2,
+        opponentResponseTarget,
         opponentIsBlack
       );
       if (reason) {
@@ -883,7 +932,7 @@ export async function buildTree(
 
     // Process each candidate — collect queue items, then prepend (DFS)
     const newQueueItems: QueueItem[] = [];
-    const opponentSiblingLichessGames = !item.isOurTurn && adaptiveDepth
+    const opponentSiblingLichessGames = !item.isOurTurn && (adaptiveDepth || adaptiveBranching)
       ? candidates.reduce((sum, candidate) => sum + Math.max(0, candidate._lichess?.totalGames ?? 0), 0)
       : 0;
 
@@ -995,6 +1044,11 @@ export async function buildTree(
         depth: item.depth + 1,
         effectiveMaxDepth: childMaxDepth,
         fullMoveNumber: nextFullMove,
+        branchPriority: !item.isOurTurn
+          ? (adaptiveDepth || adaptiveBranching
+              ? classifyAdaptiveDepth(candidate, ci, opponentSiblingLichessGames).category
+              : item.branchPriority)
+          : getOurMoveBranchPriority(item.branchPriority, ci),
         sacrificeMovesLeft: childSacrificeMovesLeft,
       };
 

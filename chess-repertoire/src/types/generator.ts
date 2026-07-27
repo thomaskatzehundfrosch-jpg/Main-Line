@@ -16,6 +16,8 @@ export interface GeneratorSettings {
   adaptiveDepth: boolean;         // adjust opponent branch depth by practical move likelihood
   adaptiveDepthLikelyBonusMoves: number; // extra moves for likely opponent responses
   adaptiveDepthRareReductionMoves: number; // fewer moves for rare opponent responses
+  adaptiveBranching: boolean;     // adjust opponent response count by branch likelihood
+  adaptiveBranchingLikelyExtraResponses: number; // extra opponent responses in likely/main branches
   maxNodes: number;               // total node limit (10–2000)
   sfDepth: number;                // Stockfish search depth used for all analysis
   /** Extra moves past maxMoveNumber allowed in tactical positions (captures/check). 0 = disabled. */
@@ -150,6 +152,8 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   adaptiveDepth: false,
   adaptiveDepthLikelyBonusMoves: 4,
   adaptiveDepthRareReductionMoves: 4,
+  adaptiveBranching: false,
+  adaptiveBranchingLikelyExtraResponses: 2,
   maxNodes: 300,
   sfDepth: 25,
   tacticalExtension: 4,

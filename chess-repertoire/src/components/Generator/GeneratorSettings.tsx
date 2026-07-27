@@ -429,6 +429,45 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                 </div>
               )}
             </div>
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-text-secondary">Adaptive branching</span>
+                <button
+                  role="switch"
+                  aria-checked={settings.adaptiveBranching ?? false}
+                  disabled={isGenerating}
+                  onClick={() => update('adaptiveBranching', !(settings.adaptiveBranching ?? false))}
+                  className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
+                    isGenerating ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+                  } ${(settings.adaptiveBranching ?? false) ? 'bg-accent-teal' : 'bg-bg-hover border border-border-active'}`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                      (settings.adaptiveBranching ?? false) ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+              {(settings.adaptiveBranching ?? false) && (
+                <div className="mt-2 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-text-secondary">Likely extra responses</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={6}
+                      value={settings.adaptiveBranchingLikelyExtraResponses ?? 2}
+                      onChange={(e) => update('adaptiveBranchingLikelyExtraResponses', parseInt(e.target.value) || 0)}
+                      disabled={isGenerating}
+                      className="w-16 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
+                    />
+                  </div>
+                  <p className="text-[10px] text-text-muted leading-tight">
+                    Likely/main branches include more opponent replies; rare branches keep only one.
+                  </p>
+                </div>
+              )}
+            </div>
             <div className="flex items-center justify-between">
               <span className="text-[11px] text-text-secondary">Max nodes</span>
               <input
