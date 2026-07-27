@@ -258,6 +258,40 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
           );
         })()}
 
+        {/* Avoid Queen Trades */}
+        {(() => {
+          const on = settings.avoidQueenTrades ?? false;
+          return (
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
+                  Avoid Queen Trades
+                </label>
+                <button
+                  role="switch"
+                  aria-checked={on}
+                  disabled={isGenerating}
+                  onClick={() => update('avoidQueenTrades', !on)}
+                  className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
+                    isGenerating ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+                  } ${on ? 'bg-accent-teal' : 'bg-bg-hover border border-border-active'}`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                      on ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+              <p className="text-[10px] mt-1" style={{ color: on ? '#14b8a6' : '#6b7280' }}>
+                {on
+                  ? 'On - skips queen-trade lines when eval-approved alternatives exist'
+                  : 'Off - queen trades allowed'}
+              </p>
+            </div>
+          );
+        })()}
+
         {/* Analysis Mode */}
         <div>
           <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
@@ -286,7 +320,7 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
           )}
           {showLichess && (
             <p className="text-[10px] text-text-muted mt-1">
-              Lichess Explorer data (~1 req/sec). Moves ranked by popularity + win rate.
+              Lichess Explorer data requires a connected account. Moves ranked by popularity + win rate.
             </p>
           )}
         </div>
@@ -583,6 +617,11 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
 
       {/* Action Buttons */}
       <div className="sticky bottom-0 p-4 border-t border-border-subtle space-y-2 bg-bg-surface/95 backdrop-blur">
+        {showLichess && !lichessConnected && !isGenerating && (
+          <p className="text-[10px] text-accent-amber text-center font-mono">
+            Connect Lichess to generate with Lichess + SF.
+          </p>
+        )}
         {isGenerating ? (
           <button
             onClick={onStop}

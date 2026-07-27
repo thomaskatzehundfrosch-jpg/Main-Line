@@ -143,6 +143,47 @@ function isPositionTactical(fen: string): boolean {
 /** Standard piece values in pawns. */
 const PIECE_VALUES: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
 
+function hasQueen(chess: Chess, color: 'w' | 'b'): boolean {
+  return chess.board().some((rank) =>
+    rank.some((piece) => piece?.type === 'q' && piece.color === color)
+  );
+}
+
+function bothQueensPresent(chess: Chess): boolean {
+  return hasQueen(chess, 'w') && hasQueen(chess, 'b');
+}
+
+/**
+ * True when our candidate either reaches a queenless/traded-queen position or
+ * gives the opponent an immediate queen-trade reply. Only meaningful while
+ * both queens are still on the board before the move.
+ */
+function allowsImmediateQueenTrade(fromFen: string, san: string): boolean {
+  try {
+    const chess = new Chess(fromFen);
+    if (!bothQueensPresent(chess)) return false;
+
+    const moveResult = chess.move(san);
+    if (!moveResult) return false;
+
+    // If the move itself reaches a position without both queens, treat it as
+    // queen-trade territory and prefer any sound alternative.
+    if (!bothQueensPresent(chess)) return true;
+
+    const replies = chess.moves({ verbose: true });
+    for (const reply of replies) {
+      const afterReply = new Chess(chess.fen());
+      const replyResult = afterReply.move(reply);
+      if (!replyResult) continue;
+      if (!bothQueensPresent(afterReply)) return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Detect whether a move is a sacrifice — moving side gives away more material
  * than it captures (e.g. Nxf7 when the knight isn't recaptured cleanly).
@@ -319,6 +360,7 @@ export async function buildTree(
     const multiPvDepth = Math.min(sfAnalysisDepth, 15);
     const styleValue = settings.styleValue ?? 0;
     const tw = settings.trickynessWeight ?? 0;
+    const avoidQueenTrades = settings.avoidQueenTrades ?? false;
 
     // How many candidates we ultimately want
     const targetPV = isOurTurn
@@ -328,7 +370,8 @@ export async function buildTree(
     // When trickyness is active, approve up to 2 extra candidates beyond
     // targetPV so the combined style+trickyness sort has a real choice to make.
     const trickExtra = (isOurTurn && tw > 0) ? Math.min(2, targetPV) : 0;
-    const approvalTarget = targetPV + trickExtra;
+    const queenTradeExtra = (isOurTurn && avoidQueenTrades) ? 4 : 0;
+    const approvalTarget = targetPV + trickExtra + queenTradeExtra;
 
     // Style-adjusted eval threshold (only applies to our moves)
     const effectiveThreshold = isOurTurn
@@ -341,9 +384,10 @@ export async function buildTree(
     // For all other cases, gather SF candidates upfront.
     const skipUpfrontSF = analysisMode === 'lichess+stockfish' && isOurTurn;
 
-    // Request extra SF PVs when style OR trickyness needs a wider candidate pool
-    const sfRequestPV = isOurTurn && (styleValue !== 0 || tw > 0)
-      ? Math.min(5, targetPV + 2)
+    // Request extra SF PVs when style/trickyness/queen-trade avoidance needs
+    // a wider candidate pool.
+    const sfRequestPV = isOurTurn && (styleValue !== 0 || tw > 0 || avoidQueenTrades)
+      ? Math.min(8, approvalTarget)
       : targetPV;
 
     const sfCandidates: MoveCandidate[] = [];
@@ -418,7 +462,7 @@ export async function buildTree(
     if (useLichess) {
       try {
         const lichessRequestCount = isOurTurn
-          ? Math.max(targetPV * 4, 8)
+          ? Math.max(approvalTarget * 4, 8)
           : targetPV * 2;
         const lichessMoves = await getMostPlayedMoves(fen, settings, logError, lichessRequestCount);
         apiCalls++;
@@ -489,16 +533,16 @@ export async function buildTree(
         }
 
         // Fallback: not enough Lichess moves approved → ask SF directly
-        if (candidates.length < targetPV && sfWorker) {
-          logError('info', `Lichess+SF: only ${candidates.length}/${targetPV} Lichess moves approved — falling back to SF`);
-          const needed = targetPV - candidates.length;
+        if (candidates.length < approvalTarget && sfWorker) {
+          logError('info', `Lichess+SF: only ${candidates.length}/${approvalTarget} desired moves approved — falling back to SF`);
+          const needed = approvalTarget - candidates.length;
           const SF_RETRIES = 2;
           for (let attempt = 0; attempt <= SF_RETRIES; attempt++) {
             if (attempt > 0) logError('warning', `Lichess+SF fallback MultiPV retry ${attempt}/${SF_RETRIES}...`);
             try {
               const fallbackMoves = await getTopMoves(sfWorker, fen, multiPvDepth, needed + 4);
               for (const tm of fallbackMoves) {
-                if (candidates.length >= targetPV) break;
+                if (candidates.length >= approvalTarget) break;
                 const san = uciToSan(fen, tm.uci);
                 if (!san || usedSans.has(san)) continue;
                 if (failsEvalThreshold(tm.eval, color, effectiveThreshold)) continue;
@@ -541,6 +585,29 @@ export async function buildTree(
       }
     } else {
       candidates = sfCandidates;
+    }
+
+    // ── Avoid queen trades ──────────────────────────────────────────────────
+    // At this point our candidates have already passed the eval threshold.
+    // Prefer any eval-approved move that keeps queens on and does not allow an
+    // immediate queen-trade reply.
+    if (isOurTurn && avoidQueenTrades && candidates.length > 1) {
+      const queenTradeMoves = candidates.filter((candidate) =>
+        allowsImmediateQueenTrade(fen, candidate.san)
+      );
+      if (queenTradeMoves.length > 0 && queenTradeMoves.length < candidates.length) {
+        const queenTradeSans = new Set(queenTradeMoves.map((candidate) => candidate.san));
+        candidates = candidates.filter((candidate) => !queenTradeSans.has(candidate.san));
+        logError(
+          'info',
+          `Avoid queen trades: skipped ${queenTradeMoves.map((candidate) => candidate.san).join(', ')} because eval-approved alternatives exist.`
+        );
+      } else if (queenTradeMoves.length === candidates.length) {
+        logError(
+          'info',
+          'Avoid queen trades: all eval-approved moves allow a queen trade, so keeping the approved candidate pool.'
+        );
+      }
     }
 
     // ── Trickyness: opponent error rate ──────────────────────────────────────

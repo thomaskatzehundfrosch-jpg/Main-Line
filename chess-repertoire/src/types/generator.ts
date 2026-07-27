@@ -18,6 +18,7 @@ export interface GeneratorSettings {
   /** Extra moves past maxMoveNumber allowed in tactical positions (captures/check). 0 = disabled. */
   tacticalExtension: number;
   evalThreshold: number;          // min acceptable eval for our moves (pawns)
+  avoidQueenTrades: boolean;      // avoid our moves that enter or allow immediate queen trades when alternatives meet the eval threshold
   flagDangerousResponses: boolean;
   smartFiltering: boolean;         // skip weak opponent responses when eval gap is large
   /**
@@ -147,6 +148,7 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   sfDepth: 25,
   tacticalExtension: 4,
   evalThreshold: -0.3,
+  avoidQueenTrades: false,
   flagDangerousResponses: true,
   smartFiltering: true,
   styleValue: -1,
