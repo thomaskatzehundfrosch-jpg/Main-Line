@@ -30,6 +30,7 @@ const sharedChess = new Chess();
 
 type Phase = 'idle' | 'autoplay' | 'question' | 'grading' | 'complete' | 'replay';
 type DrillColor = 'white' | 'black' | 'both';
+type LinePriorityCategory = 'all' | 'likely' | 'possible' | 'rare' | 'manual';
 
 interface SessionStats {
   correct: number;
@@ -52,6 +53,15 @@ interface PromptStep {
 interface TrainerSelection {
   fileId: string;
   color: DrillColor;
+  priorityCategory: LinePriorityCategory;
+}
+
+interface LinePriorityInfo {
+  key: string;
+  category: Exclude<LinePriorityCategory, 'all'>;
+  likelihood: number | null;
+  gameCount: number;
+  moves: string[];
 }
 
 function cardKey(card: Pick<Card, 'front' | 'back'>): string {
@@ -92,6 +102,92 @@ function collapseToDeepestLines(cards: Card[]): Card[] {
       return isStrictPrefix(cardHistory, other.moveHistorySan ?? []);
     });
   });
+}
+
+function findNodePath(root: RepertoireFile['tree'], moves: string[]): RepertoireFile['tree'][] {
+  const path: RepertoireFile['tree'][] = [];
+  let current = root;
+
+  for (const move of moves) {
+    const child = current.children.find((candidate) => candidate.move === move);
+    if (!child) return [];
+    path.push(child);
+    current = child;
+  }
+
+  return path;
+}
+
+function getLinePriorityInfo(root: RepertoireFile['tree'], card: Card): LinePriorityInfo {
+  const moves = card.moveHistorySan ?? [];
+  const nodePath = findNodePath(root, moves);
+  if (moves.length === 0 || nodePath.length !== moves.length) {
+    return {
+      key: cardKey(card),
+      category: 'manual',
+      likelihood: null,
+      gameCount: 0,
+      moves,
+    };
+  }
+
+  let currentParent = root;
+  let likelihoodSum = 0;
+  let measuredMoves = 0;
+
+  for (const node of nodePath) {
+    const siblingGames = currentParent.children.reduce(
+      (sum, child) => sum + Math.max(0, child.gameCount || 0),
+      0
+    );
+
+    if ((node.gameCount || 0) <= 0 || siblingGames <= 0) {
+      return {
+        key: cardKey(card),
+        category: 'manual',
+        likelihood: null,
+        gameCount: nodePath[nodePath.length - 1]?.gameCount ?? 0,
+        moves,
+      };
+    }
+
+    likelihoodSum += node.gameCount / siblingGames;
+    measuredMoves += 1;
+    currentParent = node;
+  }
+
+  const likelihood = measuredMoves > 0 ? likelihoodSum / measuredMoves : null;
+  const leafGameCount = nodePath[nodePath.length - 1]?.gameCount ?? 0;
+  const category = likelihood === null
+    ? 'manual'
+    : likelihood >= 0.4
+      ? 'likely'
+      : likelihood >= 0.15
+        ? 'possible'
+        : 'rare';
+
+  return {
+    key: cardKey(card),
+    category,
+    likelihood,
+    gameCount: leafGameCount,
+    moves,
+  };
+}
+
+function buildLinePriorityInfos(file: RepertoireFile, cards: Card[]): LinePriorityInfo[] {
+  return collapseToDeepestLines(cards).map((card) => getLinePriorityInfo(file.tree, card));
+}
+
+function categoryLabel(category: LinePriorityCategory): string {
+  switch (category) {
+    case 'likely': return 'Likely';
+    case 'possible': return 'Possible';
+    case 'rare': return 'Rare';
+    case 'manual': return 'Added manually';
+    case 'all':
+    default: return 'All lines';
+  }
 }
 
 function uciToSan(fen: string, uci: string): string {
@@ -327,6 +423,7 @@ export const SpacedRepetitionTrainer: React.FC<{
   const [selection, setSelection] = useState<TrainerSelection | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string>('');
   const [selectedColor, setSelectedColor] = useState<DrillColor>('white');
+  const [selectedPriority, setSelectedPriority] = useState<LinePriorityCategory>('all');
   const [cards, setCards] = useState<Card[]>([]);
   const [sessionLines, setSessionLines] = useState<Card[]>([]);
   const [currentLineIndex, setCurrentLineIndex] = useState(0);
@@ -402,6 +499,32 @@ export const SpacedRepetitionTrainer: React.FC<{
     () => files.find((file) => file.id === selectedFileId) ?? null,
     [files, selectedFileId],
   );
+  const priorityInfos = useMemo(() => {
+    if (!currentFile) return [];
+    return buildLinePriorityInfos(
+      currentFile,
+      buildCardsForSelection(currentFile, selectedColor, loadCards())
+    );
+  }, [currentFile, selectedColor]);
+  const priorityCounts = useMemo(() => {
+    const counts: Record<Exclude<LinePriorityCategory, 'all'>, number> = {
+      likely: 0,
+      possible: 0,
+      rare: 0,
+      manual: 0,
+    };
+    for (const info of priorityInfos) counts[info.category] += 1;
+    return counts;
+  }, [priorityInfos]);
+  const selectedPriorityLineCount = selectedPriority === 'all'
+    ? priorityInfos.length
+    : priorityCounts[selectedPriority as Exclude<LinePriorityCategory, 'all'>];
+
+  useEffect(() => {
+    if (selectedPriority !== 'all' && selectedPriorityLineCount === 0) {
+      setSelectedPriority('all');
+    }
+  }, [selectedPriority, selectedPriorityLineCount]);
   const currentCard = sessionLines[currentLineIndex] ?? null;
   const promptSteps = useMemo(
     () => (currentCard && selection ? buildPromptSteps(currentCard, selection.color) : []),
@@ -465,7 +588,15 @@ export const SpacedRepetitionTrainer: React.FC<{
 
     const storedCards = loadCards();
     const cardsForSelection = buildCardsForSelection(file, nextSelection.color, storedCards);
-    const linesForSession = collapseToDeepestLines(cardsForSelection);
+    const linePriorityByKey = new Map(
+      buildLinePriorityInfos(file, cardsForSelection).map((info) => [info.key, info] as const)
+    );
+    const allLinesForSession = collapseToDeepestLines(cardsForSelection);
+    const linesForSession = nextSelection.priorityCategory === 'all'
+      ? allLinesForSession
+      : allLinesForSession.filter((card) =>
+          linePriorityByKey.get(cardKey(card))?.category === nextSelection.priorityCategory
+        );
     const mergedCards = mergeCards(storedCards, cardsForSelection);
     saveCards(mergedCards);
 
@@ -909,6 +1040,37 @@ export const SpacedRepetitionTrainer: React.FC<{
                 </p>
               </div>
 
+              <div>
+                <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Line Priority</div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+                  {(['all', 'likely', 'possible', 'rare', 'manual'] as LinePriorityCategory[]).map((category) => {
+                    const count = category === 'all'
+                      ? priorityInfos.length
+                      : priorityCounts[category as Exclude<LinePriorityCategory, 'all'>];
+                    return (
+                      <button
+                        key={category}
+                        onClick={() => setSelectedPriority(category)}
+                        disabled={count === 0}
+                        className={`rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-35 disabled:cursor-not-allowed ${
+                          selectedPriority === category
+                            ? 'border-accent-teal bg-accent-teal/5 text-text-primary'
+                            : 'border-border-subtle bg-bg-panel text-text-muted hover:text-text-primary'
+                        }`}
+                      >
+                        <div className="text-xs font-semibold">{categoryLabel(category)}</div>
+                        <div className="mt-1 text-[10px] font-mono text-text-muted">
+                          {count} line{count !== 1 ? 's' : ''}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-text-muted text-xs mt-2">
+                  Likelihood is estimated from move popularity within each branch. Lines without popularity data are grouped as added manually.
+                </p>
+              </div>
+
               {lastSessionOverviewPercent !== null && (
                 <AccuracyComparisonCard
                   currentPercent={null}
@@ -918,8 +1080,12 @@ export const SpacedRepetitionTrainer: React.FC<{
 
               <div className="sticky bottom-0 -mx-4 mt-1 border-t border-border-subtle bg-bg-primary/95 px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur sm:static sm:mx-0 sm:mt-0 sm:border-t-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:pb-0 sm:backdrop-blur-none">
                 <button
-                  onClick={() => currentFile && startTraining({ fileId: currentFile.id, color: selectedColor })}
-                  disabled={!currentFile}
+                  onClick={() => currentFile && startTraining({
+                    fileId: currentFile.id,
+                    color: selectedColor,
+                    priorityCategory: selectedPriority,
+                  })}
+                  disabled={!currentFile || selectedPriorityLineCount === 0}
                   className="btn-primary flex w-full items-center justify-center gap-2 px-4 py-3 sm:w-auto sm:justify-start sm:py-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Start Training <ArrowRight className="w-4 h-4" />
@@ -957,6 +1123,8 @@ export const SpacedRepetitionTrainer: React.FC<{
                 ? 'Black repertoire'
                 : 'Both sides'}
           </span>
+          <span className="text-border-subtle">|</span>
+          <span>{categoryLabel(selection.priorityCategory)}</span>
           <span className="text-border-subtle">|</span>
           <span>{cards.length} cards</span>
           <span className="text-border-subtle">|</span>
@@ -1015,12 +1183,23 @@ export const SpacedRepetitionTrainer: React.FC<{
           )}
 
           {phase === 'question' && currentCard && showSolution && (
-            <button
-              onClick={advanceAfterAnswer}
-              className="btn-primary mt-3 flex w-full max-w-[min(100%,420px)] items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium lg:hidden"
-            >
-              Got it, Next Move <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+            <div className="mt-3 flex w-full max-w-[min(100%,420px)] flex-col gap-2 lg:hidden">
+              <button
+                onClick={advanceAfterAnswer}
+                className="btn-primary flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+              >
+                Got it, Next Move <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+              {onAnalyzePosition && selection && (
+                <button
+                  onClick={() => onAnalyzePosition(selection.fileId, displayFen)}
+                  className="btn-secondary flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+                >
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                  Explore
+                </button>
+              )}
+            </div>
           )}
 
           {phase === 'grading' && currentCard && !isCorrect && (
@@ -1127,12 +1306,23 @@ export const SpacedRepetitionTrainer: React.FC<{
                   <p className="text-text-muted text-xs mt-2">
                     Correct move: <span className="text-accent-teal font-mono">{correctMoveSan}</span>
                   </p>
-                  <button
-                    onClick={advanceAfterAnswer}
-                    className="btn-primary mt-3 hidden items-center gap-1.5 px-3 py-1.5 text-xs lg:flex"
-                  >
-                    Got it, Next Move <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="mt-3 hidden flex-col gap-2 lg:flex">
+                    <button
+                      onClick={advanceAfterAnswer}
+                      className="btn-primary flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                    >
+                      Got it, Next Move <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                    {onAnalyzePosition && selection && (
+                      <button
+                        onClick={() => onAnalyzePosition(selection.fileId, displayFen)}
+                        className="btn-secondary flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                      >
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                        Explore
+                      </button>
+                    )}
+                  </div>
                 </>
               )}
             </div>
