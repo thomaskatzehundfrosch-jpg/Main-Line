@@ -245,22 +245,6 @@ function classifyAdaptiveDepth(
   return { category: 'rare', likelihood: null, source: 'stockfish' };
 }
 
-function applyAdaptiveDepth(
-  baseDepth: number,
-  currentDepth: number,
-  category: AdaptiveDepthCategory,
-  likelyBonusMoves: number,
-  rareReductionMoves: number
-): number {
-  if (category === 'likely') {
-    return baseDepth + Math.max(0, likelyBonusMoves) * 2;
-  }
-  if (category === 'rare') {
-    return Math.max(currentDepth + 2, baseDepth - Math.max(0, rareReductionMoves) * 2);
-  }
-  return baseDepth;
-}
-
 function getAdaptiveOpponentResponseCount(
   baseCount: number,
   branchPriority: AdaptiveDepthCategory,
@@ -839,9 +823,6 @@ export async function buildTree(
   // promoted — guaranteeing early branching is always covered before deep sidelines.
   const sfAnalysisDepth = settings.sfDepth || 12;
   const tacticalExtension = settings.tacticalExtension ?? 4;
-  const adaptiveDepth = settings.adaptiveDepth ?? false;
-  const adaptiveLikelyBonusMoves = settings.adaptiveDepthLikelyBonusMoves ?? 4;
-  const adaptiveRareReductionMoves = settings.adaptiveDepthRareReductionMoves ?? 4;
   const adaptiveBranching = settings.adaptiveBranching ?? false;
   const adaptiveLikelyExtraResponses = settings.adaptiveBranchingLikelyExtraResponses ?? 2;
 
@@ -872,13 +853,10 @@ export async function buildTree(
       // 1. Sacrifice extension: a sac happened earlier in this line — keep going
       if (item.sacrificeMovesLeft > 0) {
         logError('info', `Move ${item.fullMoveNumber}: post-sacrifice extension (${item.sacrificeMovesLeft} moves left).`);
-      // 2. Adaptive depth: likely opponent branch has earned extra quiet depth
-      } else if (adaptiveDepth && item.effectiveMaxDepth > maxDepth && item.depth < item.effectiveMaxDepth) {
-        logError('info', `Move ${item.fullMoveNumber}: adaptive depth extension — continuing likely branch past move limit.`);
-      // 3. Tactical extension: current position has captures / is in check
+      // 2. Tactical extension: current position has captures / is in check
       } else if (item.fullMoveNumber <= maxMoveNumber + tacticalExtension && isPositionTactical(item.node.fen)) {
         logError('info', `Move ${item.fullMoveNumber}: tactical position — extending past move limit.`);
-      // 4. Hard stop
+      // 3. Hard stop
       } else {
         item.node.cappedByMoveLimit = true;
         continue;
@@ -932,7 +910,7 @@ export async function buildTree(
 
     // Process each candidate — collect queue items, then prepend (DFS)
     const newQueueItems: QueueItem[] = [];
-    const opponentSiblingLichessGames = !item.isOurTurn && (adaptiveDepth || adaptiveBranching)
+    const opponentSiblingLichessGames = !item.isOurTurn && adaptiveBranching
       ? candidates.reduce((sum, candidate) => sum + Math.max(0, candidate._lichess?.totalGames ?? 0), 0)
       : 0;
 
@@ -1001,31 +979,6 @@ export async function buildTree(
         childMaxDepth = Math.max(item.depth + 2, item.effectiveMaxDepth - 4);
       }
 
-      if (adaptiveDepth && !item.isOurTurn) {
-        const adaptive = classifyAdaptiveDepth(candidate, ci, opponentSiblingLichessGames);
-        const adjustedDepth = applyAdaptiveDepth(
-          childMaxDepth,
-          item.depth,
-          adaptive.category,
-          adaptiveLikelyBonusMoves,
-          adaptiveRareReductionMoves
-        );
-
-        if (adjustedDepth !== childMaxDepth) {
-          const deltaMoves = Math.round((adjustedDepth - childMaxDepth) / 2);
-          const direction = deltaMoves > 0 ? `+${deltaMoves}` : `${deltaMoves}`;
-          const sourceDetail = adaptive.source === 'lichess' && adaptive.likelihood !== null
-            ? `${Math.round(adaptive.likelihood * 100)}%`
-            : `SF rank #${ci + 1}`;
-          logError(
-            'info',
-            `Adaptive depth: ${candidate.san} ${adaptive.category} response (${sourceDetail}) → ${direction} moves.`
-          );
-        }
-
-        childMaxDepth = adjustedDepth;
-      }
-
       // Sacrifice detection: if this move gives away more material than it
       // captures, the resulting line gets extra moves past maxMoveNumber so
       // the compensation has room to unfold.
@@ -1045,7 +998,7 @@ export async function buildTree(
         effectiveMaxDepth: childMaxDepth,
         fullMoveNumber: nextFullMove,
         branchPriority: !item.isOurTurn
-          ? (adaptiveDepth || adaptiveBranching
+          ? (adaptiveBranching
               ? classifyAdaptiveDepth(candidate, ci, opponentSiblingLichessGames).category
               : item.branchPriority)
           : getOurMoveBranchPriority(item.branchPriority, ci),
