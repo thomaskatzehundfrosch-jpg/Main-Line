@@ -13,6 +13,9 @@ export interface GeneratorSettings {
   depthDecay: boolean;            // reduce depth for sidelines by 4 plies
   maxBranchesOur: number;         // top N of our candidate moves (1–3)
   maxOpponentResponses: number;   // top N opponent responses (1–3)
+  adaptiveDepth: boolean;         // adjust opponent branch depth by practical move likelihood
+  adaptiveDepthLikelyBonusMoves: number; // extra moves for likely opponent responses
+  adaptiveDepthRareReductionMoves: number; // fewer moves for rare opponent responses
   maxNodes: number;               // total node limit (10–2000)
   sfDepth: number;                // Stockfish search depth used for all analysis
   /** Extra moves past maxMoveNumber allowed in tactical positions (captures/check). 0 = disabled. */
@@ -144,6 +147,9 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   depthDecay: false,
   maxBranchesOur: 1,
   maxOpponentResponses: 2,
+  adaptiveDepth: false,
+  adaptiveDepthLikelyBonusMoves: 4,
+  adaptiveDepthRareReductionMoves: 4,
   maxNodes: 300,
   sfDepth: 25,
   tacticalExtension: 4,

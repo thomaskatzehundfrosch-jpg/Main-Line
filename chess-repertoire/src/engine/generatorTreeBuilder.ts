@@ -217,6 +217,49 @@ interface QueueItem {
   sacrificeMovesLeft: number;
 }
 
+type AdaptiveDepthCategory = 'likely' | 'possible' | 'rare';
+
+function classifyAdaptiveDepth(
+  candidate: MoveCandidate,
+  candidateIndex: number,
+  siblingLichessGames: number
+): { category: AdaptiveDepthCategory; likelihood: number | null; source: 'lichess' | 'stockfish' } {
+  const games = candidate._lichess?.totalGames ?? 0;
+
+  if (games > 0 && siblingLichessGames > 0) {
+    const likelihood = games / siblingLichessGames;
+    return {
+      category: likelihood >= 0.4 ? 'likely' : likelihood >= 0.15 ? 'possible' : 'rare',
+      likelihood,
+      source: 'lichess',
+    };
+  }
+
+  if (candidateIndex === 0) {
+    return { category: 'likely', likelihood: null, source: 'stockfish' };
+  }
+  if (candidateIndex === 1) {
+    return { category: 'possible', likelihood: null, source: 'stockfish' };
+  }
+  return { category: 'rare', likelihood: null, source: 'stockfish' };
+}
+
+function applyAdaptiveDepth(
+  baseDepth: number,
+  currentDepth: number,
+  category: AdaptiveDepthCategory,
+  likelyBonusMoves: number,
+  rareReductionMoves: number
+): number {
+  if (category === 'likely') {
+    return baseDepth + Math.max(0, likelyBonusMoves) * 2;
+  }
+  if (category === 'rare') {
+    return Math.max(currentDepth + 2, baseDepth - Math.max(0, rareReductionMoves) * 2);
+  }
+  return baseDepth;
+}
+
 /**
  * Build a complete repertoire tree using Stockfish and/or Lichess.
  * Uses BFS so the tree grows evenly across all branches.
@@ -769,6 +812,9 @@ export async function buildTree(
   // promoted — guaranteeing early branching is always covered before deep sidelines.
   const sfAnalysisDepth = settings.sfDepth || 12;
   const tacticalExtension = settings.tacticalExtension ?? 4;
+  const adaptiveDepth = settings.adaptiveDepth ?? false;
+  const adaptiveLikelyBonusMoves = settings.adaptiveDepthLikelyBonusMoves ?? 4;
+  const adaptiveRareReductionMoves = settings.adaptiveDepthRareReductionMoves ?? 4;
 
   // Deferred branch items, kept sorted by depth ascending (shallowest first).
   const deferredBranches: QueueItem[] = [];
@@ -797,10 +843,13 @@ export async function buildTree(
       // 1. Sacrifice extension: a sac happened earlier in this line — keep going
       if (item.sacrificeMovesLeft > 0) {
         logError('info', `Move ${item.fullMoveNumber}: post-sacrifice extension (${item.sacrificeMovesLeft} moves left).`);
-      // 2. Tactical extension: current position has captures / is in check
+      // 2. Adaptive depth: likely opponent branch has earned extra quiet depth
+      } else if (adaptiveDepth && item.effectiveMaxDepth > maxDepth && item.depth < item.effectiveMaxDepth) {
+        logError('info', `Move ${item.fullMoveNumber}: adaptive depth extension — continuing likely branch past move limit.`);
+      // 3. Tactical extension: current position has captures / is in check
       } else if (item.fullMoveNumber <= maxMoveNumber + tacticalExtension && isPositionTactical(item.node.fen)) {
         logError('info', `Move ${item.fullMoveNumber}: tactical position — extending past move limit.`);
-      // 3. Hard stop
+      // 4. Hard stop
       } else {
         item.node.cappedByMoveLimit = true;
         continue;
@@ -834,6 +883,9 @@ export async function buildTree(
 
     // Process each candidate — collect queue items, then prepend (DFS)
     const newQueueItems: QueueItem[] = [];
+    const opponentSiblingLichessGames = !item.isOurTurn && adaptiveDepth
+      ? candidates.reduce((sum, candidate) => sum + Math.max(0, candidate._lichess?.totalGames ?? 0), 0)
+      : 0;
 
     for (let ci = 0; ci < candidates.length; ci++) {
       if (stopRef.current) break;
@@ -898,6 +950,31 @@ export async function buildTree(
       let childMaxDepth = item.effectiveMaxDepth;
       if (settings.depthDecay && ci > 0) {
         childMaxDepth = Math.max(item.depth + 2, item.effectiveMaxDepth - 4);
+      }
+
+      if (adaptiveDepth && !item.isOurTurn) {
+        const adaptive = classifyAdaptiveDepth(candidate, ci, opponentSiblingLichessGames);
+        const adjustedDepth = applyAdaptiveDepth(
+          childMaxDepth,
+          item.depth,
+          adaptive.category,
+          adaptiveLikelyBonusMoves,
+          adaptiveRareReductionMoves
+        );
+
+        if (adjustedDepth !== childMaxDepth) {
+          const deltaMoves = Math.round((adjustedDepth - childMaxDepth) / 2);
+          const direction = deltaMoves > 0 ? `+${deltaMoves}` : `${deltaMoves}`;
+          const sourceDetail = adaptive.source === 'lichess' && adaptive.likelihood !== null
+            ? `${Math.round(adaptive.likelihood * 100)}%`
+            : `SF rank #${ci + 1}`;
+          logError(
+            'info',
+            `Adaptive depth: ${candidate.san} ${adaptive.category} response (${sourceDetail}) → ${direction} moves.`
+          );
+        }
+
+        childMaxDepth = adjustedDepth;
       }
 
       // Sacrifice detection: if this move gives away more material than it
