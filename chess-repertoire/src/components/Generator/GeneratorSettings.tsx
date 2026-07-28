@@ -445,7 +445,7 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
             </label>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-[11px] text-text-secondary">Engine depth</span>
+                <span className="text-[11px] text-text-secondary">Eval depth</span>
                 <select
                   value={settings.sfDepth}
                   onChange={(e) => update('sfDepth', parseInt(e.target.value))}
@@ -457,6 +457,35 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                   ))}
                 </select>
               </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-text-secondary">Candidate depth</span>
+                <select
+                  value={settings.candidateDepth ?? settings.sfDepth}
+                  onChange={(e) => update('candidateDepth', parseInt(e.target.value))}
+                  disabled={isGenerating}
+                  className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
+                >
+                  {[8, 12, 16, 20, 25].map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-text-secondary">Trickyness depth</span>
+                <select
+                  value={settings.trickynessDepth ?? settings.sfDepth}
+                  onChange={(e) => update('trickynessDepth', parseInt(e.target.value))}
+                  disabled={isGenerating}
+                  className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
+                >
+                  {[8, 12, 16, 20, 25].map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+              <p className="text-[10px] text-text-muted leading-tight">
+                Candidate depth controls MultiPV move discovery. Eval depth checks individual moves. Trickyness depth checks opponent-error rates.
+              </p>
               <div className="flex items-center justify-between">
                 <span className="text-[11px] text-text-secondary">Eval threshold</span>
                 <input

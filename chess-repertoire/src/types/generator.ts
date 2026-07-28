@@ -16,7 +16,9 @@ export interface GeneratorSettings {
   adaptiveBranching: boolean;     // adjust opponent response count by branch likelihood
   adaptiveBranchingLikelyExtraResponses: number; // extra opponent responses in likely/main branches
   maxNodes: number;               // total node limit (10–2000)
-  sfDepth: number;                // Stockfish search depth used for all analysis
+  sfDepth: number;                // Stockfish depth for individual position evaluations
+  candidateDepth: number;         // Stockfish MultiPV depth for move discovery
+  trickynessDepth: number;        // Stockfish MultiPV depth for trickyness checks
   /** Extra moves past maxMoveNumber allowed in tactical positions (captures/check). 0 = disabled. */
   tacticalExtension: number;
   evalThreshold: number;          // min acceptable eval for our moves (pawns)
@@ -150,6 +152,8 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   adaptiveBranchingLikelyExtraResponses: 2,
   maxNodes: 300,
   sfDepth: 25,
+  candidateDepth: 25,
+  trickynessDepth: 25,
   tacticalExtension: 4,
   evalThreshold: -0.3,
   avoidQueenTrades: false,

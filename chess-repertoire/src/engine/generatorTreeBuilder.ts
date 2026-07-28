@@ -406,10 +406,8 @@ export async function buildTree(
     opponentResponseTarget?: number
   ): Promise<MoveCandidate[]> {
     const sfAnalysisDepth = settings.sfDepth || 12;
-    // MultiPV analysis is much slower than single-PV: cap at depth 15 so we
-    // never time out at complex middlegame positions.  Single-PV evaluations
-    // (analyzePosition calls below) still use the full sfAnalysisDepth.
-    const multiPvDepth = Math.min(sfAnalysisDepth, 15);
+    const multiPvDepth = settings.candidateDepth || sfAnalysisDepth;
+    const trickynessDepth = settings.trickynessDepth || sfAnalysisDepth;
     const styleValue = settings.styleValue ?? 0;
     const tw = settings.trickynessWeight ?? 0;
     const avoidQueenTrades = settings.avoidQueenTrades ?? false;
@@ -666,11 +664,9 @@ export async function buildTree(
     // For each of our move candidates, run a quick MultiPV on the resulting
     // position (opponent's turn) and compute what fraction of the engine's
     // top moves are significantly worse than the best response.  High error
-    // rate → tricky for the opponent.  Uses a lightweight depth (≤10) to
-    // keep the extra cost manageable.
+    // rate → tricky for the opponent.
     if (isOurTurn && tw > 0 && sfWorker && candidates.length > 0) {
       const opponentIsBlack = color === 'white';
-      const trickyDepth = Math.min(sfAnalysisDepth, 10);
       for (const candidate of candidates) {
         // Skip if already computed (e.g. in a future inline path)
         if (candidate._trickynessErrorRate !== undefined) continue;
@@ -681,7 +677,7 @@ export async function buildTree(
           const resultFen = chessT.fen();
 
           // SF MultiPV: get evals for the opponent's top moves
-          const oppTopMoves = await getTopMoves(sfWorker, resultFen, trickyDepth, 5, 12000);
+          const oppTopMoves = await getTopMoves(sfWorker, resultFen, trickynessDepth, 5, 12000);
 
           // Lichess counts: frequency-weight each move so a mistake 40% of
           // players make counts far more than one only 2% attempt.
