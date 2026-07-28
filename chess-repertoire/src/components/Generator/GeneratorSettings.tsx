@@ -452,7 +452,7 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                   disabled={isGenerating}
                   className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
                 >
-                  {[8, 12, 16, 20, 25].map((d) => (
+                  {[8, 12, 15, 16, 20, 25].map((d) => (
                     <option key={d} value={d}>{d}</option>
                   ))}
                 </select>
@@ -465,7 +465,7 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                   disabled={isGenerating}
                   className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
                 >
-                  {[8, 12, 16, 20, 25].map((d) => (
+                  {[8, 12, 15, 16, 20, 25].map((d) => (
                     <option key={d} value={d}>{d}</option>
                   ))}
                 </select>
@@ -478,7 +478,7 @@ export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
                   disabled={isGenerating}
                   className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
                 >
-                  {[8, 12, 16, 20, 25].map((d) => (
+                  {[8, 12, 15, 16, 20, 25].map((d) => (
                     <option key={d} value={d}>{d}</option>
                   ))}
                 </select>
