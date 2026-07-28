@@ -522,7 +522,7 @@ export function getTopMoves(
   fen: string,
   depth: number,
   numMoves: number = 3,
-  timeoutMs: number = 30000
+  timeoutMs: number = 90000
 ): Promise<TopMoveResult[]> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {

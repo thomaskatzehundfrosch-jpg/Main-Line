@@ -677,7 +677,7 @@ export async function buildTree(
           const resultFen = chessT.fen();
 
           // SF MultiPV: get evals for the opponent's top moves
-          const oppTopMoves = await getTopMoves(sfWorker, resultFen, trickynessDepth, 5, 12000);
+          const oppTopMoves = await getTopMoves(sfWorker, resultFen, trickynessDepth, 5);
 
           // Lichess counts: frequency-weight each move so a mistake 40% of
           // players make counts far more than one only 2% attempt.
