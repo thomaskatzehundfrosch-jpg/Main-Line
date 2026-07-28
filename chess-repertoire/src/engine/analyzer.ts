@@ -144,6 +144,11 @@ export function analyzePosition(
           }
         }
       } else if (msg.startsWith('bestmove')) {
+        const bestmoveMatch = msg.match(/^bestmove\s+(\S+)/);
+        if (!bestMoveUci && bestmoveMatch && bestmoveMatch[1] !== '(none)') {
+          bestMoveUci = bestmoveMatch[1];
+        }
+
         // Convert best move UCI to SAN
         let bestMoveSan = bestMoveUci;
         try {
@@ -525,14 +530,41 @@ export function getTopMoves(
   timeoutMs: number = 90000
 ): Promise<TopMoveResult[]> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
+    let settled = false;
+    let bestMoveUci = '';
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      worker.removeEventListener('message', syncHandler);
       worker.removeEventListener('message', handler);
+      worker.removeEventListener('error', errorHandler);
+    };
+
+    const resolveOnce = (results: TopMoveResult[]) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(results);
+    };
+
+    const rejectOnce = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const errorHandler = (event: ErrorEvent) => {
+      rejectOnce(new Error(`Stockfish MultiPV worker crashed: ${event.message || 'Unknown worker error'}`));
+    };
+
+    const timeout = setTimeout(() => {
       // Halt the engine so it is not left running after the timeout.
       // The 'bestmove' it emits in response to 'stop' fires with no handler
       // (we just removed it) and is discarded — it will not pollute the next
       // analyzePosition call, which now syncs via isready/readyok anyway.
       worker.postMessage('stop');
-      reject(new Error(`Stockfish MultiPV timed out after ${timeoutMs}ms`));
+      rejectOnce(new Error(`Stockfish MultiPV timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
     // Map: multipv index -> { uci, eval, depth }
@@ -553,6 +585,7 @@ export function getTopMoves(
         if (pvIdxMatch && pvMoveMatch) {
           const pvIdx = parseInt(pvIdxMatch[1], 10);
           const uci = pvMoveMatch[1];
+          if (pvIdx === 1) bestMoveUci = uci;
           let evalScore: number | null = null;
 
           if (cpMatch) {
@@ -567,13 +600,18 @@ export function getTopMoves(
       }
 
       if (msg.startsWith('bestmove')) {
-        clearTimeout(timeout);
-        worker.removeEventListener('message', handler);
+        const bestmoveMatch = msg.match(/^bestmove\s+(\S+)/);
+        if (!bestMoveUci && bestmoveMatch && bestmoveMatch[1] !== '(none)') {
+          bestMoveUci = bestmoveMatch[1];
+        }
 
         // Collect results sorted by multipv index (1 = best)
         const results: TopMoveResult[] = [];
         for (let i = 1; i <= numMoves; i++) {
           if (pvMap[i]) results.push(pvMap[i]);
+        }
+        if (results.length === 0 && bestMoveUci) {
+          results.push({ uci: bestMoveUci, eval: null, depth: 0 });
         }
 
         // Normalize evals to White's perspective
@@ -587,15 +625,30 @@ export function getTopMoves(
         // Reset MultiPV back to 1 for future single-PV analysis
         worker.postMessage('setoption name MultiPV value 1');
 
-        resolve(results);
+        resolveOnce(results);
       }
     }
 
-    worker.addEventListener('message', handler);
-    worker.postMessage(`setoption name MultiPV value ${numMoves}`);
-    worker.postMessage('ucinewgame');
-    worker.postMessage(`position fen ${fen}`);
-    worker.postMessage(`go depth ${depth}`);
+    function startAnalysis() {
+      worker.addEventListener('message', handler);
+      worker.postMessage(`setoption name MultiPV value ${numMoves}`);
+      worker.postMessage('ucinewgame');
+      worker.postMessage(`position fen ${fen}`);
+      worker.postMessage(`go depth ${depth}`);
+    }
+
+    const syncHandler = (e: MessageEvent<string>) => {
+      if (settled) return;
+      if (e.data === 'readyok') {
+        worker.removeEventListener('message', syncHandler);
+        startAnalysis();
+      }
+    };
+
+    worker.addEventListener('error', errorHandler);
+    worker.addEventListener('message', syncHandler);
+    worker.postMessage('stop');
+    worker.postMessage('isready');
   });
 }
 
