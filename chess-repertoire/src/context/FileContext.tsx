@@ -508,6 +508,34 @@ export function useFiles() {
     return state.files.find((f) => f.id === state.activeFileId) || null;
   }, [state.files, state.activeFileId]);
 
+  const importFilesSnapshot = useCallback(
+    (incomingFiles: RepertoireFile[]) => {
+      const normalizedIncoming = incomingFiles.map((file) => {
+        const normalizedTree = cloneTreeWithFreshIds(file.tree);
+        return {
+          ...file,
+          tree: normalizedTree,
+          nodeCount: countNodes(normalizedTree),
+          importedGames: file.importedGames ?? [],
+        };
+      });
+
+      const mergedFiles = mergeLocalAndRemoteFiles(state.files, normalizedIncoming);
+      dispatch({ type: 'SET_FILES', files: mergedFiles });
+
+      if (!state.activeFileId && mergedFiles.length > 0) {
+        dispatch({ type: 'SET_ACTIVE', id: mergedFiles[0].id });
+      }
+
+      if (user) {
+        for (const file of normalizedIncoming) {
+          void upsertRemoteFile(user.id, file);
+        }
+      }
+    },
+    [dispatch, state.activeFileId, state.files, user]
+  );
+
   const syncNow = useCallback(async () => {
     if (!user) return;
     await syncWithCloud('refresh');
@@ -517,6 +545,7 @@ export function useFiles() {
     files: state.files,
     activeFileId: state.activeFileId,
     isSyncing,
+    importFilesSnapshot,
     saveFile,
     syncNow,
     updateFile,

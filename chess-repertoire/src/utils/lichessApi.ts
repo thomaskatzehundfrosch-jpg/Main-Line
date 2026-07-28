@@ -133,8 +133,13 @@ async function fetchLichess(
   try {
     const url = buildLichessUrl(fen, settings);
     const token = getStoredToken();
+    if (!token) {
+      throw new Error(
+        'Lichess Opening Explorer now requires authentication. Connect your Lichess account before using Lichess + SF generation.'
+      );
+    }
     const headers: Record<string, string> = { 'Accept': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
+    headers['Authorization'] = `Bearer ${token}`;
     logError('info', `Lichess request (attempt ${attempt}): ${url}`);
     const res = await fetch(url, { headers });
 
@@ -151,7 +156,7 @@ async function fetchLichess(
     // Non-retryable errors — bail out immediately
     if (res.status === 401) {
       throw new Error(
-        'Lichess API returned 401 (not retrying): not connected. Open Settings -> Lichess to connect your account.'
+        'Lichess API returned 401 (not retrying): your Lichess connection is missing or expired. Disconnect and reconnect your Lichess account.'
       );
     }
     if (res.status === 400 || res.status === 403 || res.status === 404) {

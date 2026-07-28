@@ -27,7 +27,7 @@ import { getOpeningForPath } from '../utils/openingNames';
 import { exportTreeToPgn, copyToClipboard, downloadAsFile } from '../utils/pgnExporter';
 import { cloneTree, countNodes } from '../utils/treeBuilder';
 import { findNodeById } from '../utils/treeBuilder';
-import type { TreeNode } from '../types';
+import type { EngineLine, TreeNode } from '../types';
 import type { ImportedGame } from '../types/game';
 import { toFigurine } from '../utils/figurineNotation';
 import { ErrorToast } from './ErrorToast';
@@ -74,6 +74,8 @@ interface TrickyMoveSuggestion {
   topReply: LichessMove | null;
 }
 
+type EngineSnapshot = ReturnType<typeof useEngine>;
+
 export const App: React.FC = () => {
   const {
     tree,
@@ -100,6 +102,8 @@ export const App: React.FC = () => {
   } = useRepertoireTree();
 
   const engine = useEngine();
+  const engineRef = useRef<EngineSnapshot | null>(null);
+  engineRef.current = engine;
   const pgnParser = usePgnParser();
   const games = useGames();
   const { files, activeFileId, getActiveFile, updateFileGames, setActive, syncNow, isSyncing } = useFiles();
@@ -356,6 +360,33 @@ export const App: React.FC = () => {
   const ourRepertoireColor = settings.defaultColor;
   const isOurTurnInCurrentPosition = currentSideToMove === ourRepertoireColor;
 
+  const waitForEngineCandidates = useCallback(async (fen: string): Promise<EngineLine[]> => {
+    const hasFreshCandidates = (snapshot: EngineSnapshot | null) => {
+      if (!snapshot || snapshot.currentFen !== fen || snapshot.isThinking) return [];
+      return snapshot.lines
+        .filter((line) => line.pv.length > 0 && line.pvUci.length > 0)
+        .slice(0, 3);
+    };
+
+    const existingCandidates = hasFreshCandidates(engineRef.current);
+    if (existingCandidates.length >= 3) return existingCandidates;
+
+    if ((engineRef.current?.multiPV ?? 1) < 3) {
+      engineRef.current?.setMultiPV(3);
+    }
+    engineRef.current?.analyze(fen);
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 6500) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const candidates = hasFreshCandidates(engineRef.current);
+      if (candidates.length >= 3) return candidates;
+      if (candidates.length > 0 && Date.now() - startedAt > 2500) return candidates;
+    }
+
+    return hasFreshCandidates(engineRef.current);
+  }, []);
+
   const handleLoadGaps = useCallback(async () => {
     setIsLoadingRecommendations(true);
     setActiveSignal('gaps');
@@ -424,13 +455,10 @@ export const App: React.FC = () => {
         return;
       }
 
-      const engineCandidates = engine.lines
-        .filter((line) => line.pv.length > 0)
-        .slice(0, 3);
+      const engineCandidates = await waitForEngineCandidates(currentNode.fen);
 
-      if (engine.currentFen !== currentNode.fen || engine.isThinking || engineCandidates.length === 0) {
-        engine.analyze(currentNode.fen);
-        setRecommendationError('Engine is still analyzing this position. Try again in a second.');
+      if (engineCandidates.length === 0) {
+        setRecommendationError('Engine did not return candidate lines for this position yet. Try again in a moment.');
         return;
       }
 
@@ -463,7 +491,8 @@ export const App: React.FC = () => {
 
           const topReply = replies[0];
           const opponentSpread = Math.max(0, 100 - topReply.playRate);
-          const soundness = Math.max(0, Math.min(100, 50 + line.score / 20));
+          const scoreForUs = currentSideToMove === 'white' ? line.score : -line.score;
+          const soundness = Math.max(0, Math.min(100, 50 + scoreForUs / 20));
           const score = opponentSpread * 0.6 + soundness * 0.4;
 
           const suggestion: TrickyMoveSuggestion = {
@@ -505,9 +534,10 @@ export const App: React.FC = () => {
   }, [
     buildLineFromFen,
     currentNode.fen,
+    currentSideToMove,
     engine,
-    engine.lines,
     settings.mostLikelyMoveRating,
+    waitForEngineCandidates,
   ]);
 
   const handleLoadImportantLines = useCallback(() => {

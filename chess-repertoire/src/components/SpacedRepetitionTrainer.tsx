@@ -22,6 +22,7 @@ import type { SRLastSessionStats } from '../lib/srStorage';
 import { useFiles } from '../context/FileContext';
 import { useSettings } from '../context/SettingsContext';
 import type { RepertoireFile } from '../types/repertoireFile';
+import type { EngineLine } from '../types';
 import { useEngine } from '../hooks/useEngine';
 import EvalBar from './Board/EvalBar';
 import { BOARD_THEME_COLORS } from './Board/theme';
@@ -365,6 +366,42 @@ function buildAutoplaySequence(card: Card, fromFen: string, targetReviewFen: str
   }
 }
 
+function buildLineFenSequence(card: Card): string[] {
+  if (!card.lineStartFen || !card.moveHistorySan || card.moveHistorySan.length === 0) {
+    return [card.front];
+  }
+
+  try {
+    const chess = new Chess(card.lineStartFen);
+    const fens = [chess.fen()];
+
+    for (const san of card.moveHistorySan) {
+      const move = chess.move(san);
+      if (!move) return [card.front];
+      fens.push(chess.fen());
+    }
+
+    return fens;
+  } catch {
+    return [card.front];
+  }
+}
+
+function formatEngineScore(line: EngineLine): string {
+  if (line.mate !== null) return `M${line.mate > 0 ? '' : '-'}${Math.abs(line.mate)}`;
+  const pawnScore = line.score / 100;
+  return `${line.score > 0 ? '+' : ''}${pawnScore.toFixed(2)}`;
+}
+
+function getEngineScoreClass(line: EngineLine): string {
+  if (line.mate !== null) {
+    return line.mate > 0 ? 'text-accent-teal' : 'text-accent-red';
+  }
+  if (line.score > 30) return 'text-accent-teal';
+  if (line.score < -30) return 'text-accent-red';
+  return 'text-text-secondary';
+}
+
 function mergeCards(existingCards: Card[], cardsToMerge: Card[]): Card[] {
   const merged = new Map(existingCards.map((card) => [cardKey(card), card] as const));
   for (const card of cardsToMerge) merged.set(cardKey(card), card);
@@ -539,11 +576,25 @@ export const SpacedRepetitionTrainer: React.FC<{
     ? promptFen
     : (previewFen ?? autoplayFen ?? promptFen);
   const expectedMove = currentPrompt?.expectedMove ?? currentCard?.back ?? '';
+  const lineFenSequence = useMemo(
+    () => (currentCard ? buildLineFenSequence(currentCard) : [promptFen]),
+    [currentCard, promptFen],
+  );
+  const displayFenIndex = useMemo(() => {
+    const exactIndex = lineFenSequence.indexOf(displayFen);
+    if (exactIndex >= 0) return exactIndex;
+    const promptIndex = lineFenSequence.indexOf(promptFen);
+    return promptIndex >= 0 ? promptIndex : 0;
+  }, [displayFen, lineFenSequence, promptFen]);
+  const canStepPreviousMove = phase !== 'autoplay' && phase !== 'replay' && displayFenIndex > 0;
+  const canStepNextMove = phase !== 'autoplay' && phase !== 'replay' && displayFenIndex < lineFenSequence.length - 1;
+  const isAtPromptFen = displayFen === promptFen;
   const isWhiteToMove = promptFen.split(' ')[1] === 'w';
   const correctMoveSan = expectedMove ? uciToSan(promptFen, expectedMove) : '';
   const userMoveSan = userMove ? uciToSan(promptFen, userMove) : '';
   const isCorrect = !cardHadMistake && userMove !== null && userMove === expectedMove;
   const autoplayMoveCount = autoplaySequence.length;
+  const engineLines = engine.lines.slice(0, 3);
 
   const beginAutoplayToPrompt = useCallback((
     targetCard: Card,
@@ -674,6 +725,10 @@ export const SpacedRepetitionTrainer: React.FC<{
   useEffect(() => {
     if (engine.enabled && phase !== 'replay' && currentCard) engine.analyze(displayFen);
   }, [currentCard, displayFen, engine.enabled, phase]);
+
+  useEffect(() => {
+    if (engine.enabled && engine.multiPV < 3) engine.setMultiPV(3);
+  }, [engine.enabled, engine.multiPV]);
 
   useEffect(() => {
     if (phase !== 'autoplay') return;
@@ -856,6 +911,7 @@ export const SpacedRepetitionTrainer: React.FC<{
 
   const submitMove = useCallback((from: string, to: string, piece?: string) => {
     if ((phase !== 'question' && phase !== 'grading') || !currentCard) return false;
+    if (displayFen !== promptFen) return false;
 
     try {
       sharedChess.load(displayFen);
@@ -917,7 +973,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     } catch {
       return false;
     }
-  }, [advanceAfterAnswer, cardHadMistake, currentCard, displayFen, expectedMove, phase, showSolution]);
+  }, [advanceAfterAnswer, cardHadMistake, currentCard, displayFen, expectedMove, phase, promptFen, showSolution]);
 
   const handlePieceDrop = useCallback((source: Square, target: Square, piece: Piece) => {
     setSelectedSquare(null);
@@ -926,7 +982,7 @@ export const SpacedRepetitionTrainer: React.FC<{
   }, [submitMove]);
 
   const handleSquareClick = useCallback((square: Square) => {
-    const canClickMove = phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution));
+    const canClickMove = isAtPromptFen && (phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution)));
     if (!canClickMove || !currentCard) {
       setSelectedSquare(null);
       setLegalMoves([]);
@@ -953,7 +1009,7 @@ export const SpacedRepetitionTrainer: React.FC<{
 
     setSelectedSquare(null);
     setLegalMoves([]);
-  }, [currentCard, getLegalMoves, isCorrect, isOwnPiece, legalMoves, phase, selectedSquare, showSolution, submitMove]);
+  }, [currentCard, getLegalMoves, isAtPromptFen, isCorrect, isOwnPiece, legalMoves, phase, selectedSquare, showSolution, submitMove]);
 
   const replayCurrentLine = useCallback(() => {
     if (!currentCard || !selection || phase === 'complete' || phase === 'replay') return;
@@ -966,25 +1022,17 @@ export const SpacedRepetitionTrainer: React.FC<{
     );
   }, [beginAutoplayToPrompt, currentCard, currentLineIndex, currentPromptIndex, phase, selection]);
 
-  const goToSessionLine = useCallback((direction: -1 | 1) => {
-    if (!selection || sessionLines.length === 0 || phase === 'complete' || phase === 'replay') return;
+  const stepLinePosition = useCallback((direction: -1 | 1) => {
+    if (!currentCard || phase === 'autoplay' || phase === 'replay') return;
 
-    const seenPromptKeys = new Set(sessionHistory.map((entry) => promptKey(entry)));
-    const start = currentLineIndex + direction;
-    for (
-      let lineIndex = start;
-      lineIndex >= 0 && lineIndex < sessionLines.length;
-      lineIndex += direction
-    ) {
-      const line = sessionLines[lineIndex];
-      const promptStepsForLine = buildPromptSteps(line, selection.color);
-      const promptIndex = getFirstUnseenPromptIndex(promptStepsForLine, seenPromptKeys);
-      if (promptIndex >= 0) {
-        beginAutoplayToPrompt(line, lineIndex, promptIndex, selection.color);
-        return;
-      }
-    }
-  }, [beginAutoplayToPrompt, currentLineIndex, phase, selection, sessionHistory, sessionLines]);
+    const nextIndex = displayFenIndex + direction;
+    const nextFen = lineFenSequence[nextIndex];
+    if (!nextFen) return;
+
+    setPreviewFen(nextFen === promptFen ? null : nextFen);
+    setSelectedSquare(null);
+    setLegalMoves([]);
+  }, [currentCard, displayFenIndex, lineFenSequence, phase, promptFen]);
 
   const progressPercent = sessionLines.length > 0
     ? ((currentLineIndex + (phase === 'complete' ? 1 : 0)) / sessionLines.length) * 100
@@ -1184,7 +1232,7 @@ export const SpacedRepetitionTrainer: React.FC<{
                 boardOrientation={boardOrientation}
                 onPieceDrop={handlePieceDrop}
                 onSquareClick={handleSquareClick}
-                arePiecesDraggable={phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution))}
+                arePiecesDraggable={isAtPromptFen && (phase === 'question' || (phase === 'grading' && (!isCorrect || showSolution)))}
                 customDarkSquareStyle={{ backgroundColor: themeColors.dark }}
                 customLightSquareStyle={{ backgroundColor: themeColors.light }}
                 customBoardStyle={{ borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)' }}
@@ -1278,24 +1326,55 @@ export const SpacedRepetitionTrainer: React.FC<{
                   Replay Line
                 </button>
                 <button
-                  onClick={() => goToSessionLine(-1)}
-                  disabled={currentLineIndex <= 0 || phase === 'autoplay'}
+                  onClick={() => stepLinePosition(-1)}
+                  disabled={!canStepPreviousMove}
                   className="btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-30 disabled:cursor-not-allowed"
-                  title="Go to previous line"
+                  title="Go to previous move in this line"
                 >
                   <ChevronLeft className="w-3.5 h-3.5" />
                   Previous
                 </button>
                 <button
-                  onClick={() => goToSessionLine(1)}
-                  disabled={currentLineIndex >= sessionLines.length - 1 || phase === 'autoplay'}
+                  onClick={() => stepLinePosition(1)}
+                  disabled={!canStepNextMove}
                   className="btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-30 disabled:cursor-not-allowed"
-                  title="Go to next line"
+                  title="Go to next move in this line"
                 >
                   Next
                   <ChevronRight className="w-3.5 h-3.5" />
                 </button>
               </div>
+              {previewFen && (
+                <div className="mt-2 text-[10px] text-text-muted">
+                  Previewing move {displayFenIndex} of {Math.max(0, lineFenSequence.length - 1)}. Step back to the prompt to answer.
+                </div>
+              )}
+            </div>
+          )}
+
+          {sessionLines.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && engine.enabled && (
+            <div className="panel p-3">
+              <div className="mb-2 flex items-center justify-between text-[10px] font-mono uppercase tracking-wider text-text-muted">
+                <span>Engine Lines</span>
+                {engine.isThinking && <span className="text-accent-teal">thinking</span>}
+              </div>
+              {engineLines.length > 0 ? (
+                <div className="space-y-2">
+                  {engineLines.map((line, index) => (
+                    <div key={`${line.multipv}-${index}`} className="flex items-start gap-2 text-xs">
+                      <span className="w-4 shrink-0 text-text-muted">{index + 1}.</span>
+                      <span className={`w-12 shrink-0 font-mono font-semibold ${getEngineScoreClass(line)}`}>
+                        {formatEngineScore(line)}
+                      </span>
+                      <span className="min-w-0 flex-1 break-words text-[11px] leading-relaxed text-text-secondary">
+                        {line.pv.slice(0, 8).join(' ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-text-muted">No lines yet.</div>
+              )}
             </div>
           )}
 

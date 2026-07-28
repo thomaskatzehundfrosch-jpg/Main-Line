@@ -1,9 +1,10 @@
-import React, { useState, useCallback } from 'react';
-import { Save, FolderOpen, Trash2, Edit3, Check, X, FileText, FilePlus } from 'lucide-react';
+import React, { useState, useCallback, useRef } from 'react';
+import { Save, FolderOpen, Trash2, Edit3, Check, X, FileText, FilePlus, Download, Upload } from 'lucide-react';
 import { useFiles } from '../context/FileContext';
 import type { TreeNode } from '../types';
 import type { RepertoireFile } from '../types/repertoireFile';
 import { cloneTree, createRootNode } from '../utils/treeBuilder';
+import { downloadAsFile } from '../utils/pgnExporter';
 
 interface RepertoireFilesPanelProps {
   currentTree: TreeNode;
@@ -22,11 +23,13 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
     deleteFile,
     renameFile,
     setActive,
+    importFilesSnapshot,
   } = useFiles();
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const getNextUntitledName = useCallback(() => {
     const existingNames = new Set(files.map((file) => file.name.trim().toLowerCase()));
@@ -102,10 +105,55 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
     }
   };
 
+  const handleExportBackup = useCallback(() => {
+    const payload = {
+      app: 'Main Line',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      files,
+    };
+    downloadAsFile(
+      JSON.stringify(payload, null, 2),
+      `mainline-backup-${new Date().toISOString().slice(0, 10)}.json`
+    );
+  }, [files]);
+
+  const handleImportBackup = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const selectedFile = event.target.files?.[0];
+      if (!selectedFile) return;
+
+      try {
+        const raw = await selectedFile.text();
+        const parsed = JSON.parse(raw);
+        const importedFiles = Array.isArray(parsed)
+          ? parsed
+          : Array.isArray(parsed?.files)
+            ? parsed.files
+            : null;
+
+        if (!importedFiles) {
+          throw new Error('Backup file does not contain any repertoire files.');
+        }
+
+        importFilesSnapshot(importedFiles as RepertoireFile[]);
+      } catch (error) {
+        window.alert(
+          error instanceof Error
+            ? error.message
+            : 'Could not import backup file.'
+        );
+      } finally {
+        event.target.value = '';
+      }
+    },
+    [importFilesSnapshot]
+  );
+
   return (
     <div className="flex flex-col gap-2">
       {/* Header actions */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <button
           onClick={handleNewTree}
           className="btn-secondary flex items-center gap-1.5 text-xs"
@@ -123,6 +171,33 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
           <Save className="w-3.5 h-3.5" />
           Save
         </button>
+        <button
+          onClick={handleExportBackup}
+          className="btn-secondary flex items-center gap-1.5 text-xs"
+          title="Download all repertoires as a backup file"
+        >
+          <Download className="w-3.5 h-3.5" />
+          Export Backup
+        </button>
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="btn-secondary flex items-center gap-1.5 text-xs"
+          title="Import repertoires from a backup file"
+        >
+          <Upload className="w-3.5 h-3.5" />
+          Import Backup
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          onChange={handleImportBackup}
+          className="hidden"
+        />
+      </div>
+
+      <div className="text-[10px] text-text-muted">
+        Backup sync: export on one device, then import the JSON on the other.
       </div>
 
       {/* File list */}

@@ -403,7 +403,8 @@ export async function buildTree(
     fen: string,
     isOurTurn: boolean,
     fullMoveNumber: number,
-    opponentResponseTarget?: number
+    opponentResponseTarget?: number,
+    forceStockfishOnly = false
   ): Promise<MoveCandidate[]> {
     const sfAnalysisDepth = settings.sfDepth || 12;
     const multiPvDepth = settings.candidateDepth || sfAnalysisDepth;
@@ -428,11 +429,14 @@ export async function buildTree(
       ? getStyleEvalThreshold(settings.evalThreshold ?? -0.3, styleValue)
       : (settings.evalThreshold ?? -0.3);
 
+    const gatherAnalysisMode = forceStockfishOnly ? 'stockfish' : analysisMode;
+    const gatherUseLichess = useLichess && !forceStockfishOnly;
+
     // For maia+stockfish / lichess+stockfish (our turn): skip the expensive upfront MultiPV.
     // Maia/Lichess suggests moves in order; SF evaluates each one lazily
     // and we stop as soon as we have enough approved candidates.
     // For all other cases, gather SF candidates upfront.
-    const skipUpfrontSF = analysisMode === 'lichess+stockfish' && isOurTurn;
+    const skipUpfrontSF = gatherAnalysisMode === 'lichess+stockfish' && isOurTurn;
 
     // Request extra SF PVs when style/trickyness/queen-trade avoidance needs
     // a wider candidate pool.
@@ -509,7 +513,7 @@ export async function buildTree(
 
     // Lichess Explorer candidates — popularity + win-rate ranked
     const lichessCandidates: MoveCandidate[] = [];
-    if (useLichess) {
+    if (gatherUseLichess) {
       try {
         const lichessRequestCount = isOurTurn
           ? Math.max(approvalTarget * 4, 8)
@@ -537,7 +541,7 @@ export async function buildTree(
     // Merge candidates
     let candidates: MoveCandidate[] = [];
 
-    if (analysisMode === 'lichess+stockfish') {
+    if (gatherAnalysisMode === 'lichess+stockfish') {
       if (isOurTurn) {
         // Lichess popularity-ranked with individual SF approval
         const usedSans = new Set<string>();
@@ -727,7 +731,7 @@ export async function buildTree(
           // players make counts far more than one only 2% attempt.
           // Falls back to uniform weights (1 per move) if the call fails.
           let lichessCounts = new Map<string, number>();
-          if (useLichess) {
+          if (gatherUseLichess) {
             try {
               lichessCounts = await getLichessMoveCounts(resultFen, settings, logError);
               apiCalls++;
@@ -928,6 +932,20 @@ export async function buildTree(
       item.fullMoveNumber,
       opponentResponseTarget
     );
+
+    if (candidates.length === 0 && analysisMode === 'lichess+stockfish' && useStockfish && sfWorker) {
+      logError(
+        'info',
+        `No Lichess-qualified moves at move ${item.fullMoveNumber}; retrying this branch with Stockfish-only candidates.`
+      );
+      candidates = await gatherCandidates(
+        item.node.fen,
+        item.isOurTurn,
+        item.fullMoveNumber,
+        opponentResponseTarget,
+        true
+      );
+    }
 
     // Smart filtering: reduce opponent responses when one move is clearly dominant
     if (!item.isOurTurn && settings.smartFiltering && useStockfish && candidates.length > 1) {
