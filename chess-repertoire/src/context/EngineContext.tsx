@@ -9,8 +9,8 @@ const EngineContext = createContext<{
 
 // Initial state
 function getInitialState(): EngineState {
-  // Default to half of logical cores, clamped 1–16
-  const defaultThreads = Math.max(1, Math.min(16, Math.floor((navigator?.hardwareConcurrency ?? 2) / 2)));
+  // Default to all logical cores.
+  const defaultThreads = Math.max(1, navigator?.hardwareConcurrency ?? 1);
   return {
     enabled: true,
     workerReady: false,

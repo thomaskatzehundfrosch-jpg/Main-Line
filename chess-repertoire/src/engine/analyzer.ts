@@ -462,10 +462,10 @@ function initializeAnalysisWorker(worker: Worker, numThreads: number): Promise<W
  * Tries to load the real Stockfish WASM engine first (as a classic worker),
  * falls back to the simulation module worker if not available.
  *
- * @param threads Number of search threads (defaults to half of logical cores)
+ * @param threads Number of search threads (defaults to all logical cores)
  */
 export async function createAnalysisWorker(threads?: number): Promise<Worker> {
-  const numThreads = threads ?? Math.max(1, Math.floor((navigator?.hardwareConcurrency ?? 2) / 2));
+  const numThreads = threads ?? Math.max(1, navigator?.hardwareConcurrency ?? 1);
   try {
     const worker = await createRawAnalysisWorker();
     return await initializeAnalysisWorker(worker, numThreads);

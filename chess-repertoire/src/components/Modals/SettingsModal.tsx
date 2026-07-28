@@ -134,7 +134,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose, initialTa
   const [lichessUsername, setLichessUsername] = useState<string | null>(getStoredUsername);
   const [lichessConnected, setLichessConnected] = useState<boolean>(() => !!getStoredToken());
 
-  const maxThreads = Math.max(1, Math.min(16, navigator?.hardwareConcurrency ?? 4));
+  const maxThreads = Math.max(1, navigator?.hardwareConcurrency ?? 4);
 
   useEffect(() => {
     setActiveTab(initialTab);

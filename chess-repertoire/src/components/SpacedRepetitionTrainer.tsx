@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  Power,
   RotateCcw,
   SkipForward,
   Trophy,
@@ -954,6 +955,37 @@ export const SpacedRepetitionTrainer: React.FC<{
     setLegalMoves([]);
   }, [currentCard, getLegalMoves, isCorrect, isOwnPiece, legalMoves, phase, selectedSquare, showSolution, submitMove]);
 
+  const replayCurrentLine = useCallback(() => {
+    if (!currentCard || !selection || phase === 'complete' || phase === 'replay') return;
+    beginAutoplayToPrompt(
+      currentCard,
+      currentLineIndex,
+      currentPromptIndex,
+      selection.color,
+      currentCard.lineStartFen ?? currentCard.front,
+    );
+  }, [beginAutoplayToPrompt, currentCard, currentLineIndex, currentPromptIndex, phase, selection]);
+
+  const goToSessionLine = useCallback((direction: -1 | 1) => {
+    if (!selection || sessionLines.length === 0 || phase === 'complete' || phase === 'replay') return;
+
+    const seenPromptKeys = new Set(sessionHistory.map((entry) => promptKey(entry)));
+    const start = currentLineIndex + direction;
+    for (
+      let lineIndex = start;
+      lineIndex >= 0 && lineIndex < sessionLines.length;
+      lineIndex += direction
+    ) {
+      const line = sessionLines[lineIndex];
+      const promptStepsForLine = buildPromptSteps(line, selection.color);
+      const promptIndex = getFirstUnseenPromptIndex(promptStepsForLine, seenPromptKeys);
+      if (promptIndex >= 0) {
+        beginAutoplayToPrompt(line, lineIndex, promptIndex, selection.color);
+        return;
+      }
+    }
+  }, [beginAutoplayToPrompt, currentLineIndex, phase, selection, sessionHistory, sessionLines]);
+
   const progressPercent = sessionLines.length > 0
     ? ((currentLineIndex + (phase === 'complete' ? 1 : 0)) / sessionLines.length) * 100
     : 0;
@@ -1223,6 +1255,50 @@ export const SpacedRepetitionTrainer: React.FC<{
         </div>
 
         <div className="lg:w-[280px] lg:min-w-[260px] xl:w-[300px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
+          {sessionLines.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
+            <div className="panel p-3">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={engine.toggleEngine}
+                  className={`btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium ${
+                    engine.enabled ? 'border-accent-teal/40 text-accent-teal' : ''
+                  }`}
+                  title={engine.enabled ? 'Turn engine off' : 'Turn engine on'}
+                >
+                  <Power className="w-3.5 h-3.5" />
+                  Engine {engine.enabled ? 'On' : 'Off'}
+                </button>
+                <button
+                  onClick={replayCurrentLine}
+                  disabled={!currentCard || phase === 'autoplay'}
+                  className="btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Replay the current line to this position"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Replay Line
+                </button>
+                <button
+                  onClick={() => goToSessionLine(-1)}
+                  disabled={currentLineIndex <= 0 || phase === 'autoplay'}
+                  className="btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Go to previous line"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  Previous
+                </button>
+                <button
+                  onClick={() => goToSessionLine(1)}
+                  disabled={currentLineIndex >= sessionLines.length - 1 || phase === 'autoplay'}
+                  className="btn-secondary flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Go to next line"
+                >
+                  Next
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {onAnalyzePosition && phase !== 'idle' && (
             <button
               onClick={() => selection && onAnalyzePosition(selection.fileId, displayFen)}

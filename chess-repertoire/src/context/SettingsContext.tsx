@@ -34,7 +34,7 @@ export interface AppSettings {
 
 const STORAGE_KEY = 'mainline_settings_v1';
 
-const defaultThreads = Math.max(1, Math.min(16, Math.floor((navigator?.hardwareConcurrency ?? 2) / 2)));
+const defaultThreads = Math.max(1, navigator?.hardwareConcurrency ?? 1);
 
 export const DEFAULT_SETTINGS: AppSettings = {
   boardTheme: 'classic',
