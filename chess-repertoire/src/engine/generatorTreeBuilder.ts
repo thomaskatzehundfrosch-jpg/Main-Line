@@ -637,6 +637,50 @@ export async function buildTree(
       candidates = sfCandidates;
     }
 
+    // Final soundness gate for every move we add for our side, regardless of
+    // whether it came from Lichess, Stockfish MultiPV, or fallback discovery.
+    if (isOurTurn && sfWorker && candidates.length > 0) {
+      const verifiedCandidates: MoveCandidate[] = [];
+
+      for (const candidate of candidates) {
+        if ((candidate._sfDepth ?? 0) >= sfAnalysisDepth && candidate._sfEval !== undefined) {
+          if (!failsEvalThreshold(candidate._sfEval ?? null, color, effectiveThreshold)) {
+            verifiedCandidates.push(candidate);
+          }
+          continue;
+        }
+
+        const resultFen = makeMove(fen, candidate.san);
+        if (!resultFen) {
+          logError('info', `Final SF check: ${candidate.san} is illegal — skipped`);
+          continue;
+        }
+
+        try {
+          const finalResult = await analyzePosition(sfWorker, resultFen, sfAnalysisDepth);
+          const finalEval = finalResult.score / 100;
+
+          if (failsEvalThreshold(finalEval, color, effectiveThreshold)) {
+            logError(
+              'info',
+              `Final SF check: ${candidate.san} rejected — eval ${finalEval.toFixed(2)} at depth ${finalResult.depth || sfAnalysisDepth} fails threshold ${effectiveThreshold.toFixed(2)}`
+            );
+            continue;
+          }
+
+          verifiedCandidates.push({
+            ...candidate,
+            _sfEval: finalEval,
+            _sfDepth: finalResult.depth || sfAnalysisDepth,
+          });
+        } catch (err: any) {
+          logError('warning', `Final SF check: ${candidate.san} evaluation failed: ${err.message}`);
+        }
+      }
+
+      candidates = verifiedCandidates;
+    }
+
     // ── Avoid queen trades ──────────────────────────────────────────────────
     // At this point our candidates have already passed the eval threshold.
     // Prefer any eval-approved move that keeps queens on and does not allow an
