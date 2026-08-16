@@ -198,3 +198,52 @@ export const GeneratorBenchmarkPanel: React.FC<GeneratorBenchmarkPanelProps> = (
     </div>
   );
 };
+
+export const GeneratorBenchmarkStrip: React.FC<GeneratorBenchmarkPanelProps> = ({ tree }) => {
+  const result = useMemo(() => {
+    const generatedMap = buildBenchmarkMapFromGeneratorTree(tree);
+    return compareBenchmarkMaps(humanEvansMap, generatedMap, 30);
+  }, [tree]);
+
+  const moveCoverage = percent(result.moveMatches, result.expectedMoves);
+  const positionCoverage = percent(
+    result.human.positions - result.missingPositions.length,
+    result.human.positions
+  );
+
+  return (
+    <div className="border-b border-border-subtle bg-bg-panel px-4 py-2">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-4">
+        <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-text-muted">
+          <BarChart3 className="h-3.5 w-3.5 text-accent-teal" />
+          Evans
+        </div>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <div className="h-2 min-w-28 flex-1 overflow-hidden rounded-full border border-border-subtle bg-bg-primary">
+            <div
+              className="h-full rounded-full bg-accent-teal transition-all"
+              style={{ width: `${Math.min(100, moveCoverage)}%` }}
+            />
+          </div>
+          <span className="w-20 text-right font-mono text-xs font-semibold text-accent-teal">
+            {formatPct(moveCoverage)}
+          </span>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-[10px] md:w-[360px]">
+          <div className="rounded border border-border-subtle bg-bg-surface px-2 py-1">
+            <span className="text-text-muted">positions </span>
+            <span className="font-mono text-text-secondary">{formatPct(positionCoverage)}</span>
+          </div>
+          <div className="rounded border border-border-subtle bg-bg-surface px-2 py-1">
+            <span className="text-text-muted">missing </span>
+            <span className="font-mono text-accent-red">{result.missingHumanMoves.length}</span>
+          </div>
+          <div className="rounded border border-border-subtle bg-bg-surface px-2 py-1">
+            <span className="text-text-muted">extra </span>
+            <span className="font-mono text-accent-amber">{result.extraGeneratedMoves.length}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
