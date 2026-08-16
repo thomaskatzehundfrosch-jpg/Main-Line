@@ -28,6 +28,7 @@ import { useEngine } from '../../hooks/useEngine';
 import { GeneratorSettingsPanel } from './GeneratorSettings';
 import { GeneratorProgressBar } from './GeneratorProgress';
 import { GeneratorMoveTree } from './GeneratorMoveTree';
+import { GeneratorBenchmarkPanel } from './GeneratorBenchmarkPanel';
 import { convertToTreeNode } from '../../utils/generatorConverter';
 import { exportGeneratorPGN } from '../../utils/generatorPgn';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -536,6 +537,8 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
             isGenerating={gen.isGenerating}
             errorLog={gen.errorLog}
           />
+
+          <GeneratorBenchmarkPanel tree={gen.tree} />
         </div>
 
         {/* Right: Move Tree */}

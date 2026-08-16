@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "benchmark:evans": "node scripts/compare-repertoire.mjs --human benchmarks/evans-gambit.pgn"
   },
   "dependencies": {
     "@mliebelt/pgn-parser": "^1.4.12",
