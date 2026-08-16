@@ -259,6 +259,57 @@ function getAdaptiveOpponentResponseCount(
   return Math.max(1, baseCount);
 }
 
+function addOrMergeCandidate(candidates: MoveCandidate[], next: MoveCandidate): boolean {
+  const existing = candidates.find((candidate) => candidate.san === next.san);
+  if (!existing) {
+    candidates.push(next);
+    return true;
+  }
+
+  if (!existing.uci && next.uci) existing.uci = next.uci;
+  const existingSfDepth = existing._sfDepth ?? 0;
+  const nextSfDepth = next._sfDepth ?? 0;
+  if (
+    next._sfEval !== undefined &&
+    (existing._sfEval === undefined || nextSfDepth >= existingSfDepth)
+  ) {
+    existing._sfEval = next._sfEval;
+  }
+  if (existingSfDepth < nextSfDepth) existing._sfDepth = next._sfDepth;
+  if (!existing._lichess && next._lichess) existing._lichess = next._lichess;
+  if (!existing._maia && next._maia) existing._maia = next._maia;
+  if (existing._trickynessErrorRate === undefined && next._trickynessErrorRate !== undefined) {
+    existing._trickynessErrorRate = next._trickynessErrorRate;
+  }
+  return false;
+}
+
+function evalForColor(candidate: MoveCandidate, color: 'white' | 'black'): number | null {
+  if (candidate._sfEval == null) return null;
+  return color === 'white' ? candidate._sfEval : -candidate._sfEval;
+}
+
+function bestEngineMoveGap(candidates: MoveCandidate[], color: 'white' | 'black'): number | null {
+  const evals = candidates
+    .map((candidate) => evalForColor(candidate, color))
+    .filter((value): value is number => value !== null)
+    .sort((a, b) => b - a);
+
+  if (evals.length < 2) return null;
+  return evals[0] - evals[1];
+}
+
+function sortByEngineEval(candidates: MoveCandidate[], color: 'white' | 'black'): MoveCandidate[] {
+  return [...candidates].sort((a, b) => {
+    const evalA = evalForColor(a, color);
+    const evalB = evalForColor(b, color);
+    if (evalA == null && evalB == null) return 0;
+    if (evalA == null) return 1;
+    if (evalB == null) return -1;
+    return evalB - evalA;
+  });
+}
+
 function getOurMoveBranchPriority(
   parentPriority: AdaptiveDepthCategory,
   candidateIndex: number
@@ -448,7 +499,7 @@ export async function buildTree(
     const maiaCandidates: MoveCandidate[] = [];
 
     // Stockfish candidates (upfront, for non-lazy cases)
-    if (useStockfish && sfWorker && !skipUpfrontSF) {
+    if (useStockfish && sfWorker && (!skipUpfrontSF || isOurTurn)) {
       const SF_RETRIES = 2;
       let sfAttempt = 0;
       while (sfAttempt <= SF_RETRIES && sfCandidates.length === 0) {
@@ -456,7 +507,8 @@ export async function buildTree(
           logError('warning', `SF MultiPV retry ${sfAttempt}/${SF_RETRIES} at move ${fullMoveNumber}...`);
         }
         try {
-          const topMoves = await getTopMoves(sfWorker, fen, multiPvDepth, sfRequestPV);
+          const stockfishRequestPV = skipUpfrontSF ? 1 : sfRequestPV;
+          const topMoves = await getTopMoves(sfWorker, fen, multiPvDepth, stockfishRequestPV);
           for (const tm of topMoves) {
             const san = uciToSan(fen, tm.uci);
             if (!san) continue;
@@ -573,7 +625,7 @@ export async function buildTree(
               continue;
             }
 
-            candidates.push({
+            addOrMergeCandidate(candidates, {
               san: lc.san,
               uci: lc.uci,
               _sfEval: evalPawns,
@@ -600,7 +652,7 @@ export async function buildTree(
                 const san = uciToSan(fen, tm.uci);
                 if (!san || usedSans.has(san)) continue;
                 if (failsEvalThreshold(tm.eval, color, effectiveThreshold)) continue;
-                candidates.push({
+                addOrMergeCandidate(candidates, {
                   san,
                   uci: tm.uci,
                   _sfEval: tm.eval,
@@ -639,6 +691,12 @@ export async function buildTree(
       }
     } else {
       candidates = sfCandidates;
+    }
+
+    if (isOurTurn && sfCandidates.length > 0) {
+      for (const sc of sfCandidates) {
+        addOrMergeCandidate(candidates, sc);
+      }
     }
 
     // Final soundness gate for every move we add for our side, regardless of
@@ -776,19 +834,29 @@ export async function buildTree(
     // Replaces the old style-only sort; no-op when both are neutral (style=0,
     // trickyness=0) or only one candidate is available.
     if (isOurTurn && (styleValue !== 0 || tw > 0) && candidates.length > 1) {
-      candidates = [...candidates].sort((a, b) => {
-        const sA = applyTrickynessBonus(
-          styleScore(a, styleValue, color),
-          a._trickynessErrorRate ?? null,
-          tw
+      const engineGap = bestEngineMoveGap(candidates, color);
+
+      if (engineGap !== null && engineGap >= 1.25) {
+        candidates = sortByEngineEval(candidates, color);
+        logError(
+          'info',
+          `Engine priority: top move is ahead by ${engineGap.toFixed(1)} pawns, so style/trickyness re-ranking was skipped.`
         );
-        const sB = applyTrickynessBonus(
-          styleScore(b, styleValue, color),
-          b._trickynessErrorRate ?? null,
-          tw
-        );
-        return sB - sA;
-      });
+      } else {
+        candidates = [...candidates].sort((a, b) => {
+          const sA = applyTrickynessBonus(
+            styleScore(a, styleValue, color),
+            a._trickynessErrorRate ?? null,
+            tw
+          );
+          const sB = applyTrickynessBonus(
+            styleScore(b, styleValue, color),
+            b._trickynessErrorRate ?? null,
+            tw
+          );
+          return sB - sA;
+        });
+      }
     }
 
     candidates = candidates.slice(0, targetPV);
