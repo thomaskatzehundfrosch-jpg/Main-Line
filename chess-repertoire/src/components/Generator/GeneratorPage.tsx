@@ -28,7 +28,6 @@ import { useEngine } from '../../hooks/useEngine';
 import { GeneratorSettingsPanel } from './GeneratorSettings';
 import { GeneratorProgressBar } from './GeneratorProgress';
 import { GeneratorMoveTree } from './GeneratorMoveTree';
-import { GeneratorBenchmarkPanel, GeneratorBenchmarkStrip } from './GeneratorBenchmarkPanel';
 import { convertToTreeNode } from '../../utils/generatorConverter';
 import { exportGeneratorPGN } from '../../utils/generatorPgn';
 import { useIsMobile } from '../../hooks/useIsMobile';
@@ -376,8 +375,6 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
         )}
       </div>
 
-      <GeneratorBenchmarkStrip tree={gen.tree} />
-
       {/* 3-column layout */}
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden md:flex-row">
         {/* Left: Settings */}
@@ -540,7 +537,6 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
             errorLog={gen.errorLog}
           />
 
-          <GeneratorBenchmarkPanel tree={gen.tree} />
         </div>
 
         {/* Right: Move Tree */}
