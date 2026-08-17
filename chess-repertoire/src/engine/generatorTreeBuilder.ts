@@ -531,7 +531,27 @@ export async function buildTree(
         sfAttempt++;
       }
       if (sfCandidates.length === 0 && sfAttempt > 1) {
-        logError('warning', `SF MultiPV gave up after ${SF_RETRIES} retries at move ${fullMoveNumber} — branch will be skipped.`);
+        logError('warning', `SF MultiPV gave up after ${SF_RETRIES} retries at move ${fullMoveNumber} — trying single-PV recovery.`);
+        try {
+          const singlePv = await analyzePosition(sfWorker, fen, multiPvDepth);
+          const san = uciToSan(fen, singlePv.bestMoveUci);
+          const evalPawns = singlePv.score / 100;
+          if (!san) {
+            logError('warning', `SF single-PV recovery failed at move ${fullMoveNumber}: could not convert best move ${singlePv.bestMoveUci}.`);
+          } else if (isOurTurn && failsEvalThreshold(evalPawns, color, effectiveThreshold)) {
+            logError('info', `SF single-PV recovery: ${san} filtered by eval ${evalPawns.toFixed(2)} fails threshold ${effectiveThreshold.toFixed(2)}.`);
+          } else {
+            sfCandidates.push({
+              san,
+              uci: singlePv.bestMoveUci,
+              _sfEval: evalPawns,
+              _sfDepth: singlePv.depth,
+            });
+            logError('info', `SF single-PV recovery kept ${san} at depth ${singlePv.depth}.`);
+          }
+        } catch (err: any) {
+          logError('warning', `SF single-PV recovery failed at move ${fullMoveNumber}: ${err.message}`);
+        }
       }
     }
 
