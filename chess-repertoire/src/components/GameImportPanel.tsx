@@ -7,6 +7,7 @@ import { analyzeGame, createAnalysisWorker } from '../engine/analyzer';
 import type { ImportedGame } from '../types/game';
 import { generateGameId } from '../types/game';
 import { logger } from '../utils/errorLogger';
+import { sanitizePgnForParser } from '../utils/pgnSanitizer';
 
 interface AnalysisSettings {
   depth: number;
@@ -66,15 +67,17 @@ export const GameImportPanel: React.FC<GameImportPanelProps> = ({ onViewGame, vi
     setImportError(null);
 
     try {
+      const parserText = sanitizePgnForParser(pgnText);
+
       // Try parsing as multiple games first, fall back to single game
       let gamesArray: any[];
       try {
-        const parsedGames = parse(pgnText, { startRule: 'games' });
+        const parsedGames = parse(parserText, { startRule: 'games' });
         gamesArray = Array.isArray(parsedGames) ? parsedGames : [parsedGames];
       } catch {
         // Fallback: try parsing as a single game
         try {
-          const singleGame = parse(pgnText, { startRule: 'game' });
+          const singleGame = parse(parserText, { startRule: 'game' });
           gamesArray = [singleGame];
         } catch (innerErr) {
           throw new Error(

@@ -5,6 +5,7 @@
 
 import { Chess } from 'chess.js';
 import type { GeneratorNode } from '../types/generator';
+import { sanitizePgnForParser } from './pgnSanitizer';
 
 type LogFn = (level: 'info' | 'warning' | 'error', message: string) => void;
 
@@ -68,10 +69,8 @@ function splitGames(text: string): string[] {
  */
 function extractMainAndVariations(gameText: string): string[][] {
   // Strip headers
-  const moveText = gameText
+  const moveText = sanitizePgnForParser(gameText)
     .replace(/\[[^\]]*\]\s*/g, '')
-    .replace(/\{[^}]*\}/g, '')  // strip comments
-    .replace(/\$\d+/g, '')       // strip NAGs
     .trim();
 
   if (!moveText) return [];
@@ -181,7 +180,9 @@ function buildPGNMoves(
   if (!node.children || node.children.length === 0) return '';
 
   const mainChild = node.children[0];
-  const variations = node.children.slice(1);
+  if (!isExportableSan(mainChild.san)) return '';
+
+  const variations = node.children.slice(1).filter((child) => isExportableSan(child.san));
 
   let result = '';
 
@@ -232,6 +233,10 @@ function buildPGNMoves(
   if (mainContinuation) result += ' ' + mainContinuation;
 
   return result;
+}
+
+function isExportableSan(san: string | null): san is string {
+  return Boolean(san && !/^[a-h]$/.test(san));
 }
 
 /**

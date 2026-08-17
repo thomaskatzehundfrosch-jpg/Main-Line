@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { parse } from '@mliebelt/pgn-parser';
 import { buildTreeFromGames } from '../utils/treeBuilder';
+import { sanitizePgnForParser } from '../utils/pgnSanitizer';
 import type { TreeNode } from '../types';
 
 interface UsePgnParserReturn {
@@ -28,7 +29,7 @@ export function usePgnParser(): UsePgnParserReturn {
 
     try {
       // Parse the PGN text using @mliebelt/pgn-parser
-      const parsedGames = parse(pgnText, { startRule: 'games' });
+      const parsedGames = parse(sanitizePgnForParser(pgnText), { startRule: 'games' });
 
       // Ensure parsedGames is an array
       const gamesArray = Array.isArray(parsedGames) ? parsedGames : [parsedGames];
