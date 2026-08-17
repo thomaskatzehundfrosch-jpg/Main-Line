@@ -6,6 +6,7 @@
 import { Chess } from 'chess.js';
 import type { GeneratorNode } from '../types/generator';
 import { sanitizePgnForParser } from './pgnSanitizer';
+import { pruneOurTranspositionChoices } from './generatorTreePruner';
 
 type LogFn = (level: 'info' | 'warning' | 'error', message: string) => void;
 
@@ -155,6 +156,7 @@ export function exportGeneratorPGN(
   settings: { color: string },
   withAnnotations: boolean = true
 ): string {
+  const exportTree = pruneOurTranspositionChoices(tree, settings.color);
   const headers = [
     '[Event "Generated Repertoire"]',
     `[Site "Main Line"]`,
@@ -165,7 +167,7 @@ export function exportGeneratorPGN(
     '',
   ];
 
-  const moveText = buildPGNMoves(tree, withAnnotations, false);
+  const moveText = buildPGNMoves(exportTree, withAnnotations, false);
   return headers.join('\n') + moveText + ' *\n';
 }
 

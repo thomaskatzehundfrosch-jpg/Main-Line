@@ -618,6 +618,10 @@ export async function buildTree(
             }
             const resultFen = chess.fen();
             const indivResult = await analyzePosition(sfWorker, resultFen, sfAnalysisDepth);
+            if (indivResult.depth <= 0) {
+              logError('warning', `Lichess+SF: ${lc.san} rejected — Stockfish returned no usable depth.`);
+              continue;
+            }
             const evalPawns = indivResult.score / 100;
 
             if (failsEvalThreshold(evalPawns, color, effectiveThreshold)) {
@@ -629,7 +633,7 @@ export async function buildTree(
               san: lc.san,
               uci: lc.uci,
               _sfEval: evalPawns,
-              _sfDepth: sfAnalysisDepth,
+              _sfDepth: indivResult.depth,
               _lichess: lc._lichess,
             });
             usedSans.add(lc.san);
@@ -705,13 +709,6 @@ export async function buildTree(
       const verifiedCandidates: MoveCandidate[] = [];
 
       for (const candidate of candidates) {
-        if ((candidate._sfDepth ?? 0) >= sfAnalysisDepth && candidate._sfEval !== undefined) {
-          if (!failsEvalThreshold(candidate._sfEval ?? null, color, effectiveThreshold)) {
-            verifiedCandidates.push(candidate);
-          }
-          continue;
-        }
-
         const resultFen = makeMove(fen, candidate.san);
         if (!resultFen) {
           logError('info', `Final SF check: ${candidate.san} is illegal — skipped`);
@@ -720,20 +717,29 @@ export async function buildTree(
 
         try {
           const finalResult = await analyzePosition(sfWorker, resultFen, sfAnalysisDepth);
+          if (finalResult.depth <= 0) {
+            logError('warning', `Final SF check: ${candidate.san} rejected — Stockfish returned no usable depth.`);
+            continue;
+          }
           const finalEval = finalResult.score / 100;
 
           if (failsEvalThreshold(finalEval, color, effectiveThreshold)) {
             logError(
               'info',
-              `Final SF check: ${candidate.san} rejected — eval ${finalEval.toFixed(2)} at depth ${finalResult.depth || sfAnalysisDepth} fails threshold ${effectiveThreshold.toFixed(2)}`
+              `Final SF check: ${candidate.san} rejected — eval ${finalEval.toFixed(2)} at depth ${finalResult.depth} fails threshold ${effectiveThreshold.toFixed(2)}; best reply ${finalResult.bestMoveSan || finalResult.bestMoveUci || '?'}.`
             );
             continue;
           }
 
+          logError(
+            'info',
+            `Final SF check: ${candidate.san} accepted — eval ${finalEval.toFixed(2)} at depth ${finalResult.depth}; best reply ${finalResult.bestMoveSan || finalResult.bestMoveUci || '?'}.`
+          );
+
           verifiedCandidates.push({
             ...candidate,
             _sfEval: finalEval,
-            _sfDepth: finalResult.depth || sfAnalysisDepth,
+            _sfDepth: finalResult.depth,
           });
         } catch (err: any) {
           logError('warning', `Final SF check: ${candidate.san} evaluation failed: ${err.message}`);

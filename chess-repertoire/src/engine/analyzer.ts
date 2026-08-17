@@ -149,6 +149,11 @@ export function analyzePosition(
           bestMoveUci = bestmoveMatch[1];
         }
 
+        if (bestDepth <= 0 || !bestMoveUci) {
+          rejectOnce(new Error(`Stockfish returned no usable evaluation for position: ${fen}`));
+          return;
+        }
+
         // Convert best move UCI to SAN
         let bestMoveSan = bestMoveUci;
         try {

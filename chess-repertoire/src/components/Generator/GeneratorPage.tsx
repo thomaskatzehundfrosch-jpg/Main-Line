@@ -312,8 +312,8 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
   const handleImport = useCallback(() => {
     if (!gen.tree) return;
-    onImportTree(convertToTreeNode(gen.tree));
-  }, [gen.tree, onImportTree]);
+    onImportTree(convertToTreeNode(gen.tree, null, true, settings.color));
+  }, [gen.tree, onImportTree, settings.color]);
 
   const handleExportPGN = useCallback(() => {
     if (!gen.tree) return;

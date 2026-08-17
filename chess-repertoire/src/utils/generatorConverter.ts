@@ -5,6 +5,7 @@
 import type { TreeNode } from '../types';
 import type { GeneratorNode } from '../types/generator';
 import { generateNodeId, resetNodeIdCounter } from './treeBuilder';
+import { pruneOurTranspositionChoices } from './generatorTreePruner';
 
 /**
  * Convert a GeneratorNode tree to a TreeNode tree for import into the main repertoire.
@@ -13,13 +14,14 @@ import { generateNodeId, resetNodeIdCounter } from './treeBuilder';
 export function convertToTreeNode(
   genNode: GeneratorNode,
   parentId: string | null = null,
-  resetIds: boolean = true
+  resetIds: boolean = true,
+  color: string = 'white'
 ): TreeNode {
   if (resetIds) {
     resetNodeIdCounter();
   }
 
-  return convertNodeRecursive(genNode, parentId);
+  return convertNodeRecursive(pruneOurTranspositionChoices(genNode, color), parentId);
 }
 
 function convertNodeRecursive(
