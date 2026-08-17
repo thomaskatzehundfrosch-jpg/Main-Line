@@ -260,9 +260,5 @@ function buildAnnotation(node: GeneratorNode): string {
     }
   }
 
-  if (node.isDangerous) {
-    parts.push('⚠ dangerous');
-  }
-
   return parts.join(' | ');
 }
