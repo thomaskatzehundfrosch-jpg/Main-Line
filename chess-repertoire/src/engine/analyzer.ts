@@ -534,6 +534,14 @@ export function getTopMoves(
   numMoves: number = 3,
   timeoutMs: number = 90000
 ): Promise<TopMoveResult[]> {
+  if (numMoves <= 1) {
+    return analyzePosition(worker, fen, depth).then((result) => ([{
+      uci: result.bestMoveUci,
+      eval: result.score / 100,
+      depth: result.depth,
+    }]));
+  }
+
   return new Promise((resolve, reject) => {
     let settled = false;
     let bestMoveUci = '';
@@ -541,6 +549,7 @@ export function getTopMoves(
     const cleanup = () => {
       clearTimeout(timeout);
       worker.removeEventListener('message', syncHandler);
+      worker.removeEventListener('message', optionReadyHandler);
       worker.removeEventListener('message', handler);
       worker.removeEventListener('error', errorHandler);
     };
@@ -569,6 +578,7 @@ export function getTopMoves(
       // (we just removed it) and is discarded — it will not pollute the next
       // analyzePosition call, which now syncs via isready/readyok anyway.
       worker.postMessage('stop');
+      worker.postMessage('setoption name MultiPV value 1');
       rejectOnce(new Error(`Stockfish MultiPV timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
@@ -579,16 +589,18 @@ export function getTopMoves(
       const msg = e.data;
       if (typeof msg !== 'string') return;
 
-      // Parse info lines with multipv
-      if (msg.includes('info depth') && msg.includes('multipv')) {
+      // Parse MultiPV info lines and ordinary PV lines. Some WASM builds omit
+      // "multipv 1" even after MultiPV is set, so treat bare PV lines as PV #1.
+      if (msg.includes('info depth') && msg.includes(' pv ')) {
         const depthMatch = msg.match(/info depth (\d+)/);
         const pvIdxMatch = msg.match(/multipv (\d+)/);
         const pvMoveMatch = msg.match(/ pv ([a-h][1-8][a-h][1-8][qrbn]?)/);
         const cpMatch = msg.match(/score cp (-?\d+)/);
         const mateMatch = msg.match(/score mate (-?\d+)/);
 
-        if (pvIdxMatch && pvMoveMatch) {
-          const pvIdx = parseInt(pvIdxMatch[1], 10);
+        if (pvMoveMatch) {
+          const pvIdx = pvIdxMatch ? parseInt(pvIdxMatch[1], 10) : 1;
+          if (pvIdx > numMoves) return;
           const uci = pvMoveMatch[1];
           if (pvIdx === 1) bestMoveUci = uci;
           let evalScore: number | null = null;
@@ -615,8 +627,9 @@ export function getTopMoves(
         for (let i = 1; i <= numMoves; i++) {
           if (pvMap[i]) results.push(pvMap[i]);
         }
-        if (results.length === 0 && bestMoveUci) {
-          results.push({ uci: bestMoveUci, eval: null, depth: 0 });
+        if (results.length === 0) {
+          rejectOnce(new Error(`Stockfish MultiPV returned no usable PV lines for position: ${fen}`));
+          return;
         }
 
         // Normalize evals to White's perspective
@@ -637,9 +650,18 @@ export function getTopMoves(
     function startAnalysis() {
       worker.addEventListener('message', handler);
       worker.postMessage(`setoption name MultiPV value ${numMoves}`);
-      worker.postMessage('ucinewgame');
-      worker.postMessage(`position fen ${fen}`);
-      worker.postMessage(`go depth ${depth}`);
+      worker.addEventListener('message', optionReadyHandler);
+      worker.postMessage('isready');
+    }
+
+    function optionReadyHandler(e: MessageEvent<string>) {
+      if (settled) return;
+      if (e.data === 'readyok') {
+        worker.removeEventListener('message', optionReadyHandler);
+        worker.postMessage('ucinewgame');
+        worker.postMessage(`position fen ${fen}`);
+        worker.postMessage(`go depth ${depth}`);
+      }
     }
 
     const syncHandler = (e: MessageEvent<string>) => {

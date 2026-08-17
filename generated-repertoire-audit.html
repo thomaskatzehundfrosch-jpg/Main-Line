@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Generated Repertoire Audit</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d9dee8;
+      --bad: #dc2626;
+      --warn: #d97706;
+      --ok: #059669;
+      --accent: #2563eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    main {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    h1 {
+      margin: 0 0 16px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    textarea {
+      width: 100%;
+      min-height: 460px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--ink);
+      outline: none;
+    }
+    textarea:focus, select:focus, input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin: 12px 0;
+    }
+    select, input[type="number"], input[type="file"] {
+      width: 100%;
+      height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: white;
+      padding: 0 10px;
+      color: var(--ink);
+    }
+    input[type="file"] {
+      height: auto;
+      padding: 8px;
+    }
+    button {
+      height: 40px;
+      border: 0;
+      border-radius: 6px;
+      padding: 0 14px;
+      background: var(--accent);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #eef2ff;
+      color: #1e3a8a;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .stat {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      min-height: 66px;
+    }
+    .stat strong {
+      display: block;
+      font-size: 22px;
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+    .stat span {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .issue {
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--warn);
+      border-radius: 6px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      background: white;
+    }
+    .issue.critical { border-left-color: var(--bad); }
+    .issue.warning { border-left-color: var(--warn); }
+    .issue h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+    .issue p {
+      margin: 4px 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--ink);
+      overflow-wrap: anywhere;
+    }
+    .empty {
+      color: var(--ok);
+      border: 1px solid #bbf7d0;
+      background: #f0fdf4;
+      border-radius: 6px;
+      padding: 12px;
+      font-weight: 700;
+    }
+    @media (max-width: 860px) {
+      main { padding: 14px; }
+      .grid, .summary, .controls { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Generated Repertoire Audit</h1>
+    <div class="grid">
+      <section class="panel">
+        <label for="pgn">Generated PGN</label>
+        <textarea id="pgn" spellcheck="false" placeholder="Paste exported generated repertoire PGN here"></textarea>
+        <div class="controls">
+          <div>
+            <label for="file">Load file</label>
+            <input id="file" type="file" accept=".pgn,.txt">
+          </div>
+          <div>
+            <label for="color">Repertoire side</label>
+            <select id="color">
+              <option value="auto">Auto from PGN</option>
+              <option value="white">White</option>
+              <option value="black">Black</option>
+            </select>
+          </div>
+          <div>
+            <label for="jump">Eval jump</label>
+            <input id="jump" type="number" min="0.5" max="10" step="0.25" value="1.5">
+          </div>
+        </div>
+        <div class="actions">
+          <button id="audit">Audit PGN</button>
+          <button id="sample" class="secondary">Use pasted bad example</button>
+          <button id="clear" class="secondary">Clear</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="summary">
+          <div class="stat"><strong id="lines">0</strong><span>Lines</span></div>
+          <div class="stat"><strong id="moves">0</strong><span>Moves checked</span></div>
+          <div class="stat"><strong id="critical">0</strong><span>Critical</span></div>
+          <div class="stat"><strong id="warnings">0</strong><span>Warnings</span></div>
+        </div>
+        <div id="results" class="empty">Paste a generated PGN and run the audit.</div>
+      </section>
+    </div>
+  </main>
+
+  <script type="module">
+    import { Chess } from './chess-repertoire/node_modules/chess.js/dist/esm/chess.js';
+
+    const pgnEl = document.getElementById('pgn');
+    const fileEl = document.getElementById('file');
+    const colorEl = document.getElementById('color');
+    const jumpEl = document.getElementById('jump');
+    const resultsEl = document.getElementById('results');
+    const summaryEls = {
+      lines: document.getElementById('lines'),
+      moves: document.getElementById('moves'),
+      critical: document.getElementById('critical'),
+      warnings: document.getElementById('warnings'),
+    };
+
+    fileEl.addEventListener('change', async () => {
+      const file = fileEl.files?.[0];
+      if (!file) return;
+      pgnEl.value = await file.text();
+    });
+
+    document.getElementById('clear').addEventListener('click', () => {
+      pgnEl.value = '';
+      renderSummary({ lines: 0, moves: 0, critical: 0, warnings: 0 });
+      resultsEl.className = 'empty';
+      resultsEl.textContent = 'Paste a generated PGN and run the audit.';
+    });
+
+    document.getElementById('sample').addEventListener('click', () => {
+      pgnEl.value = `[Event "Generated Repertoire"]
+[White "?"]
+[Black "Repertoire"]
+[Result "*"]
+
+1. d4 c5 2. d5 Nf6 3. c4 d6 4. Nc3 g6 5. h3 e6 6. Bg5 exd5 7. e4 dxe4 8. Nxe4 Bg7 9. Nxf6+ Bxf6 10. Bxf6 d5 {SF: +0.00/d25} 11. Bxd8 {SF: +6.48/d13 | dangerous} *`;
+    });
+
+    document.getElementById('audit').addEventListener('click', () => {
+      try {
+        const pgn = pgnEl.value.trim();
+        if (!pgn) throw new Error('No PGN pasted.');
+
+        const color = getRepertoireColor(pgn, colorEl.value);
+        const lines = extractLines(pgn);
+        const threshold = Number(jumpEl.value) || 1.5;
+        const issues = [];
+        let movesChecked = 0;
+
+        lines.forEach((line, lineIndex) => {
+          const chess = new Chess();
+          const played = [];
+
+          for (let i = 0; i < line.length; i++) {
+            const entry = line[i];
+            const beforeFen = chess.fen();
+            let move;
+
+            try {
+              move = chess.move(entry.san);
+            } catch (err) {
+              issues.push({
+                severity: 'warning',
+                title: `Illegal move in parsed line ${lineIndex + 1}: ${entry.san}`,
+                detail: err instanceof Error ? err.message : String(err),
+                line: played.join(' '),
+                fen: beforeFen,
+              });
+              break;
+            }
+
+            if (!move) break;
+            played.push(entry.san);
+
+            const movedSide = move.color === 'w' ? 'white' : 'black';
+            if (movedSide !== color) continue;
+            movesChecked++;
+
+            const queenCaptures = chess.moves({ verbose: true }).filter((reply) => reply.captured === 'q');
+            for (const reply of queenCaptures) {
+              issues.push({
+                severity: 'critical',
+                title: `${moveNumberLabel(i)} ${entry.san}: opponent can take the queen with ${reply.san}`,
+                detail: 'Immediate legal queen capture after a repertoire move.',
+                line: played.join(' '),
+                fen: chess.fen(),
+              });
+            }
+
+            const currentEval = readEval(entry.comment);
+            const nextEval = readEval(line[i + 1]?.comment || '');
+            if (currentEval?.depth === 0) {
+              issues.push({
+                severity: 'warning',
+                title: `${moveNumberLabel(i)} ${entry.san}: depth 0 annotation`,
+                detail: 'This usually means the engine result was not usable.',
+                line: played.join(' '),
+                fen: chess.fen(),
+              });
+            }
+
+            if (currentEval && nextEval && line[i + 1]) {
+              const swingAgainstUs = color === 'white'
+                ? currentEval.value - nextEval.value
+                : nextEval.value - currentEval.value;
+
+              if (swingAgainstUs >= threshold) {
+                issues.push({
+                  severity: 'critical',
+                  title: `${moveNumberLabel(i)} ${entry.san}: eval jumps ${swingAgainstUs.toFixed(2)} pawns against repertoire`,
+                  detail: `After opponent reply ${line[i + 1].san}: ${currentEval.value.toFixed(2)} -> ${nextEval.value.toFixed(2)}.`,
+                  line: played.join(' '),
+                  fen: chess.fen(),
+                });
+              }
+            }
+          }
+        });
+
+        const critical = issues.filter((issue) => issue.severity === 'critical').length;
+        const warnings = issues.length - critical;
+        renderSummary({ lines: lines.length, moves: movesChecked, critical, warnings });
+        renderIssues(issues, color);
+      } catch (err) {
+        renderSummary({ lines: 0, moves: 0, critical: 0, warnings: 1 });
+        resultsEl.className = '';
+        resultsEl.innerHTML = `<div class="issue warning"><h3>Could not audit PGN</h3><p>${escapeHtml(err instanceof Error ? err.message : String(err))}</p></div>`;
+      }
+    });
+
+    function getRepertoireColor(pgn, selected) {
+      if (selected === 'white' || selected === 'black') return selected;
+      if (/^\s*\[White\s+"Repertoire"\]/mi.test(pgn)) return 'white';
+      if (/^\s*\[Black\s+"Repertoire"\]/mi.test(pgn)) return 'black';
+      return 'white';
+    }
+
+    function readEval(comment) {
+      const match = comment.match(/SF:\s*([+-]?\d+(?:\.\d+)?)\/d(\d+)/i);
+      if (!match) return null;
+      return { value: Number(match[1]), depth: Number(match[2]) };
+    }
+
+    function extractLines(pgn) {
+      const body = pgn
+        .replace(/\r\n?/g, '\n')
+        .replace(/^\s*\[[^\]]+\]\s*$/gm, ' ')
+        .replace(/^\s*%.*$/gm, ' ');
+      const tokens = tokenize(body);
+      const lines = [];
+      parseSequence(tokens, 0, [], lines);
+
+      const seen = new Set();
+      return lines.filter((line) => {
+        const key = line.map((entry) => entry.san).join(' ');
+        if (!key || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    function tokenize(text) {
+      const tokens = [];
+      let i = 0;
+
+      while (i < text.length) {
+        const char = text[i];
+        if (/\s/.test(char)) {
+          i++;
+          continue;
+        }
+        if (char === '{') {
+          let j = i + 1;
+          while (j < text.length && text[j] !== '}') j++;
+          tokens.push({ type: 'comment', value: text.slice(i + 1, j).trim() });
+          i = j + 1;
+          continue;
+        }
+        if (char === '(' || char === ')') {
+          tokens.push({ type: char === '(' ? 'var_start' : 'var_end', value: char });
+          i++;
+          continue;
+        }
+        let j = i;
+        while (j < text.length && !/\s/.test(text[j]) && text[j] !== '{' && text[j] !== '(' && text[j] !== ')') j++;
+        const word = text.slice(i, j).trim();
+        i = j;
+
+        if (!word || /^\d+\.{1,3}$/.test(word) || /^(1-0|0-1|1\/2-1\/2|\*)$/.test(word) || /^\$\d+$/.test(word)) {
+          continue;
+        }
+        if (/^[a-h]$/.test(word)) {
+          continue;
+        }
+        if (/^[a-hKQRBNO0]/.test(word)) {
+          tokens.push({ type: 'move', value: word.replace(/[!?]+$/g, '') });
+        }
+      }
+      return tokens;
+    }
+
+    function parseSequence(tokens, pos, current, lines) {
+      let line = [...current];
+
+      while (pos < tokens.length) {
+        const token = tokens[pos];
+        if (token.type === 'move') {
+          line.push({ san: token.value, comment: '' });
+          pos++;
+          continue;
+        }
+        if (token.type === 'comment') {
+          if (line.length > 0) line[line.length - 1].comment = token.value;
+          pos++;
+          continue;
+        }
+        if (token.type === 'var_start') {
+          pos = parseSequence(tokens, pos + 1, line.slice(0, -1), lines);
+          continue;
+        }
+        if (token.type === 'var_end') {
+          if (line.length > 0) lines.push(line);
+          return pos + 1;
+        }
+        pos++;
+      }
+
+      if (line.length > 0) lines.push(line);
+      return pos;
+    }
+
+    function moveNumberLabel(plyIndex) {
+      const move = Math.floor(plyIndex / 2) + 1;
+      return plyIndex % 2 === 0 ? `${move}.` : `${move}...`;
+    }
+
+    function renderSummary(summary) {
+      summaryEls.lines.textContent = String(summary.lines);
+      summaryEls.moves.textContent = String(summary.moves);
+      summaryEls.critical.textContent = String(summary.critical);
+      summaryEls.warnings.textContent = String(summary.warnings);
+    }
+
+    function renderIssues(issues, color) {
+      if (issues.length === 0) {
+        resultsEl.className = 'empty';
+        resultsEl.textContent = `No obvious tactical or annotation issues found for ${color}.`;
+        return;
+      }
+
+      resultsEl.className = '';
+      resultsEl.innerHTML = issues
+        .slice(0, 200)
+        .map((issue) => `
+          <article class="issue ${issue.severity}">
+            <h3>${escapeHtml(issue.title)}</h3>
+            <p>${escapeHtml(issue.detail)}</p>
+            <p><strong>Line:</strong> <code>${escapeHtml(issue.line)}</code></p>
+            <p><strong>FEN:</strong> <code>${escapeHtml(issue.fen)}</code></p>
+          </article>
+        `)
+        .join('');
+
+      if (issues.length > 200) {
+        resultsEl.insertAdjacentHTML('beforeend', `<p>${issues.length - 200} more issues hidden.</p>`);
+      }
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+  </script>
+</body>
+</html>
