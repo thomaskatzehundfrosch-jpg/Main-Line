@@ -502,13 +502,15 @@ export async function buildTree(
     if (useStockfish && sfWorker && (!skipUpfrontSF || isOurTurn)) {
       const SF_RETRIES = 2;
       let sfAttempt = 0;
-      while (sfAttempt <= SF_RETRIES && sfCandidates.length === 0) {
+      let sfSearchSucceeded = false;
+      while (sfAttempt <= SF_RETRIES && !sfSearchSucceeded) {
         if (sfAttempt > 0) {
           logError('warning', `SF MultiPV retry ${sfAttempt}/${SF_RETRIES} at move ${fullMoveNumber}...`);
         }
         try {
           const stockfishRequestPV = skipUpfrontSF ? 1 : sfRequestPV;
           const topMoves = await getTopMoves(sfWorker, fen, multiPvDepth, stockfishRequestPV);
+          sfSearchSucceeded = true;
           for (const tm of topMoves) {
             const san = uciToSan(fen, tm.uci);
             if (!san) continue;
@@ -525,12 +527,15 @@ export async function buildTree(
               _sfDepth: tm.depth,
             });
           }
+          if (sfCandidates.length === 0) {
+            logError('info', `SF: no candidate passed filters at move ${fullMoveNumber}.`);
+          }
         } catch (err: any) {
           logError('warning', `SF MultiPV attempt ${sfAttempt + 1} failed at move ${fullMoveNumber}: ${err.message}`);
         }
         sfAttempt++;
       }
-      if (sfCandidates.length === 0 && sfAttempt > 1) {
+      if (!sfSearchSucceeded && sfCandidates.length === 0 && sfAttempt > 1) {
         logError('warning', `SF MultiPV gave up after ${SF_RETRIES} retries at move ${fullMoveNumber} — trying single-PV recovery.`);
         try {
           const singlePv = await analyzePosition(sfWorker, fen, multiPvDepth);
