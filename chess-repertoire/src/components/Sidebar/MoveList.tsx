@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import { Chess } from 'chess.js';
+import { RefreshCw } from 'lucide-react';
 import { TreeNode } from '../../types';
 import { NAG_SYMBOLS } from '../../types';
 import type { ImportedGame } from '../../types/game';
@@ -19,6 +20,8 @@ interface MoveListProps {
   showGameOverlay?: boolean;
   /** Add a game move to the repertoire tree */
   onAddMove?: (parentId: string, move: string, fen: string) => void;
+  /** Open the generator with the selected line as a seed. */
+  onFinishLineFromNode?: (node: TreeNode) => void;
   hideHeader?: boolean;
 }
 
@@ -44,6 +47,7 @@ export const MoveList: React.FC<MoveListProps> = ({
   importedGames = [],
   showGameOverlay = false,
   onAddMove,
+  onFinishLineFromNode,
   hideHeader = false,
 }) => {
   const { getEval, getNodeAnnotation, isAnalyzing } = useRepertoireEval();
@@ -343,6 +347,16 @@ export const MoveList: React.FC<MoveListProps> = ({
     <div className="panel flex flex-col">
       {!hideHeader && <div className="panel-header">MOVES</div>}
       <div className="p-3 overflow-auto flex-1">
+        {onFinishLineFromNode && currentNode.move && (
+          <button
+            onClick={() => onFinishLineFromNode(currentNode)}
+            className="btn-secondary mb-3 flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium"
+            title="Open generator from the currently selected move"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Regenerate continuation
+          </button>
+        )}
         <div className="text-sm leading-relaxed">
           {currentPath.length > 1 ? renderMoves() : (
             <span className="text-text-muted">No moves in this line</span>

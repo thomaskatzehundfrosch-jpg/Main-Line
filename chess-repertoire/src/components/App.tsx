@@ -1569,6 +1569,7 @@ export const App: React.FC = () => {
                     importedGames={games.importedGames}
                     showGameOverlay={games.showGameOverlay}
                     onAddMove={addMoveToNode}
+                    onFinishLineFromNode={handleFinishLineFromNode}
                   />
                 </div>
                 <div className="min-h-[28vh] flex flex-col border-t border-border-subtle">
@@ -2008,6 +2009,7 @@ export const App: React.FC = () => {
                         importedGames={games.importedGames}
                         showGameOverlay={games.showGameOverlay}
                         onAddMove={addMoveToNode}
+                        onFinishLineFromNode={handleFinishLineFromNode}
                         hideHeader
                       />
                     </div>
