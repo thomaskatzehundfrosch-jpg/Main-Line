@@ -116,6 +116,10 @@ function findGeneratorNodeByFen(root: GeneratorNode, fen: string): GeneratorNode
   return null;
 }
 
+function getGeneratorSubtreeSignature(node: GeneratorNode): string {
+  return `${node.san ?? 'root'}(${node.children.map(getGeneratorSubtreeSignature).join(',')})`;
+}
+
 function getFenFullMoveNumber(fen: string, fallbackDepth: number): number {
   const fullMove = Number(fen.split(/\s+/)[5]);
   return Number.isFinite(fullMove) && fullMove > 0 ? fullMove : Math.max(1, Math.ceil(fallbackDepth / 2));
@@ -269,6 +273,12 @@ export const App: React.FC = () => {
   const [regenerationError, setRegenerationError] = useState<string | null>(null);
   const treeRegenerationWorkerRef = useRef<Worker | null>(null);
   const ownsTreeRegenerationWorkerRef = useRef(false);
+  const treeRegenerationTargetRef = useRef<{
+    nodeId: string;
+    fen: string;
+    seed: string[];
+    lastSignature: string | null;
+  } | null>(null);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -349,6 +359,32 @@ export const App: React.FC = () => {
     setViewingMoveIndex(0);
   }, []);
 
+  const graftGeneratedContinuation = useCallback((finalRoot: GeneratorNode): number => {
+    const target = treeRegenerationTargetRef.current;
+    if (!target) return 0;
+
+    const generatedLeaf = findGeneratorNodeByFen(finalRoot, target.fen)
+      ?? findGeneratorNodeByMovePath(finalRoot, target.seed);
+
+    if (!generatedLeaf || generatedLeaf.children.length === 0) return 0;
+
+    const signature = generatedLeaf.children.map(getGeneratorSubtreeSignature).join('|');
+    if (signature === target.lastSignature) return generatedLeaf.children.length;
+
+    treeRegenerationTargetRef.current = { ...target, lastSignature: signature };
+    replaceNodeChildren(
+      target.nodeId,
+      generatedLeaf.children.map((child) => convertGeneratedChild(child, target.nodeId))
+    );
+
+    return generatedLeaf.children.length;
+  }, [replaceNodeChildren]);
+
+  useEffect(() => {
+    if (!regeneratingNodeId || !generator.tree) return;
+    graftGeneratedContinuation(generator.tree);
+  }, [generator.tree, graftGeneratedContinuation, regeneratingNodeId]);
+
   const handleFinishLineFromNode = useCallback(
     async (node: TreeNode) => {
       const path = getPathToNode(tree, node.id);
@@ -359,6 +395,12 @@ export const App: React.FC = () => {
 
       if (seed.length === 0) return;
       setRegenerationError(null);
+      treeRegenerationTargetRef.current = {
+        nodeId: node.id,
+        fen: node.fen,
+        seed,
+        lastSignature: null,
+      };
 
       const cachedGeneratorSettings = getCachedGeneratorSettings();
       const selectedFullMoveNumber = getFenFullMoveNumber(node.fen, seed.length);
@@ -423,12 +465,13 @@ export const App: React.FC = () => {
         [seed],
         sfWorker,
         (finalRoot: GeneratorNode) => {
-          const generatedLeaf = findGeneratorNodeByFen(finalRoot, node.fen) ?? findGeneratorNodeByMovePath(finalRoot, seed);
+          const graftedCount = graftGeneratedContinuation(finalRoot);
 
-          if (!generatedLeaf) {
+          if (graftedCount === 0) {
             if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
             treeRegenerationWorkerRef.current = null;
             ownsTreeRegenerationWorkerRef.current = false;
+            treeRegenerationTargetRef.current = null;
             generator.addLogEntry({
               id: `log_regen_missing_${Date.now()}`,
               timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
@@ -441,34 +484,17 @@ export const App: React.FC = () => {
             return;
           }
 
-          if (generatedLeaf.children.length === 0) {
-            if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
-            treeRegenerationWorkerRef.current = null;
-            ownsTreeRegenerationWorkerRef.current = false;
-            generator.addLogEntry({
-              id: `log_regen_empty_${Date.now()}`,
-              timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-              level: 'warning',
-              message: 'Continuation generation finished, but no candidate move passed the current settings from this position.',
-              context: null,
-            });
-            setRegenerationError('No continuation move passed the current generator settings from this position.');
-            setRegeneratingNodeId(null);
-            return;
-          }
-
-          const generatedChildren = generatedLeaf.children.map((child) => convertGeneratedChild(child, node.id));
-          replaceNodeChildren(node.id, generatedChildren);
           if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
           treeRegenerationWorkerRef.current = null;
           ownsTreeRegenerationWorkerRef.current = false;
+          treeRegenerationTargetRef.current = null;
           setRegenerationError(null);
           setRegeneratingNodeId(null);
           generator.addLogEntry({
             id: `log_regen_done_${Date.now()}`,
             timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
             level: 'info',
-            message: `Regenerated ${generatedLeaf.children.length} continuation move${generatedLeaf.children.length !== 1 ? 's' : ''} after ${node.move}.`,
+            message: `Regenerated ${graftedCount} continuation move${graftedCount !== 1 ? 's' : ''} after ${node.move}.`,
             context: null,
           });
         },
@@ -476,12 +502,13 @@ export const App: React.FC = () => {
           if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
           treeRegenerationWorkerRef.current = null;
           ownsTreeRegenerationWorkerRef.current = false;
+          treeRegenerationTargetRef.current = null;
           setRegeneratingNodeId(null);
           setRegenerationError(error.message || 'Continuation generation failed.');
         }
       );
     },
-    [currentPath, engine, generator, replaceNodeChildren, tree]
+    [currentPath, engine, generator, graftGeneratedContinuation, tree]
   );
 
   const handleStopTreeRegeneration = useCallback(() => {
@@ -489,6 +516,7 @@ export const App: React.FC = () => {
     if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
     treeRegenerationWorkerRef.current = null;
     ownsTreeRegenerationWorkerRef.current = false;
+    treeRegenerationTargetRef.current = null;
     setRegeneratingNodeId(null);
   }, [generator]);
 
@@ -497,6 +525,7 @@ export const App: React.FC = () => {
       if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
       treeRegenerationWorkerRef.current = null;
       ownsTreeRegenerationWorkerRef.current = false;
+      treeRegenerationTargetRef.current = null;
     };
   }, []);
 
