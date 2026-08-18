@@ -33,6 +33,7 @@ import { toFigurine } from '../utils/figurineNotation';
 import { ErrorToast } from './ErrorToast';
 import { ErrorLogPanel } from './ErrorLogPanel';
 import { analyzeRepertoire } from '../engine/repertoireAnalyzer';
+import { createAnalysisWorker } from '../engine/analyzer';
 import { MISTAKE_THRESHOLDS } from '../types/game';
 import type { MistakeTier } from '../types/game';
 import type { NodeAnnotation } from '../context/RepertoireEvalContext';
@@ -92,6 +93,20 @@ function findNodeByMovePath(root: TreeNode, moves: string[]): TreeNode | null {
 function getFenFullMoveNumber(fen: string, fallbackDepth: number): number {
   const fullMove = Number(fen.split(/\s+/)[5]);
   return Number.isFinite(fullMove) && fullMove > 0 ? fullMove : Math.max(1, Math.ceil(fallbackDepth / 2));
+}
+
+function terminateWorker(worker: Worker | null): void {
+  if (!worker) return;
+  try {
+    worker.postMessage('quit');
+  } catch {
+    // Ignore workers that are already gone.
+  }
+  try {
+    worker.terminate();
+  } catch {
+    // Ignore workers that are already gone.
+  }
 }
 
 export const App: React.FC = () => {
@@ -197,6 +212,7 @@ export const App: React.FC = () => {
   const [activeSignal, setActiveSignal] = useState<'tricky' | 'gaps' | 'important' | null>(null);
   const [regeneratingNodeId, setRegeneratingNodeId] = useState<string | null>(null);
   const [regenerationError, setRegenerationError] = useState<string | null>(null);
+  const treeRegenerationWorkerRef = useRef<Worker | null>(null);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -278,7 +294,7 @@ export const App: React.FC = () => {
   }, []);
 
   const handleFinishLineFromNode = useCallback(
-    (node: TreeNode) => {
+    async (node: TreeNode) => {
       const path = getPathToNode(tree, node.id);
       const seed = (path ?? currentPath)
         .slice(1)
@@ -296,20 +312,26 @@ export const App: React.FC = () => {
         maxMoveNumber: Math.max(cachedGeneratorSettings.maxMoveNumber, selectedFullMoveNumber + 4),
       };
 
-      const sfWorker = engine.workerRef.current;
-      if (!sfWorker || !engine.workerReady) {
+      terminateWorker(treeRegenerationWorkerRef.current);
+      treeRegenerationWorkerRef.current = null;
+
+      let sfWorker: Worker;
+      try {
+        sfWorker = await createAnalysisWorker();
+        treeRegenerationWorkerRef.current = sfWorker;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
         generator.addLogEntry({
           id: `log_regen_engine_${Date.now()}`,
           timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
           level: 'error',
-          message: 'Stockfish is not ready yet. Wait a moment, then try regenerating the continuation again.',
-          context: null,
+          message: 'Could not start a dedicated Stockfish worker for continuation generation.',
+          context: message,
         });
-        setRegenerationError('Stockfish is not ready yet. Wait a moment, then try again.');
+        setRegenerationError('Could not start Stockfish for continuation generation. Refresh the page and try again.');
         return;
       }
 
-      engine.stopAnalysis();
       setRegeneratingNodeId(node.id);
       generator.addLogEntry({
         id: `log_regen_start_${Date.now()}`,
@@ -328,6 +350,8 @@ export const App: React.FC = () => {
           const generatedLeaf = findNodeByMovePath(generatedTree, seed);
 
           if (!generatedLeaf) {
+            terminateWorker(treeRegenerationWorkerRef.current);
+            treeRegenerationWorkerRef.current = null;
             generator.addLogEntry({
               id: `log_regen_missing_${Date.now()}`,
               timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
@@ -341,6 +365,8 @@ export const App: React.FC = () => {
           }
 
           if (generatedLeaf.children.length === 0) {
+            terminateWorker(treeRegenerationWorkerRef.current);
+            treeRegenerationWorkerRef.current = null;
             generator.addLogEntry({
               id: `log_regen_empty_${Date.now()}`,
               timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
@@ -354,6 +380,8 @@ export const App: React.FC = () => {
           }
 
           replaceNodeChildren(node.id, generatedLeaf.children);
+          terminateWorker(treeRegenerationWorkerRef.current);
+          treeRegenerationWorkerRef.current = null;
           setRegenerationError(null);
           setRegeneratingNodeId(null);
           generator.addLogEntry({
@@ -365,6 +393,8 @@ export const App: React.FC = () => {
           });
         },
         (error) => {
+          terminateWorker(treeRegenerationWorkerRef.current);
+          treeRegenerationWorkerRef.current = null;
           setRegeneratingNodeId(null);
           setRegenerationError(
             error.message === 'Failed to fetch'
@@ -374,13 +404,22 @@ export const App: React.FC = () => {
         }
       );
     },
-    [currentPath, engine, generator, replaceNodeChildren, tree]
+    [currentPath, generator, replaceNodeChildren, tree]
   );
 
   const handleStopTreeRegeneration = useCallback(() => {
     generator.stopGeneration();
+    terminateWorker(treeRegenerationWorkerRef.current);
+    treeRegenerationWorkerRef.current = null;
     setRegeneratingNodeId(null);
   }, [generator]);
+
+  useEffect(() => {
+    return () => {
+      terminateWorker(treeRegenerationWorkerRef.current);
+      treeRegenerationWorkerRef.current = null;
+    };
+  }, []);
 
   const gameViewerForward = useCallback(() => {
     if (viewingGame) {

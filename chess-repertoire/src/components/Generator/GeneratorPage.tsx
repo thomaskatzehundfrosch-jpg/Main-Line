@@ -4,7 +4,7 @@
  * which is then expanded/analysed via the generator engine.
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   ArrowLeft,
   Download,
@@ -24,6 +24,7 @@ import type { TreeNode } from '../../types';
 import type { GeneratorNode, GeneratorSettings } from '../../types/generator';
 import type { UseGeneratorReturn } from '../../hooks/useGenerator';
 import { useEngine } from '../../hooks/useEngine';
+import { createAnalysisWorker } from '../../engine/analyzer';
 import { GeneratorSettingsPanel } from './GeneratorSettings';
 import { GeneratorProgressBar } from './GeneratorProgress';
 import { GeneratorMoveTree } from './GeneratorMoveTree';
@@ -49,10 +50,25 @@ interface GeneratorPageProps {
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
+function terminateWorker(worker: Worker | null): void {
+  if (!worker) return;
+  try {
+    worker.postMessage('quit');
+  } catch {
+    // Ignore workers that are already gone.
+  }
+  try {
+    worker.terminate();
+  } catch {
+    // Ignore workers that are already gone.
+  }
+}
+
 export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, gen, initialSeeds }) => {
   const engine = useEngine();
   const isMobile = useIsMobile();
   const { settings: appSettings } = useSettings();
+  const generationWorkerRef = useRef<Worker | null>(null);
 
   const [settings, _setSettings] = useState<GeneratorSettings>(() => getCachedGeneratorSettings());
   const [pgnSeeds, _setPgnSeeds] = useState<string[][]>(() => getCachedGeneratorSeeds());
@@ -260,10 +276,10 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
     if ((settings.analysisMode || 'stockfish') === 'lichess+stockfish' && !getStoredToken()) {
       return false;
     }
-    return engine.enabled && engine.workerReady;
+    return true;
   })();
 
-  const runGeneration = useCallback((generationMode: 'generate' | 'finish') => {
+  const runGeneration = useCallback(async (generationMode: 'generate' | 'finish') => {
     const analysisMode = settings.analysisMode || 'stockfish';
     if (analysisMode === 'lichess+stockfish' && !getStoredToken()) {
       gen.addLogEntry({
@@ -275,9 +291,6 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
       });
       return;
     }
-    const sfWorker = engine.workerRef.current;
-
-    engine.stopAnalysis();
 
     // Merge seeds from manually-built tree with any PGN seeds
     const treeSeeds = gen.getSeeds();
@@ -304,14 +317,55 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
       });
     }
 
-    gen.startGeneration(settings, allSeeds.length > 0 ? allSeeds : null, sfWorker);
-  }, [settings, pgnSeeds, engine, gen]);
+    terminateWorker(generationWorkerRef.current);
+    generationWorkerRef.current = null;
+
+    let sfWorker: Worker | null = null;
+    try {
+      sfWorker = await createAnalysisWorker();
+      generationWorkerRef.current = sfWorker;
+    } catch (error) {
+      gen.addLogEntry({
+        id: `log_engine_start_${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+        level: 'error',
+        message: 'Could not start Stockfish for generation.',
+        context: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    gen.startGeneration(
+      settings,
+      allSeeds.length > 0 ? allSeeds : null,
+      sfWorker,
+      () => {
+        terminateWorker(generationWorkerRef.current);
+        generationWorkerRef.current = null;
+      },
+      () => {
+        terminateWorker(generationWorkerRef.current);
+        generationWorkerRef.current = null;
+      }
+    );
+  }, [settings, pgnSeeds, gen]);
 
   const handleGenerate = useCallback(() => runGeneration('generate'), [runGeneration]);
   const handleFinishRepertoire = useCallback(() => runGeneration('finish'), [runGeneration]);
 
-  const handleStop = useCallback(() => gen.stopGeneration(), [gen]);
+  const handleStop = useCallback(() => {
+    gen.stopGeneration();
+    terminateWorker(generationWorkerRef.current);
+    generationWorkerRef.current = null;
+  }, [gen]);
   const handleClear = useCallback(() => gen.clearTree(), [gen]);
+
+  useEffect(() => {
+    return () => {
+      terminateWorker(generationWorkerRef.current);
+      generationWorkerRef.current = null;
+    };
+  }, []);
 
   const handleNodeSelect = useCallback(
     (node: GeneratorNode) => gen.setSelectedNode(node),
