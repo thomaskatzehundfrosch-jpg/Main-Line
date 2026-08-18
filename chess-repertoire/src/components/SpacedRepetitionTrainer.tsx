@@ -1049,6 +1049,17 @@ export const SpacedRepetitionTrainer: React.FC<{
     );
   }, [beginAutoplayToPrompt, currentCard, currentLineIndex, currentPromptIndex, phase, selection]);
 
+  const jumpToSessionLine = useCallback((targetLineIndex: number) => {
+    if (!selection || phase === 'complete' || phase === 'replay') return;
+    const targetCard = sessionLines[targetLineIndex];
+    if (!targetCard) return;
+
+    if (autoAdvanceRef.current) clearTimeout(autoAdvanceRef.current);
+    if (autoplayTimerRef.current) clearTimeout(autoplayTimerRef.current);
+
+    beginAutoplayToPrompt(targetCard, targetLineIndex, 0, selection.color);
+  }, [beginAutoplayToPrompt, phase, selection, sessionLines]);
+
   const stepLinePosition = useCallback((direction: -1 | 1) => {
     if (!currentCard || phase === 'autoplay' || phase === 'replay') return;
 
@@ -1080,6 +1091,14 @@ export const SpacedRepetitionTrainer: React.FC<{
     const index = visibleLineInfos.findIndex((info) => info.key === selection.lineKey);
     return index >= 0 ? `Line ${index + 1}` : 'Selected line';
   }, [selection?.lineKey, visibleLineInfos]);
+  const currentLineLabel = sessionLines.length > 0
+    ? `Line ${Math.min(currentLineIndex + 1, sessionLines.length)} of ${sessionLines.length}`
+    : 'No line';
+  const currentLinePreview = currentCard?.moveHistorySan
+    ? linePreview(currentCard.moveHistorySan)
+    : '';
+  const canGoPreviousLine = phase !== 'complete' && phase !== 'replay' && currentLineIndex > 0;
+  const canGoNextLine = phase !== 'complete' && phase !== 'replay' && currentLineIndex < sessionLines.length - 1;
 
   if (!selection) {
     return (
@@ -1282,6 +1301,8 @@ export const SpacedRepetitionTrainer: React.FC<{
           <span className="text-border-subtle">|</span>
           <span>{activeLineLabel}</span>
           <span className="text-border-subtle">|</span>
+          <span>{currentLineLabel}</span>
+          <span className="text-border-subtle">|</span>
           <span>
             {sessionLines.length} line{sessionLines.length !== 1 ? 's' : ''}
           </span>
@@ -1381,6 +1402,44 @@ export const SpacedRepetitionTrainer: React.FC<{
         </div>
 
         <div className="lg:w-[280px] lg:min-w-[260px] xl:w-[300px] flex flex-col p-4 gap-4 lg:border-l lg:border-border-subtle overflow-auto">
+          {sessionLines.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
+            <div className="panel p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">
+                    Current Line
+                  </div>
+                  <div className="mt-0.5 text-sm font-semibold text-text-primary">
+                    {currentLineLabel}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button
+                    onClick={() => jumpToSessionLine(currentLineIndex - 1)}
+                    disabled={!canGoPreviousLine}
+                    className="btn-icon p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Go to previous line"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => jumpToSessionLine(currentLineIndex + 1)}
+                    disabled={!canGoNextLine}
+                    className="btn-icon p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title="Go to next line"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              {currentLinePreview && (
+                <div className="mt-2 line-clamp-3 text-[11px] leading-relaxed text-text-muted">
+                  {currentLinePreview}
+                </div>
+              )}
+            </div>
+          )}
+
           {sessionLines.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
             <div className="panel p-3">
               <div className="grid grid-cols-2 gap-2">
