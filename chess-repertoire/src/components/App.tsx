@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { Chess } from 'chess.js';
-import { Loader, StopCircle, Cpu, ChevronUp, ChevronDown, Plus, Settings2 } from 'lucide-react';
+import { Loader, StopCircle, Cpu, ChevronUp, ChevronDown, Plus, Settings2, RefreshCw } from 'lucide-react';
 import { TopBar } from './TopBar';
 import { StatusBar } from './StatusBar';
 import ChessBoard from './Board/ChessBoard';
@@ -810,6 +810,17 @@ export const App: React.FC = () => {
     <div className="flex flex-col border-t border-border-subtle">
       <div className="px-3 py-2">
         <div className="flex flex-col gap-2">
+          <button
+            onClick={() => handleFinishLineFromNode(currentNode)}
+            disabled={!currentNode.move}
+            className="w-full rounded-md border border-accent-teal/40 bg-accent-teal/5 px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-accent-teal transition-colors hover:bg-accent-teal/10 disabled:cursor-not-allowed disabled:border-border-subtle disabled:bg-transparent disabled:text-text-muted"
+            title={currentNode.move ? 'Open generator from the selected move' : 'Select a move in the tree first'}
+          >
+            <span className="inline-flex items-center justify-center gap-1.5">
+              <RefreshCw className="h-3.5 w-3.5" />
+              Regenerate Continuation
+            </span>
+          </button>
           <button
             onClick={handleLoadTrickyMove}
             disabled={isLoadingRecommendations || !isOurTurnInCurrentPosition}
