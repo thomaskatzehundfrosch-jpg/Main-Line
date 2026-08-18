@@ -104,6 +104,13 @@ export function useRepertoireTree() {
     [dispatch]
   );
 
+  const replaceNodeChildren = useCallback(
+    (nodeId: string, children: TreeNode[]) => {
+      dispatch({ type: 'REPLACE_NODE_CHILDREN', nodeId, children });
+    },
+    [dispatch]
+  );
+
   const deleteNode = useCallback(
     (nodeId: string) => {
       dispatch({ type: 'DELETE_NODE', nodeId });
@@ -168,6 +175,7 @@ export function useRepertoireTree() {
     addMove,
     addMoveToNode,
     addLineToNode,
+    replaceNodeChildren,
     deleteNode,
     setSelectedColor,
     getNodeStats,

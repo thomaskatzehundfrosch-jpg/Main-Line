@@ -102,7 +102,13 @@ export interface UseGeneratorReturn {
   progress: GeneratorProgress;
   errorLog: GeneratorLogEntry[];
   setErrorLog: React.Dispatch<React.SetStateAction<GeneratorLogEntry[]>>;
-  startGeneration: (settings: GeneratorSettings, pgnSeeds: string[][] | null, sfWorker: Worker | null) => void;
+  startGeneration: (
+    settings: GeneratorSettings,
+    pgnSeeds: string[][] | null,
+    sfWorker: Worker | null,
+    onComplete?: (finalRoot: GeneratorNode) => void,
+    onError?: (error: Error) => void
+  ) => void;
   stopGeneration: () => void;
   clearTree: () => void;
   stopRef: React.MutableRefObject<boolean>;
@@ -160,7 +166,13 @@ export function useGenerator(): UseGeneratorReturn {
   }, []);
 
   const startGeneration = useCallback(
-    (settings: GeneratorSettings, pgnSeeds: string[][] | null, sfWorker: Worker | null) => {
+    (
+      settings: GeneratorSettings,
+      pgnSeeds: string[][] | null,
+      sfWorker: Worker | null,
+      onComplete?: (finalRoot: GeneratorNode) => void,
+      onError?: (error: Error) => void
+    ) => {
       stopRef.current = false;
       setIsGenerating(true);
       setErrorLog([]);
@@ -190,18 +202,21 @@ export function useGenerator(): UseGeneratorReturn {
         onComplete: (finalRoot: GeneratorNode) => {
           setTree(finalRoot);
           setIsGenerating(false);
+          onComplete?.(finalRoot);
         },
       };
 
       buildTree(pgnSeeds, settings, callbacks, stopRef, sfWorker).catch((err: any) => {
+        const error = err instanceof Error ? err : new Error(String(err?.message ?? err));
         addLogEntry({
           id: `log_error_${Date.now()}`,
           timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
           level: 'error',
-          message: `Tree building failed: ${err.message}`,
+          message: `Tree building failed: ${error.message}`,
           context: null,
         });
         setIsGenerating(false);
+        onError?.(error);
       });
     },
     [addLogEntry]

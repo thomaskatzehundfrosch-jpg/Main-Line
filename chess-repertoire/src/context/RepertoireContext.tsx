@@ -10,6 +10,7 @@ import {
   cloneTreeWithFreshIds,
   findDuplicateNodeIds,
   syncNodeIdCounterToTree,
+  generateNodeId,
 } from '../utils/treeBuilder';
 
 // Create context
@@ -23,6 +24,32 @@ function resolveSelection(tree: TreeNode, targetId: string): Pick<RepertoireStat
   return {
     currentNode: path[path.length - 1],
     currentPath: path,
+  };
+}
+
+function cloneSubtreeForParent(node: TreeNode, parentId: string, depth: number): TreeNode {
+  const id = generateNodeId();
+  return {
+    ...node,
+    id,
+    parentId,
+    depth,
+    nags: [...node.nags],
+    children: node.children.map((child) => cloneSubtreeForParent(child, id, depth + 1)),
+  };
+}
+
+function replaceChildrenImmutable(tree: TreeNode, nodeId: string, children: TreeNode[]): TreeNode {
+  if (tree.id === nodeId) {
+    return {
+      ...tree,
+      children: children.map((child) => cloneSubtreeForParent(child, tree.id, tree.depth + 1)),
+    };
+  }
+
+  return {
+    ...tree,
+    children: tree.children.map((child) => replaceChildrenImmutable(child, nodeId, children)),
   };
 }
 
@@ -213,6 +240,19 @@ function repertoireReducer(state: RepertoireState, action: RepertoireAction): Re
         };
       }
       return state;
+    }
+
+    case 'REPLACE_NODE_CHILDREN': {
+      const target = findNodeById(state.tree, action.nodeId);
+      if (!target) return state;
+      syncNodeIdCounterToTree(state.tree);
+      const updatedTree = replaceChildrenImmutable(state.tree, action.nodeId, action.children);
+      syncNodeIdCounterToTree(updatedTree);
+      return {
+        ...state,
+        tree: updatedTree,
+        ...resolveSelection(updatedTree, action.nodeId),
+      };
     }
 
     case 'SET_SELECTED_COLOR': {

@@ -48,6 +48,10 @@ const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 let _cachedSettings: GeneratorSettings = DEFAULT_GENERATOR_SETTINGS;
 let _cachedPgnSeeds: string[][] = [];
 
+export function getCachedGeneratorSettings(): GeneratorSettings {
+  return _cachedSettings;
+}
+
 export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, gen, initialSeeds }) => {
   const engine = useEngine();
   const isMobile = useIsMobile();

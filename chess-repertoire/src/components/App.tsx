@@ -38,7 +38,7 @@ import type { MistakeTier } from '../types/game';
 import type { NodeAnnotation } from '../context/RepertoireEvalContext';
 import type { RepertoireEval } from '../types';
 import { GameFetcherPage } from './GameFetcher/GameFetcherPage';
-import { GeneratorPage } from './Generator/GeneratorPage';
+import { GeneratorPage, getCachedGeneratorSettings } from './Generator/GeneratorPage';
 import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
 import { PerformanceReportPage } from './PerformanceReportPage';
 import { handleOAuthCallback } from '../utils/lichessAuth';
@@ -52,6 +52,8 @@ import {
   buildImportantLineRecommendations,
   type ImportantLineRecommendation,
 } from '../utils/gameGapRecommendations';
+import { convertToTreeNode } from '../utils/generatorConverter';
+import type { GeneratorNode } from '../types/generator';
 
 type SidebarTab = 'analysis' | 'games';
 type MobileTab = 'tree' | 'analysis' | 'games';
@@ -76,6 +78,16 @@ interface TrickyMoveSuggestion {
 
 type EngineSnapshot = ReturnType<typeof useEngine>;
 
+function findNodeByMovePath(root: TreeNode, moves: string[]): TreeNode | null {
+  let current: TreeNode = root;
+  for (const move of moves) {
+    const child = current.children.find((candidate) => candidate.move === move);
+    if (!child) return null;
+    current = child;
+  }
+  return current;
+}
+
 export const App: React.FC = () => {
   const {
     tree,
@@ -98,6 +110,7 @@ export const App: React.FC = () => {
     addMove,
     addMoveToNode,
     addLineToNode,
+    replaceNodeChildren,
     deleteNode,
   } = useRepertoireTree();
 
@@ -176,6 +189,7 @@ export const App: React.FC = () => {
   const [recommendationError, setRecommendationError] = useState<string | null>(null);
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [activeSignal, setActiveSignal] = useState<'tricky' | 'gaps' | 'important' | null>(null);
+  const [regeneratingNodeId, setRegeneratingNodeId] = useState<string | null>(null);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -266,11 +280,74 @@ export const App: React.FC = () => {
 
       if (seed.length === 0) return;
 
-      generator.clearTree();
-      setGeneratorInitialSeeds([seed]);
-      setGeneratorOpen(true);
+      const generatorSettings = getCachedGeneratorSettings();
+      if ((generatorSettings.analysisMode || 'stockfish') === 'lichess+stockfish' && !getStoredToken()) {
+        generator.addLogEntry({
+          id: `log_regen_auth_${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+          level: 'error',
+          message: 'Connect your Lichess account before regenerating a continuation with Lichess + SF.',
+          context: null,
+        });
+        return;
+      }
+
+      const sfWorker = engine.workerRef.current;
+      if (!sfWorker || !engine.workerReady) {
+        generator.addLogEntry({
+          id: `log_regen_engine_${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+          level: 'error',
+          message: 'Stockfish is not ready yet. Wait a moment, then try regenerating the continuation again.',
+          context: null,
+        });
+        return;
+      }
+
+      engine.stopAnalysis();
+      setRegeneratingNodeId(node.id);
+      generator.addLogEntry({
+        id: `log_regen_start_${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+        level: 'info',
+        message: `Regenerating continuation after ${node.move} with current generator settings.`,
+        context: null,
+      });
+
+      generator.startGeneration(
+        generatorSettings,
+        [seed],
+        sfWorker,
+        (finalRoot: GeneratorNode) => {
+          const generatedTree = convertToTreeNode(finalRoot, null, true, generatorSettings.color);
+          const generatedLeaf = findNodeByMovePath(generatedTree, seed);
+
+          if (!generatedLeaf) {
+            generator.addLogEntry({
+              id: `log_regen_missing_${Date.now()}`,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+              level: 'warning',
+              message: 'Generated tree did not contain the selected seed line, so the main tree was left unchanged.',
+              context: null,
+            });
+            setRegeneratingNodeId(null);
+            return;
+          }
+
+          replaceNodeChildren(node.id, generatedLeaf.children);
+          setRegeneratingNodeId(null);
+          generator.addLogEntry({
+            id: `log_regen_done_${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+            level: 'info',
+            message: `Regenerated ${generatedLeaf.children.length} continuation move${generatedLeaf.children.length !== 1 ? 's' : ''} after ${node.move}.`,
+            context: null,
+          });
+        },
+        () => setRegeneratingNodeId(null)
+      );
     },
-    [currentPath, generator, tree]
+    [currentPath, engine, generator, replaceNodeChildren, tree]
   );
 
   const gameViewerForward = useCallback(() => {
@@ -812,13 +889,13 @@ export const App: React.FC = () => {
         <div className="flex flex-col gap-2">
           <button
             onClick={() => handleFinishLineFromNode(currentNode)}
-            disabled={!currentNode.move}
+            disabled={!currentNode.move || generator.isGenerating}
             className="w-full rounded-md border border-accent-teal/40 bg-accent-teal/5 px-3 py-2 text-[10px] font-mono uppercase tracking-wider text-accent-teal transition-colors hover:bg-accent-teal/10 disabled:cursor-not-allowed disabled:border-border-subtle disabled:bg-transparent disabled:text-text-muted"
-            title={currentNode.move ? 'Open generator from the selected move' : 'Select a move in the tree first'}
+            title={currentNode.move ? 'Finish this selected line with current generator settings' : 'Select a move in the tree first'}
           >
             <span className="inline-flex items-center justify-center gap-1.5">
-              <RefreshCw className="h-3.5 w-3.5" />
-              Regenerate Continuation
+              <RefreshCw className={`h-3.5 w-3.5 ${regeneratingNodeId ? 'animate-spin' : ''}`} />
+              {regeneratingNodeId === currentNode.id ? 'Regenerating...' : 'Regenerate Continuation'}
             </span>
           </button>
           <button
