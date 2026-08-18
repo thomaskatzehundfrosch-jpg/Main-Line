@@ -39,6 +39,7 @@ interface GeneratorPageProps {
   onClose: () => void;
   onImportTree: (tree: TreeNode) => void;
   gen: UseGeneratorReturn;
+  initialSeeds?: string[][] | null;
 }
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -47,7 +48,7 @@ const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 let _cachedSettings: GeneratorSettings = DEFAULT_GENERATOR_SETTINGS;
 let _cachedPgnSeeds: string[][] = [];
 
-export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, gen }) => {
+export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, gen, initialSeeds }) => {
   const engine = useEngine();
   const isMobile = useIsMobile();
   const { settings: appSettings } = useSettings();
@@ -70,6 +71,12 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    if (initialSeeds && initialSeeds.length > 0) {
+      setPgnSeeds(initialSeeds);
+    }
+  }, [initialSeeds, setPgnSeeds]);
 
   /* ---------------------------------------------------------------- */
   /*  Interactive board state (click-to-move)                         */

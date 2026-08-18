@@ -26,7 +26,7 @@ import { useRepertoireEval } from '../context/RepertoireEvalContext';
 import { getOpeningForPath } from '../utils/openingNames';
 import { exportTreeToPgn, copyToClipboard, downloadAsFile } from '../utils/pgnExporter';
 import { cloneTree, countNodes } from '../utils/treeBuilder';
-import { findNodeById } from '../utils/treeBuilder';
+import { findNodeById, getPathToNode } from '../utils/treeBuilder';
 import type { EngineLine, TreeNode } from '../types';
 import type { ImportedGame } from '../types/game';
 import { toFigurine } from '../utils/figurineNotation';
@@ -151,6 +151,7 @@ export const App: React.FC = () => {
   const [gameFetcherOpen, setGameFetcherOpen] = useState(false);
   const [performanceReportOpen, setPerformanceReportOpen] = useState(false);
   const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [generatorInitialSeeds, setGeneratorInitialSeeds] = useState<string[][] | null>(null);
   const [trainerOpen, setTrainerOpen] = useState(false);
   const [exportOptions, setExportOptions] = useState({
     includeAnnotations: true,
@@ -254,6 +255,23 @@ export const App: React.FC = () => {
     setViewingGame(null);
     setViewingMoveIndex(0);
   }, []);
+
+  const handleFinishLineFromNode = useCallback(
+    (node: TreeNode) => {
+      const path = getPathToNode(tree, node.id);
+      const seed = (path ?? currentPath)
+        .slice(1)
+        .map((pathNode) => pathNode.move)
+        .filter(Boolean);
+
+      if (seed.length === 0) return;
+
+      generator.clearTree();
+      setGeneratorInitialSeeds([seed]);
+      setGeneratorOpen(true);
+    },
+    [currentPath, generator, tree]
+  );
 
   const gameViewerForward = useCallback(() => {
     if (viewingGame) {
@@ -1331,6 +1349,7 @@ export const App: React.FC = () => {
       <div className={generatorOpen ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
         <GeneratorPage
           gen={generator}
+          initialSeeds={generatorInitialSeeds}
           onClose={() => setGeneratorOpen(false)}
           onImportTree={(importedTree) => {
             setTree(importedTree);
@@ -1516,6 +1535,7 @@ export const App: React.FC = () => {
                     onExploreFen={setExploreOverlayFen}
                     exploreModeEnabled={treeExploreMode}
                     onExploreModeChange={setTreeExploreMode}
+                    onFinishLineFromNode={handleFinishLineFromNode}
                   />
                 </div>
               </div>
@@ -1830,6 +1850,7 @@ export const App: React.FC = () => {
               onExploreFen={setExploreOverlayFen}
               exploreModeEnabled={treeExploreMode}
               onExploreModeChange={setTreeExploreMode}
+              onFinishLineFromNode={handleFinishLineFromNode}
             />
           </div>
         </div>

@@ -27,6 +27,8 @@ interface OpeningTreeProps {
   exploreModeEnabled?: boolean;
   /** Called whenever tree explore mode is toggled */
   onExploreModeChange?: (enabled: boolean) => void;
+  /** Open the generator with this node's line as the seed. */
+  onFinishLineFromNode?: (node: TreeNode) => void;
 }
 
 interface D3TreeNode {
@@ -433,6 +435,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   onExploreFen,
   exploreModeEnabled,
   onExploreModeChange,
+  onFinishLineFromNode,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1125,18 +1128,34 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
               Explore mode — editing disabled
             </div>
           ) : (
-            <button
-              className="w-full text-left px-3 py-2 text-sm text-accent-red hover:bg-bg-hover transition-colors flex items-center gap-2"
-              onClick={() => {
-                if (contextMenu.node) {
-                  onDeleteNode(contextMenu.node.id);
-                }
-                setContextMenu({ node: null, isOverlay: false, x: 0, y: 0, visible: false });
-              }}
-            >
-              <span>✕</span>
-              <span>Delete move</span>
-            </button>
+            <>
+              {onFinishLineFromNode && !contextMenu.node.id.startsWith('overlay_') && (
+                <button
+                  className="w-full text-left px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover transition-colors flex items-center gap-2"
+                  onClick={() => {
+                    if (contextMenu.node) {
+                      onFinishLineFromNode(contextMenu.node);
+                    }
+                    setContextMenu({ node: null, isOverlay: false, x: 0, y: 0, visible: false });
+                  }}
+                >
+                  <span>↻</span>
+                  <span>Finish line from here</span>
+                </button>
+              )}
+              <button
+                className="w-full text-left px-3 py-2 text-sm text-accent-red hover:bg-bg-hover transition-colors flex items-center gap-2"
+                onClick={() => {
+                  if (contextMenu.node) {
+                    onDeleteNode(contextMenu.node.id);
+                  }
+                  setContextMenu({ node: null, isOverlay: false, x: 0, y: 0, visible: false });
+                }}
+              >
+                <span>✕</span>
+                <span>Delete move</span>
+              </button>
+            </>
           )}
         </div>
       )}
