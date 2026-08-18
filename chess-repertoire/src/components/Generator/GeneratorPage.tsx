@@ -22,7 +22,6 @@ import type { Square, Piece } from 'react-chessboard/dist/chessboard/types';
 import { Chess } from 'chess.js';
 import type { TreeNode } from '../../types';
 import type { GeneratorNode, GeneratorSettings } from '../../types/generator';
-import { DEFAULT_GENERATOR_SETTINGS } from '../../types/generator';
 import type { UseGeneratorReturn } from '../../hooks/useGenerator';
 import { useEngine } from '../../hooks/useEngine';
 import { GeneratorSettingsPanel } from './GeneratorSettings';
@@ -34,6 +33,12 @@ import { useIsMobile } from '../../hooks/useIsMobile';
 import { useSettings } from '../../context/SettingsContext';
 import { BOARD_THEME_COLORS } from '../Board/theme';
 import { getStoredToken } from '../../utils/lichessAuth';
+import {
+  getCachedGeneratorSeeds,
+  getCachedGeneratorSettings,
+  setCachedGeneratorSeeds,
+  setCachedGeneratorSettings,
+} from '../../utils/generatorSettingsCache';
 
 interface GeneratorPageProps {
   onClose: () => void;
@@ -44,26 +49,18 @@ interface GeneratorPageProps {
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
-// Module-level cache for settings and pgn seeds — survives navigating away and back
-let _cachedSettings: GeneratorSettings = DEFAULT_GENERATOR_SETTINGS;
-let _cachedPgnSeeds: string[][] = [];
-
-export function getCachedGeneratorSettings(): GeneratorSettings {
-  return _cachedSettings;
-}
-
 export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, gen, initialSeeds }) => {
   const engine = useEngine();
   const isMobile = useIsMobile();
   const { settings: appSettings } = useSettings();
 
-  const [settings, _setSettings] = useState<GeneratorSettings>(() => _cachedSettings);
-  const [pgnSeeds, _setPgnSeeds] = useState<string[][]>(() => _cachedPgnSeeds);
+  const [settings, _setSettings] = useState<GeneratorSettings>(() => getCachedGeneratorSettings());
+  const [pgnSeeds, _setPgnSeeds] = useState<string[][]>(() => getCachedGeneratorSeeds());
 
   const setSettings = useCallback((val: GeneratorSettings | ((prev: GeneratorSettings) => GeneratorSettings)) => {
     _setSettings((prev) => {
       const next = typeof val === 'function' ? val(prev) : val;
-      _cachedSettings = next;
+      setCachedGeneratorSettings(next);
       return next;
     });
   }, []);
@@ -71,7 +68,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   const setPgnSeeds = useCallback((val: string[][] | ((prev: string[][]) => string[][])) => {
     _setPgnSeeds((prev) => {
       const next = typeof val === 'function' ? val(prev) : val;
-      _cachedPgnSeeds = next;
+      setCachedGeneratorSeeds(next);
       return next;
     });
   }, []);

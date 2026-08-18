@@ -38,7 +38,7 @@ import type { MistakeTier } from '../types/game';
 import type { NodeAnnotation } from '../context/RepertoireEvalContext';
 import type { RepertoireEval } from '../types';
 import { GameFetcherPage } from './GameFetcher/GameFetcherPage';
-import { GeneratorPage, getCachedGeneratorSettings } from './Generator/GeneratorPage';
+import { GeneratorPage } from './Generator/GeneratorPage';
 import { SpacedRepetitionTrainer } from './SpacedRepetitionTrainer';
 import { PerformanceReportPage } from './PerformanceReportPage';
 import { handleOAuthCallback } from '../utils/lichessAuth';
@@ -53,6 +53,7 @@ import {
   type ImportantLineRecommendation,
 } from '../utils/gameGapRecommendations';
 import { convertToTreeNode } from '../utils/generatorConverter';
+import { getCachedGeneratorSettings } from '../utils/generatorSettingsCache';
 import type { GeneratorNode } from '../types/generator';
 
 type SidebarTab = 'analysis' | 'games';
@@ -86,6 +87,11 @@ function findNodeByMovePath(root: TreeNode, moves: string[]): TreeNode | null {
     current = child;
   }
   return current;
+}
+
+function getFenFullMoveNumber(fen: string, fallbackDepth: number): number {
+  const fullMove = Number(fen.split(/\s+/)[5]);
+  return Number.isFinite(fullMove) && fullMove > 0 ? fullMove : Math.max(1, Math.ceil(fallbackDepth / 2));
 }
 
 export const App: React.FC = () => {
@@ -283,9 +289,11 @@ export const App: React.FC = () => {
       setRegenerationError(null);
 
       const cachedGeneratorSettings = getCachedGeneratorSettings();
+      const selectedFullMoveNumber = getFenFullMoveNumber(node.fen, seed.length);
       const generatorSettings = {
         ...cachedGeneratorSettings,
         analysisMode: 'stockfish' as const,
+        maxMoveNumber: Math.max(cachedGeneratorSettings.maxMoveNumber, selectedFullMoveNumber + 4),
       };
 
       const sfWorker = engine.workerRef.current;
@@ -328,6 +336,19 @@ export const App: React.FC = () => {
               context: null,
             });
             setRegenerationError('Generated tree did not contain the selected line, so nothing was changed.');
+            setRegeneratingNodeId(null);
+            return;
+          }
+
+          if (generatedLeaf.children.length === 0) {
+            generator.addLogEntry({
+              id: `log_regen_empty_${Date.now()}`,
+              timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+              level: 'warning',
+              message: 'Continuation generation finished, but no candidate move passed the current settings from this position.',
+              context: null,
+            });
+            setRegenerationError('No continuation move passed the current generator settings from this position.');
             setRegeneratingNodeId(null);
             return;
           }
