@@ -11,20 +11,8 @@ import { logger } from '../utils/errorLogger';
  * module worker.
  */
 async function createStockfishWorker(): Promise<Worker> {
-  // Check if the real Stockfish engine files exist
-  try {
-    const res = await fetch('/stockfish/stockfish.js', { method: 'HEAD' });
-    if (res.ok) {
-      // Load Stockfish directly as a classic worker — this is how the
-      // nmrugg/stockfish.js package is designed to be used in browsers.
-      // The file sets up onmessage/postMessage internally for UCI protocol.
-      return new Worker('/stockfish/stockfish.js');
-    }
-  } catch {
-    // fetch failed, fall through to simulation
-  }
-
-  // Fallback: use the simulation module worker
+  // The wrapper loads the real public Stockfish files when available and
+  // falls back internally without surfacing a noisy fetch probe to the UI.
   return new Worker(
     new URL('../workers/stockfish.worker.ts', import.meta.url),
     { type: 'module' }

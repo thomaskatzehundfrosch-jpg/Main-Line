@@ -190,6 +190,7 @@ export const App: React.FC = () => {
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [activeSignal, setActiveSignal] = useState<'tricky' | 'gaps' | 'important' | null>(null);
   const [regeneratingNodeId, setRegeneratingNodeId] = useState<string | null>(null);
+  const [regenerationError, setRegenerationError] = useState<string | null>(null);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -279,6 +280,7 @@ export const App: React.FC = () => {
         .filter(Boolean);
 
       if (seed.length === 0) return;
+      setRegenerationError(null);
 
       const cachedGeneratorSettings = getCachedGeneratorSettings();
       const generatorSettings = {
@@ -295,6 +297,7 @@ export const App: React.FC = () => {
           message: 'Stockfish is not ready yet. Wait a moment, then try regenerating the continuation again.',
           context: null,
         });
+        setRegenerationError('Stockfish is not ready yet. Wait a moment, then try again.');
         return;
       }
 
@@ -324,11 +327,13 @@ export const App: React.FC = () => {
               message: 'Generated tree did not contain the selected seed line, so the main tree was left unchanged.',
               context: null,
             });
+            setRegenerationError('Generated tree did not contain the selected line, so nothing was changed.');
             setRegeneratingNodeId(null);
             return;
           }
 
           replaceNodeChildren(node.id, generatedLeaf.children);
+          setRegenerationError(null);
           setRegeneratingNodeId(null);
           generator.addLogEntry({
             id: `log_regen_done_${Date.now()}`,
@@ -338,7 +343,14 @@ export const App: React.FC = () => {
             context: null,
           });
         },
-        () => setRegeneratingNodeId(null)
+        (error) => {
+          setRegeneratingNodeId(null);
+          setRegenerationError(
+            error.message === 'Failed to fetch'
+              ? 'Continuation generation could not start Stockfish. Refresh the page and try again.'
+              : error.message
+          );
+        }
       );
     },
     [currentPath, engine, generator, replaceNodeChildren, tree]
@@ -922,6 +934,11 @@ export const App: React.FC = () => {
                 <StopCircle className="h-3.5 w-3.5" />
                 Stop Generation
               </button>
+            </div>
+          )}
+          {regenerationError && !regeneratingNodeId && (
+            <div className="rounded-md border border-accent-red/25 bg-accent-red/5 px-2.5 py-2 text-xs text-accent-red">
+              {regenerationError}
             </div>
           )}
           <button

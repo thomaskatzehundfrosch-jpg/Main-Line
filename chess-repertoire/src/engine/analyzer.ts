@@ -395,15 +395,6 @@ function terminateWorkerSafely(worker: Worker): void {
 }
 
 async function createRawAnalysisWorker(): Promise<Worker> {
-  try {
-    const res = await fetch('/stockfish/stockfish.js', { method: 'HEAD' });
-    if (res.ok) {
-      return new Worker('/stockfish/stockfish.js');
-    }
-  } catch {
-    // Fall through to the wrapper worker.
-  }
-
   return new Worker(
     new URL('../workers/stockfish.worker.ts', import.meta.url),
     { type: 'module' }
