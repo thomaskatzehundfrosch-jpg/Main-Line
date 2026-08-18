@@ -280,17 +280,11 @@ export const App: React.FC = () => {
 
       if (seed.length === 0) return;
 
-      const generatorSettings = getCachedGeneratorSettings();
-      if ((generatorSettings.analysisMode || 'stockfish') === 'lichess+stockfish' && !getStoredToken()) {
-        generator.addLogEntry({
-          id: `log_regen_auth_${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-          level: 'error',
-          message: 'Connect your Lichess account before regenerating a continuation with Lichess + SF.',
-          context: null,
-        });
-        return;
-      }
+      const cachedGeneratorSettings = getCachedGeneratorSettings();
+      const generatorSettings = {
+        ...cachedGeneratorSettings,
+        analysisMode: 'stockfish' as const,
+      };
 
       const sfWorker = engine.workerRef.current;
       if (!sfWorker || !engine.workerReady) {
@@ -310,7 +304,7 @@ export const App: React.FC = () => {
         id: `log_regen_start_${Date.now()}`,
         timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
         level: 'info',
-        message: `Regenerating continuation after ${node.move} with current generator settings.`,
+        message: `Regenerating continuation after ${node.move} with current generator settings using Stockfish-only background mode.`,
         context: null,
       });
 
