@@ -344,6 +344,37 @@ function keepMovesCloseToBestEval(
   return { kept: kept.length > 0 ? kept : sortByEngineEval(candidates, color).slice(0, 1), rejected, bestScore };
 }
 
+function allowedDropFromBestScore(bestScoreForUs: number): number {
+  if (bestScoreForUs >= 3.0) return 0.20;
+  if (bestScoreForUs >= 1.5) return 0.30;
+  if (bestScoreForUs >= 0.7) return 0.40;
+  return 0.45;
+}
+
+function keepMovesCloseToReferenceEval(
+  candidates: MoveCandidate[],
+  color: 'white' | 'black',
+  referenceScoreForUs: number,
+  maxDrop: number
+): { kept: MoveCandidate[]; rejected: { candidate: MoveCandidate; drop: number }[] } {
+  const rejectedSans = new Set<string>();
+  const rejected: { candidate: MoveCandidate; drop: number }[] = [];
+
+  for (const candidate of candidates) {
+    const candidateScore = evalForColor(candidate, color);
+    if (candidateScore === null) continue;
+
+    const drop = referenceScoreForUs - candidateScore;
+    if (drop > maxDrop) {
+      rejectedSans.add(candidate.san);
+      rejected.push({ candidate, drop });
+    }
+  }
+
+  const kept = candidates.filter((candidate) => !rejectedSans.has(candidate.san));
+  return { kept: kept.length > 0 ? kept : sortByEngineEval(candidates, color).slice(0, 1), rejected };
+}
+
 function getOurMoveBranchPriority(
   parentPriority: AdaptiveDepthCategory,
   candidateIndex: number
@@ -764,8 +795,26 @@ export async function buildTree(
 
     // Final soundness gate for every move we add for our side, regardless of
     // whether it came from Lichess, Stockfish MultiPV, or fallback discovery.
+    let bestReferenceScoreForUs: number | null = null;
     if (isOurTurn && sfWorker && candidates.length > 0) {
       const verifiedCandidates: MoveCandidate[] = [];
+
+      try {
+        const bestCurrentResult = await analyzePosition(sfWorker, fen, sfAnalysisDepth);
+        if (bestCurrentResult.depth > 0) {
+          bestReferenceScoreForUs = color === 'white'
+            ? bestCurrentResult.score / 100
+            : -bestCurrentResult.score / 100;
+          logError(
+            'info',
+            `Best-move reference: ${bestCurrentResult.bestMoveSan || bestCurrentResult.bestMoveUci || '?'} eval ${bestReferenceScoreForUs.toFixed(2)} for ${color} at depth ${bestCurrentResult.depth}.`
+          );
+        } else {
+          logError('warning', 'Best-move reference failed — Stockfish returned no usable depth.');
+        }
+      } catch (err: any) {
+        logError('warning', `Best-move reference failed: ${err.message}`);
+      }
 
       for (const candidate of candidates) {
         const resultFen = makeMove(fen, candidate.san);
@@ -808,17 +857,18 @@ export async function buildTree(
       candidates = verifiedCandidates;
     }
 
-    if (isOurTurn && candidates.length > 1) {
-      const { kept, rejected } = keepMovesCloseToBestEval(
-        candidates,
-        color,
-        MAX_OUR_MOVE_DROP_FROM_BEST
-      );
+    if (isOurTurn && candidates.length > 0) {
+      const maxDrop = bestReferenceScoreForUs !== null
+        ? allowedDropFromBestScore(bestReferenceScoreForUs)
+        : MAX_OUR_MOVE_DROP_FROM_BEST;
+      const { kept, rejected } = bestReferenceScoreForUs !== null
+        ? keepMovesCloseToReferenceEval(candidates, color, bestReferenceScoreForUs, maxDrop)
+        : keepMovesCloseToBestEval(candidates, color, maxDrop);
 
       if (rejected.length > 0) {
         logError(
           'info',
-          `Best-move guard: rejected ${rejected.map(({ candidate, drop }) => `${candidate.san} (-${drop.toFixed(2)})`).join(', ')} because stronger verified moves exist.`
+          `Best-move guard: rejected ${rejected.map(({ candidate, drop }) => `${candidate.san} (-${drop.toFixed(2)})`).join(', ')}; max allowed drop ${maxDrop.toFixed(2)}.`
         );
       }
 
