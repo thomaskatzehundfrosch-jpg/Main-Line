@@ -56,6 +56,7 @@ interface TrainerSelection {
   fileId: string;
   color: DrillColor;
   priorityCategory: LinePriorityCategory;
+  lineKey: string | null;
 }
 
 interface LinePriorityInfo {
@@ -179,6 +180,12 @@ function getLinePriorityInfo(root: RepertoireFile['tree'], card: Card): LinePrio
 
 function buildLinePriorityInfos(file: RepertoireFile, cards: Card[]): LinePriorityInfo[] {
   return collapseToDeepestLines(cards).map((card) => getLinePriorityInfo(file.tree, card));
+}
+
+function linePreview(moves: string[]): string {
+  if (moves.length === 0) return 'Starting position';
+  const preview = moves.slice(0, 12).join(' ');
+  return moves.length > 12 ? `${preview} ...` : preview;
 }
 
 function categoryLabel(category: LinePriorityCategory): string {
@@ -462,6 +469,7 @@ export const SpacedRepetitionTrainer: React.FC<{
   const [selectedFileId, setSelectedFileId] = useState<string>('');
   const [selectedColor, setSelectedColor] = useState<DrillColor>('white');
   const [selectedPriority, setSelectedPriority] = useState<LinePriorityCategory>('all');
+  const [selectedLineKey, setSelectedLineKey] = useState<string>('all');
   const [cards, setCards] = useState<Card[]>([]);
   const [sessionLines, setSessionLines] = useState<Card[]>([]);
   const [currentLineIndex, setCurrentLineIndex] = useState(0);
@@ -557,12 +565,28 @@ export const SpacedRepetitionTrainer: React.FC<{
   const selectedPriorityLineCount = selectedPriority === 'all'
     ? priorityInfos.length
     : priorityCounts[selectedPriority as Exclude<LinePriorityCategory, 'all'>];
+  const visibleLineInfos = useMemo(
+    () => selectedPriority === 'all'
+      ? priorityInfos
+      : priorityInfos.filter((info) => info.category === selectedPriority),
+    [priorityInfos, selectedPriority],
+  );
+  const selectedLineCount = selectedLineKey === 'all'
+    ? visibleLineInfos.length
+    : visibleLineInfos.some((info) => info.key === selectedLineKey)
+      ? 1
+      : 0;
 
   useEffect(() => {
     if (selectedPriority !== 'all' && selectedPriorityLineCount === 0) {
       setSelectedPriority('all');
     }
   }, [selectedPriority, selectedPriorityLineCount]);
+  useEffect(() => {
+    if (selectedLineKey !== 'all' && !visibleLineInfos.some((info) => info.key === selectedLineKey)) {
+      setSelectedLineKey('all');
+    }
+  }, [selectedLineKey, visibleLineInfos]);
   const currentCard = sessionLines[currentLineIndex] ?? null;
   const promptSteps = useMemo(
     () => (currentCard && selection ? buildPromptSteps(currentCard, selection.color) : []),
@@ -649,13 +673,16 @@ export const SpacedRepetitionTrainer: React.FC<{
       : allLinesForSession.filter((card) =>
           linePriorityByKey.get(cardKey(card))?.category === nextSelection.priorityCategory
         );
+    const selectedLinesForSession = nextSelection.lineKey
+      ? linesForSession.filter((card) => cardKey(card) === nextSelection.lineKey)
+      : linesForSession;
     const mergedCards = mergeCards(storedCards, cardsForSelection);
     saveCards(mergedCards);
 
     setSelection(nextSelection);
     setCards(cardsForSelection);
-    setSessionLines(linesForSession);
-    const firstTarget = findNextLineTarget(linesForSession, nextSelection.color, new Set<string>(), 0);
+    setSessionLines(selectedLinesForSession);
+    const firstTarget = findNextLineTarget(selectedLinesForSession, nextSelection.color, new Set<string>(), 0);
     setUserMove(null);
     setCardHadMistake(false);
     setLineHadMistake(false);
@@ -678,12 +705,12 @@ export const SpacedRepetitionTrainer: React.FC<{
     if (!firstTarget) {
       setCurrentLineIndex(0);
       setCurrentPromptIndex(0);
-      setBoardOrientation(getOrientationForFen(nextSelection.color, linesForSession[0]?.front ?? INITIAL_FEN));
+      setBoardOrientation(getOrientationForFen(nextSelection.color, selectedLinesForSession[0]?.front ?? INITIAL_FEN));
       setPhase('idle');
       return;
     }
 
-    const firstCard = linesForSession[firstTarget.lineIndex];
+    const firstCard = selectedLinesForSession[firstTarget.lineIndex];
     if (!firstCard) {
       setPhase('idle');
       return;
@@ -1048,6 +1075,11 @@ export const SpacedRepetitionTrainer: React.FC<{
   const lastSessionOverviewPercent = lastSessionStats
     ? percentFromCounts(lastSessionStats.totalCorrect, lastSessionStats.totalReviewed)
     : null;
+  const activeLineLabel = useMemo(() => {
+    if (!selection?.lineKey) return 'All lines';
+    const index = visibleLineInfos.findIndex((info) => info.key === selection.lineKey);
+    return index >= 0 ? `Line ${index + 1}` : 'Selected line';
+  }, [selection?.lineKey, visibleLineInfos]);
 
   if (!selection) {
     return (
@@ -1151,6 +1183,47 @@ export const SpacedRepetitionTrainer: React.FC<{
                 </p>
               </div>
 
+              <div>
+                <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Line</div>
+                <div className="grid gap-2 max-h-64 overflow-y-auto pr-1">
+                  <button
+                    onClick={() => setSelectedLineKey('all')}
+                    disabled={visibleLineInfos.length === 0}
+                    className={`rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-35 disabled:cursor-not-allowed ${
+                      selectedLineKey === 'all'
+                        ? 'border-accent-teal bg-accent-teal/5 text-text-primary'
+                        : 'border-border-subtle bg-bg-panel text-text-muted hover:text-text-primary'
+                    }`}
+                  >
+                    <div className="text-xs font-semibold">All lines</div>
+                    <div className="mt-1 text-[10px] font-mono text-text-muted">
+                      {visibleLineInfos.length} line{visibleLineInfos.length !== 1 ? 's' : ''}
+                    </div>
+                  </button>
+                  {visibleLineInfos.map((info, index) => (
+                    <button
+                      key={info.key}
+                      onClick={() => setSelectedLineKey(info.key)}
+                      className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                        selectedLineKey === info.key
+                          ? 'border-accent-teal bg-accent-teal/5 text-text-primary'
+                          : 'border-border-subtle bg-bg-panel text-text-muted hover:text-text-primary'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-semibold">Line {index + 1}</span>
+                        <span className="shrink-0 text-[10px] font-mono text-text-muted">
+                          {categoryLabel(info.category)}
+                        </span>
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-text-muted">
+                        {linePreview(info.moves)}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {lastSessionOverviewPercent !== null && (
                 <AccuracyComparisonCard
                   currentPercent={null}
@@ -1164,8 +1237,9 @@ export const SpacedRepetitionTrainer: React.FC<{
                     fileId: currentFile.id,
                     color: selectedColor,
                     priorityCategory: selectedPriority,
+                    lineKey: selectedLineKey === 'all' ? null : selectedLineKey,
                   })}
-                  disabled={!currentFile || selectedPriorityLineCount === 0}
+                  disabled={!currentFile || selectedLineCount === 0}
                   className="btn-primary flex w-full items-center justify-center gap-2 px-4 py-3 sm:w-auto sm:justify-start sm:py-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Start Training <ArrowRight className="w-4 h-4" />
@@ -1206,7 +1280,11 @@ export const SpacedRepetitionTrainer: React.FC<{
           <span className="text-border-subtle">|</span>
           <span>{categoryLabel(selection.priorityCategory)}</span>
           <span className="text-border-subtle">|</span>
-          <span>{cards.length} cards</span>
+          <span>{activeLineLabel}</span>
+          <span className="text-border-subtle">|</span>
+          <span>
+            {sessionLines.length} line{sessionLines.length !== 1 ? 's' : ''}
+          </span>
           <span className="text-border-subtle">|</span>
           <span>{getDueCards(cards, cards.length || 20).length} due</span>
         </div>
