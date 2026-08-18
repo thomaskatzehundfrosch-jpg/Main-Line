@@ -99,6 +99,23 @@ function findGeneratorNodeByMovePath(root: GeneratorNode, moves: string[]): Gene
   return current;
 }
 
+function getFenPositionKey(fen: string): string {
+  return fen.split(/\s+/).slice(0, 4).join(' ');
+}
+
+function findGeneratorNodeByFen(root: GeneratorNode, fen: string): GeneratorNode | null {
+  const targetKey = getFenPositionKey(fen);
+  const stack: GeneratorNode[] = [root];
+
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (getFenPositionKey(node.fen) === targetKey) return node;
+    stack.push(...node.children);
+  }
+
+  return null;
+}
+
 function getFenFullMoveNumber(fen: string, fallbackDepth: number): number {
   const fullMove = Number(fen.split(/\s+/)[5]);
   return Number.isFinite(fullMove) && fullMove > 0 ? fullMove : Math.max(1, Math.ceil(fallbackDepth / 2));
@@ -347,9 +364,13 @@ export const App: React.FC = () => {
       const selectedFullMoveNumber = getFenFullMoveNumber(node.fen, seed.length);
       const generatorSettings = {
         ...cachedGeneratorSettings,
-        analysisMode: 'stockfish' as const,
         maxMoveNumber: Math.max(cachedGeneratorSettings.maxMoveNumber, selectedFullMoveNumber + 4),
       };
+
+      if ((generatorSettings.analysisMode || 'stockfish') === 'lichess+stockfish' && !getStoredToken()) {
+        setRegenerationError('Connect your Lichess account before using Lichess + SF continuation generation.');
+        return;
+      }
 
       terminateWorker(treeRegenerationWorkerRef.current);
       treeRegenerationWorkerRef.current = null;
@@ -393,7 +414,7 @@ export const App: React.FC = () => {
         id: `log_regen_start_${Date.now()}`,
         timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
         level: 'info',
-        message: `Regenerating continuation after ${node.move} with current generator settings using Stockfish-only background mode.`,
+        message: `Regenerating continuation after ${node.move} with current generator settings.`,
         context: null,
       });
 
@@ -402,7 +423,7 @@ export const App: React.FC = () => {
         [seed],
         sfWorker,
         (finalRoot: GeneratorNode) => {
-          const generatedLeaf = findGeneratorNodeByMovePath(finalRoot, seed);
+          const generatedLeaf = findGeneratorNodeByFen(finalRoot, node.fen) ?? findGeneratorNodeByMovePath(finalRoot, seed);
 
           if (!generatedLeaf) {
             if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
@@ -456,11 +477,7 @@ export const App: React.FC = () => {
           treeRegenerationWorkerRef.current = null;
           ownsTreeRegenerationWorkerRef.current = false;
           setRegeneratingNodeId(null);
-          setRegenerationError(
-            error.message === 'Failed to fetch'
-              ? 'Continuation generation could not start Stockfish. Refresh the page and try again.'
-              : error.message
-          );
+          setRegenerationError(error.message || 'Continuation generation failed.');
         }
       );
     },
