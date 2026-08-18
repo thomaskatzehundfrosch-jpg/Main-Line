@@ -11,12 +11,7 @@ import { logger } from '../utils/errorLogger';
  * module worker.
  */
 async function createStockfishWorker(): Promise<Worker> {
-  // The wrapper loads the real public Stockfish files when available and
-  // falls back internally without surfacing a noisy fetch probe to the UI.
-  return new Worker(
-    new URL('../workers/stockfish.worker.ts', import.meta.url),
-    { type: 'module' }
-  );
+  return new Worker('/stockfish/stockfish.js#/stockfish/stockfish.wasm');
 }
 
 /**
