@@ -22,6 +22,7 @@ import type { MaiaLevel } from '../utils/maiaApi';
 import { getMostPlayedMoves, getLichessMoveCounts } from '../utils/lichessApi';
 
 const DEFAULT_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const MAX_OUR_MOVE_DROP_FROM_BEST = 0.75;
 
 let _nodeIdCounter = 0;
 
@@ -308,6 +309,39 @@ function sortByEngineEval(candidates: MoveCandidate[], color: 'white' | 'black')
     if (evalB == null) return -1;
     return evalB - evalA;
   });
+}
+
+function keepMovesCloseToBestEval(
+  candidates: MoveCandidate[],
+  color: 'white' | 'black',
+  maxDrop: number
+): { kept: MoveCandidate[]; rejected: { candidate: MoveCandidate; drop: number }[]; bestScore: number | null } {
+  if (candidates.length <= 1) {
+    return { kept: candidates, rejected: [], bestScore: null };
+  }
+
+  const scored = candidates
+    .map((candidate) => ({ candidate, score: evalForColor(candidate, color) }))
+    .filter((entry): entry is { candidate: MoveCandidate; score: number } => entry.score !== null);
+
+  if (scored.length <= 1) {
+    return { kept: candidates, rejected: [], bestScore: scored[0]?.score ?? null };
+  }
+
+  const bestScore = Math.max(...scored.map((entry) => entry.score));
+  const rejectedSans = new Set<string>();
+  const rejected: { candidate: MoveCandidate; drop: number }[] = [];
+
+  for (const entry of scored) {
+    const drop = bestScore - entry.score;
+    if (drop > maxDrop) {
+      rejectedSans.add(entry.candidate.san);
+      rejected.push({ candidate: entry.candidate, drop });
+    }
+  }
+
+  const kept = candidates.filter((candidate) => !rejectedSans.has(candidate.san));
+  return { kept: kept.length > 0 ? kept : sortByEngineEval(candidates, color).slice(0, 1), rejected, bestScore };
 }
 
 function getOurMoveBranchPriority(
@@ -772,6 +806,23 @@ export async function buildTree(
       }
 
       candidates = verifiedCandidates;
+    }
+
+    if (isOurTurn && candidates.length > 1) {
+      const { kept, rejected } = keepMovesCloseToBestEval(
+        candidates,
+        color,
+        MAX_OUR_MOVE_DROP_FROM_BEST
+      );
+
+      if (rejected.length > 0) {
+        logError(
+          'info',
+          `Best-move guard: rejected ${rejected.map(({ candidate, drop }) => `${candidate.san} (-${drop.toFixed(2)})`).join(', ')} because stronger verified moves exist.`
+        );
+      }
+
+      candidates = kept;
     }
 
     // ── Avoid queen trades ──────────────────────────────────────────────────
