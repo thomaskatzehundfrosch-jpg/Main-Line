@@ -322,7 +322,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
     let sfWorker: Worker | null = null;
     try {
-      sfWorker = await createAnalysisWorker();
+      sfWorker = await createAnalysisWorker(1);
       generationWorkerRef.current = sfWorker;
     } catch (error) {
       gen.addLogEntry({

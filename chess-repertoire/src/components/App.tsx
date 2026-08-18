@@ -53,7 +53,6 @@ import {
   buildImportantLineRecommendations,
   type ImportantLineRecommendation,
 } from '../utils/gameGapRecommendations';
-import { convertToTreeNode } from '../utils/generatorConverter';
 import { getCachedGeneratorSettings } from '../utils/generatorSettingsCache';
 import type { GeneratorNode } from '../types/generator';
 
@@ -90,9 +89,48 @@ function findNodeByMovePath(root: TreeNode, moves: string[]): TreeNode | null {
   return current;
 }
 
+function findGeneratorNodeByMovePath(root: GeneratorNode, moves: string[]): GeneratorNode | null {
+  let current: GeneratorNode = root;
+  for (const move of moves) {
+    const child = current.children.find((candidate) => candidate.san === move);
+    if (!child) return null;
+    current = child;
+  }
+  return current;
+}
+
 function getFenFullMoveNumber(fen: string, fallbackDepth: number): number {
   const fullMove = Number(fen.split(/\s+/)[5]);
   return Number.isFinite(fullMove) && fullMove > 0 ? fullMove : Math.max(1, Math.ceil(fallbackDepth / 2));
+}
+
+function buildGeneratedNodeComment(node: GeneratorNode): string {
+  const parts: string[] = [];
+  if (node.stockfish && node.stockfish.eval !== null) {
+    const ev = node.stockfish.eval;
+    parts.push(`eval: ${ev >= 0 ? '+' : ''}${ev.toFixed(2)}`);
+  }
+  if (node.lichess && node.lichess.totalGames > 0) {
+    parts.push(`${node.lichess.totalGames} games`);
+  }
+  return parts.join(' | ');
+}
+
+function convertGeneratedChild(node: GeneratorNode, parentId: string | null): TreeNode {
+  return {
+    id: node.id,
+    move: node.san || '',
+    fen: node.fen,
+    children: node.children.map((child) => convertGeneratedChild(child, node.id)),
+    parentId,
+    gameCount: node.lichess?.totalGames ?? 0,
+    whiteWins: node.lichess ? Math.round(node.lichess.totalGames * (node.lichess.winRate / 100)) : 0,
+    blackWins: node.lichess ? Math.round(node.lichess.totalGames * (node.lichess.lossRate / 100)) : 0,
+    draws: node.lichess ? Math.round(node.lichess.totalGames * (node.lichess.drawRate / 100)) : 0,
+    comment: buildGeneratedNodeComment(node),
+    nags: [],
+    depth: node.depth,
+  };
 }
 
 function terminateWorker(worker: Worker | null): void {
@@ -317,7 +355,7 @@ export const App: React.FC = () => {
 
       let sfWorker: Worker;
       try {
-        sfWorker = await createAnalysisWorker();
+        sfWorker = await createAnalysisWorker(1);
         treeRegenerationWorkerRef.current = sfWorker;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -346,8 +384,7 @@ export const App: React.FC = () => {
         [seed],
         sfWorker,
         (finalRoot: GeneratorNode) => {
-          const generatedTree = convertToTreeNode(finalRoot, null, true, generatorSettings.color);
-          const generatedLeaf = findNodeByMovePath(generatedTree, seed);
+          const generatedLeaf = findGeneratorNodeByMovePath(finalRoot, seed);
 
           if (!generatedLeaf) {
             terminateWorker(treeRegenerationWorkerRef.current);
@@ -379,7 +416,8 @@ export const App: React.FC = () => {
             return;
           }
 
-          replaceNodeChildren(node.id, generatedLeaf.children);
+          const generatedChildren = generatedLeaf.children.map((child) => convertGeneratedChild(child, node.id));
+          replaceNodeChildren(node.id, generatedChildren);
           terminateWorker(treeRegenerationWorkerRef.current);
           treeRegenerationWorkerRef.current = null;
           setRegenerationError(null);
