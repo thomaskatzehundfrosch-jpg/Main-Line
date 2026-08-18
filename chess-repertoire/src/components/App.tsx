@@ -344,6 +344,11 @@ export const App: React.FC = () => {
     [currentPath, engine, generator, replaceNodeChildren, tree]
   );
 
+  const handleStopTreeRegeneration = useCallback(() => {
+    generator.stopGeneration();
+    setRegeneratingNodeId(null);
+  }, [generator]);
+
   const gameViewerForward = useCallback(() => {
     if (viewingGame) {
       setViewingMoveIndex((i) => Math.min(i + 1, gamePositions.length - 1));
@@ -828,6 +833,9 @@ export const App: React.FC = () => {
       )}
     </div>
   ) : null;
+  const treeRegenerationPct = generator.progress.maxNodes > 0
+    ? Math.min(100, Math.round((generator.progress.nodes / generator.progress.maxNodes) * 100))
+    : 0;
 
   const mostLikelyMoveSection = (
     <div className="flex flex-col border-t border-border-subtle">
@@ -892,6 +900,30 @@ export const App: React.FC = () => {
               {regeneratingNodeId === currentNode.id ? 'Regenerating...' : 'Regenerate Continuation'}
             </span>
           </button>
+          {regeneratingNodeId && (
+            <div className="rounded-md border border-accent-teal/25 bg-accent-teal/5 px-2.5 py-2">
+              <div className="mb-1.5 flex items-center justify-between gap-2 text-[10px] font-mono text-text-muted">
+                <span className="min-w-0 truncate">{generator.progress.status || 'Generating...'}</span>
+                <span className="shrink-0">
+                  {generator.progress.nodes}/{generator.progress.maxNodes}
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-bg-panel">
+                <div
+                  className="h-full rounded-full bg-accent-teal transition-all duration-200"
+                  style={{ width: `${treeRegenerationPct}%` }}
+                />
+              </div>
+              <button
+                onClick={handleStopTreeRegeneration}
+                className="btn-secondary mt-2 flex w-full items-center justify-center gap-1.5 px-2 py-1.5 text-[10px] font-mono uppercase tracking-wider text-accent-red"
+                title="Stop regenerating this continuation"
+              >
+                <StopCircle className="h-3.5 w-3.5" />
+                Stop Generation
+              </button>
+            </div>
+          )}
           <button
             onClick={handleLoadTrickyMove}
             disabled={isLoadingRecommendations || !isOurTurnInCurrentPosition}

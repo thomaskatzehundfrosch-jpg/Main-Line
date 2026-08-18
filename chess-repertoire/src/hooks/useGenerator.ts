@@ -200,9 +200,10 @@ export function useGenerator(): UseGeneratorReturn {
           setProgress(prog);
         },
         onComplete: (finalRoot: GeneratorNode) => {
+          const wasStopped = stopRef.current;
           setTree(finalRoot);
           setIsGenerating(false);
-          onComplete?.(finalRoot);
+          if (!wasStopped) onComplete?.(finalRoot);
         },
       };
 
