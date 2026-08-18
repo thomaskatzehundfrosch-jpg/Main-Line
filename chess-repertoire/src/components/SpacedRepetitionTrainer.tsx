@@ -394,6 +394,11 @@ function buildLineFenSequence(card: Card): string[] {
   }
 }
 
+function buildFullLineReplaySequence(card: Card): string[] {
+  const fens = buildLineFenSequence(card);
+  return fens.length > 1 ? fens.slice(1) : [];
+}
+
 function formatEngineScore(line: EngineLine): string {
   if (line.mate !== null) return `M${line.mate > 0 ? '' : '-'}${Math.abs(line.mate)}`;
   const pawnScore = line.score / 100;
@@ -1040,14 +1045,31 @@ export const SpacedRepetitionTrainer: React.FC<{
 
   const replayCurrentLine = useCallback(() => {
     if (!currentCard || !selection || phase === 'complete' || phase === 'replay') return;
-    beginAutoplayToPrompt(
-      currentCard,
-      currentLineIndex,
-      currentPromptIndex,
-      selection.color,
-      currentCard.lineStartFen ?? currentCard.front,
-    );
-  }, [beginAutoplayToPrompt, currentCard, currentLineIndex, currentPromptIndex, phase, selection]);
+    if (autoAdvanceRef.current) clearTimeout(autoAdvanceRef.current);
+    if (autoplayTimerRef.current) clearTimeout(autoplayTimerRef.current);
+
+    const replayFens = buildFullLineReplaySequence(currentCard);
+    setUserMove(null);
+    setCardHadMistake(false);
+    setShowSolution(false);
+    setSelectedSquare(null);
+    setLegalMoves([]);
+    setPreviewFen(null);
+    setBoardOrientation(getOrientationForFen(selection.color, promptFen));
+
+    if (replayFens.length === 0) {
+      setAutoplaySequence([]);
+      setAutoplayStepIndex(0);
+      setAutoplayFen(null);
+      setPhase('question');
+      return;
+    }
+
+    setAutoplaySequence(replayFens);
+    setAutoplayStepIndex(0);
+    setAutoplayFen(replayFens[0]);
+    setPhase('autoplay');
+  }, [currentCard, phase, promptFen, selection]);
 
   const jumpToSessionLine = useCallback((targetLineIndex: number) => {
     if (!selection || phase === 'complete' || phase === 'replay') return;
@@ -1350,6 +1372,48 @@ export const SpacedRepetitionTrainer: React.FC<{
             <RotateCcw className="w-3.5 h-3.5" />
             Flip Board
           </button>
+
+          {sessionLines.length > 0 && phase !== 'idle' && phase !== 'complete' && phase !== 'replay' && (
+            <div className="mt-3 flex w-full max-w-[min(100%,520px)] flex-col gap-2 rounded-md border border-border-subtle bg-bg-surface px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  onClick={() => jumpToSessionLine(currentLineIndex - 1)}
+                  disabled={!canGoPreviousLine}
+                  className="btn-icon p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Go to previous line"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <div className="min-w-0 flex-1 text-center">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-text-muted">
+                    {currentLineLabel}
+                  </div>
+                  {currentLinePreview && (
+                    <div className="mt-0.5 truncate text-[11px] text-text-secondary">
+                      {currentLinePreview}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => jumpToSessionLine(currentLineIndex + 1)}
+                  disabled={!canGoNextLine}
+                  className="btn-icon p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                  title="Go to next line"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+              <button
+                onClick={replayCurrentLine}
+                disabled={!currentCard || phase === 'autoplay'}
+                className="btn-secondary flex w-full items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium disabled:opacity-30 disabled:cursor-not-allowed"
+                title="Replay the full current line"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                Replay Line
+              </button>
+            </div>
+          )}
 
           {phase === 'question' && currentCard && !showSolution && (
             <button
