@@ -69,6 +69,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   const isMobile = useIsMobile();
   const { settings: appSettings } = useSettings();
   const generationWorkerRef = useRef<Worker | null>(null);
+  const ownsGenerationWorkerRef = useRef(false);
 
   const [settings, _setSettings] = useState<GeneratorSettings>(() => getCachedGeneratorSettings());
   const [pgnSeeds, _setPgnSeeds] = useState<string[][]>(() => getCachedGeneratorSeeds());
@@ -319,12 +320,28 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
     terminateWorker(generationWorkerRef.current);
     generationWorkerRef.current = null;
+    ownsGenerationWorkerRef.current = false;
 
     let sfWorker: Worker | null = null;
     try {
       sfWorker = await createAnalysisWorker(1);
       generationWorkerRef.current = sfWorker;
+      ownsGenerationWorkerRef.current = true;
     } catch (error) {
+      const sharedWorker = engine.workerReady ? engine.workerRef.current : null;
+      if (sharedWorker) {
+        engine.stopAnalysis();
+        sfWorker = sharedWorker;
+        generationWorkerRef.current = sharedWorker;
+        ownsGenerationWorkerRef.current = false;
+        gen.addLogEntry({
+          id: `log_engine_fallback_${Date.now()}`,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+          level: 'warning',
+          message: 'Dedicated Stockfish worker failed; using the active analysis engine for generation.',
+          context: error instanceof Error ? error.message : String(error),
+        });
+      } else {
       gen.addLogEntry({
         id: `log_engine_start_${Date.now()}`,
         timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
@@ -333,6 +350,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
         context: error instanceof Error ? error.message : String(error),
       });
       return;
+      }
     }
 
     gen.startGeneration(
@@ -340,30 +358,34 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
       allSeeds.length > 0 ? allSeeds : null,
       sfWorker,
       () => {
-        terminateWorker(generationWorkerRef.current);
+        if (ownsGenerationWorkerRef.current) terminateWorker(generationWorkerRef.current);
         generationWorkerRef.current = null;
+        ownsGenerationWorkerRef.current = false;
       },
       () => {
-        terminateWorker(generationWorkerRef.current);
+        if (ownsGenerationWorkerRef.current) terminateWorker(generationWorkerRef.current);
         generationWorkerRef.current = null;
+        ownsGenerationWorkerRef.current = false;
       }
     );
-  }, [settings, pgnSeeds, gen]);
+  }, [settings, pgnSeeds, engine, gen]);
 
   const handleGenerate = useCallback(() => runGeneration('generate'), [runGeneration]);
   const handleFinishRepertoire = useCallback(() => runGeneration('finish'), [runGeneration]);
 
   const handleStop = useCallback(() => {
     gen.stopGeneration();
-    terminateWorker(generationWorkerRef.current);
+    if (ownsGenerationWorkerRef.current) terminateWorker(generationWorkerRef.current);
     generationWorkerRef.current = null;
+    ownsGenerationWorkerRef.current = false;
   }, [gen]);
   const handleClear = useCallback(() => gen.clearTree(), [gen]);
 
   useEffect(() => {
     return () => {
-      terminateWorker(generationWorkerRef.current);
+      if (ownsGenerationWorkerRef.current) terminateWorker(generationWorkerRef.current);
       generationWorkerRef.current = null;
+      ownsGenerationWorkerRef.current = false;
     };
   }, []);
 

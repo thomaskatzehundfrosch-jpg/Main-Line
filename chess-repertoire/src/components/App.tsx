@@ -251,6 +251,7 @@ export const App: React.FC = () => {
   const [regeneratingNodeId, setRegeneratingNodeId] = useState<string | null>(null);
   const [regenerationError, setRegenerationError] = useState<string | null>(null);
   const treeRegenerationWorkerRef = useRef<Worker | null>(null);
+  const ownsTreeRegenerationWorkerRef = useRef(false);
 
   const classifyWithThresholds = useCallback(
     (evalDrop: number): MistakeTier | null => {
@@ -352,13 +353,29 @@ export const App: React.FC = () => {
 
       terminateWorker(treeRegenerationWorkerRef.current);
       treeRegenerationWorkerRef.current = null;
+      ownsTreeRegenerationWorkerRef.current = false;
 
       let sfWorker: Worker;
       try {
         sfWorker = await createAnalysisWorker(1);
         treeRegenerationWorkerRef.current = sfWorker;
+        ownsTreeRegenerationWorkerRef.current = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const sharedWorker = engine.workerReady ? engine.workerRef.current : null;
+        if (sharedWorker) {
+          engine.stopAnalysis();
+          sfWorker = sharedWorker;
+          treeRegenerationWorkerRef.current = sharedWorker;
+          ownsTreeRegenerationWorkerRef.current = false;
+          generator.addLogEntry({
+            id: `log_regen_engine_fallback_${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
+            level: 'warning',
+            message: 'Dedicated Stockfish worker failed; using the active analysis engine for this continuation.',
+            context: message,
+          });
+        } else {
         generator.addLogEntry({
           id: `log_regen_engine_${Date.now()}`,
           timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
@@ -368,6 +385,7 @@ export const App: React.FC = () => {
         });
         setRegenerationError('Could not start Stockfish for continuation generation. Refresh the page and try again.');
         return;
+        }
       }
 
       setRegeneratingNodeId(node.id);
@@ -387,8 +405,9 @@ export const App: React.FC = () => {
           const generatedLeaf = findGeneratorNodeByMovePath(finalRoot, seed);
 
           if (!generatedLeaf) {
-            terminateWorker(treeRegenerationWorkerRef.current);
+            if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
             treeRegenerationWorkerRef.current = null;
+            ownsTreeRegenerationWorkerRef.current = false;
             generator.addLogEntry({
               id: `log_regen_missing_${Date.now()}`,
               timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
@@ -402,8 +421,9 @@ export const App: React.FC = () => {
           }
 
           if (generatedLeaf.children.length === 0) {
-            terminateWorker(treeRegenerationWorkerRef.current);
+            if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
             treeRegenerationWorkerRef.current = null;
+            ownsTreeRegenerationWorkerRef.current = false;
             generator.addLogEntry({
               id: `log_regen_empty_${Date.now()}`,
               timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
@@ -418,8 +438,9 @@ export const App: React.FC = () => {
 
           const generatedChildren = generatedLeaf.children.map((child) => convertGeneratedChild(child, node.id));
           replaceNodeChildren(node.id, generatedChildren);
-          terminateWorker(treeRegenerationWorkerRef.current);
+          if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
           treeRegenerationWorkerRef.current = null;
+          ownsTreeRegenerationWorkerRef.current = false;
           setRegenerationError(null);
           setRegeneratingNodeId(null);
           generator.addLogEntry({
@@ -431,8 +452,9 @@ export const App: React.FC = () => {
           });
         },
         (error) => {
-          terminateWorker(treeRegenerationWorkerRef.current);
+          if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
           treeRegenerationWorkerRef.current = null;
+          ownsTreeRegenerationWorkerRef.current = false;
           setRegeneratingNodeId(null);
           setRegenerationError(
             error.message === 'Failed to fetch'
@@ -442,20 +464,22 @@ export const App: React.FC = () => {
         }
       );
     },
-    [currentPath, generator, replaceNodeChildren, tree]
+    [currentPath, engine, generator, replaceNodeChildren, tree]
   );
 
   const handleStopTreeRegeneration = useCallback(() => {
     generator.stopGeneration();
-    terminateWorker(treeRegenerationWorkerRef.current);
+    if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
     treeRegenerationWorkerRef.current = null;
+    ownsTreeRegenerationWorkerRef.current = false;
     setRegeneratingNodeId(null);
   }, [generator]);
 
   useEffect(() => {
     return () => {
-      terminateWorker(treeRegenerationWorkerRef.current);
+      if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
       treeRegenerationWorkerRef.current = null;
+      ownsTreeRegenerationWorkerRef.current = false;
     };
   }, []);
 
