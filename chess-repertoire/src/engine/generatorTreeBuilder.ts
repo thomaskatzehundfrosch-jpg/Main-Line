@@ -460,6 +460,53 @@ export async function buildTree(
     }
   }
 
+  async function validateSeedMoves(seedMoves: string[], seedIndex: number): Promise<string[]> {
+    if (!sfWorker || seedMoves.length === 0) return seedMoves;
+
+    const validated: string[] = [];
+    let currentFen = root.fen;
+    const sfAnalysisDepth = settings.sfDepth || 12;
+    const styleValue = settings.styleValue ?? 0;
+    const effectiveThreshold = getStyleEvalThreshold(settings.evalThreshold ?? -0.3, styleValue);
+
+    for (const san of seedMoves) {
+      const turn = currentFen.split(' ')[1];
+      const isOurSeedMove = (color === 'white' && turn === 'w') || (color === 'black' && turn === 'b');
+      const nextFen = makeMove(currentFen, san);
+
+      if (!nextFen) {
+        logError('warning', `Seed ${seedIndex}: stopped at illegal move ${san}.`);
+        break;
+      }
+
+      if (isOurSeedMove) {
+        try {
+          const evalResult = await analyzePosition(sfWorker, nextFen, sfAnalysisDepth);
+          const evalPawns = evalResult.score / 100;
+
+          if (evalResult.depth <= 0 || failsEvalThreshold(evalPawns, color, effectiveThreshold)) {
+            logError(
+              'warning',
+              `Seed ${seedIndex}: stopped before ${san} — eval ${evalPawns.toFixed(2)} at depth ${evalResult.depth} fails threshold ${effectiveThreshold.toFixed(2)} for ${color}.`
+            );
+            break;
+          }
+        } catch (err: any) {
+          logError(
+            'warning',
+            `Seed ${seedIndex}: stopped before ${san} — Stockfish validation failed: ${err.message}`
+          );
+          break;
+        }
+      }
+
+      validated.push(san);
+      currentFen = nextFen;
+    }
+
+    return validated;
+  }
+
   /**
    * Find or create the parent path in the tree for seed moves.
    */
@@ -1014,12 +1061,13 @@ export async function buildTree(
     for (let si = 0; si < seeds.length; si++) {
       if (stopRef.current) break;
 
-      const seedMoves = seeds[si];
-      logError('info', `Processing seed line ${si + 1}/${seeds.length} (${seedMoves.length} moves)`);
+      const seedNumber = si + 1;
+      const seedMoves = await validateSeedMoves(seeds[si], seedNumber);
+      logError('info', `Processing seed line ${seedNumber}/${seeds.length} (${seedMoves.length} moves)`);
 
       const leafNode = ensureSeedPath(seedMoves);
 
-      updateProgress(totalNodes, `Seed line ${si + 1}/${seeds.length} loaded`);
+      updateProgress(totalNodes, `Seed line ${seedNumber}/${seeds.length} loaded`);
       if (callbacks.onNodeAdded) {
         callbacks.onNodeAdded(deepCloneTree(root));
       }
@@ -1027,7 +1075,7 @@ export async function buildTree(
       // Don't enqueue the same leaf node twice (happens when two seeds share
       // a common endpoint, which would cause duplicate white-move generation).
       if (enqueuedNodeIds.has(leafNode.id)) {
-        logError('info', `Seed ${si + 1}: leaf node already queued — skipping duplicate enqueue`);
+        logError('info', `Seed ${seedNumber}: leaf node already queued — skipping duplicate enqueue`);
         continue;
       }
       enqueuedNodeIds.add(leafNode.id);
