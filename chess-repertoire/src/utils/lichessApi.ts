@@ -19,6 +19,21 @@ const MAX_RETRIES = 5;
 
 type LogFn = (level: 'info' | 'warning' | 'error', message: string) => void;
 
+export interface LichessCloudPv {
+  moves: string;
+  cp?: number;
+  mate?: number;
+}
+
+export interface LichessCloudEval {
+  fen: string;
+  knodes?: number;
+  depth: number;
+  pvs: LichessCloudPv[];
+}
+
+const cloudEvalCache = new Map<string, LichessCloudEval | null>();
+
 /**
  * Build the Lichess API URL for a given position and settings.
  */
@@ -66,6 +81,70 @@ async function throttle(): Promise<void> {
     await delay(THROTTLE_MS - elapsed);
   }
   _lastRequestTime = Date.now();
+}
+
+function buildCloudEvalUrl(fen: string, multiPv: number): string {
+  const params = new URLSearchParams();
+  params.set('fen', fen);
+  params.set('multiPv', String(Math.max(1, Math.min(5, multiPv))));
+  return `https://lichess.org/api/cloud-eval?${params.toString().replace(/\+/g, '%20')}`;
+}
+
+/**
+ * Fetch a cached Lichess cloud engine evaluation if one exists.
+ * Returns null when Lichess has no cloud analysis for the position.
+ */
+export async function getCloudEval(
+  fen: string,
+  multiPv: number = 1,
+  logError?: LogFn,
+  attempt: number = 1
+): Promise<LichessCloudEval | null> {
+  const requestedPv = Math.max(1, Math.min(5, multiPv));
+  const cacheKey = `${fen}|||${requestedPv}`;
+  if (cloudEvalCache.has(cacheKey)) {
+    return cloudEvalCache.get(cacheKey) ?? null;
+  }
+
+  await throttle();
+
+  try {
+    const url = buildCloudEvalUrl(fen, requestedPv);
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+
+    if (res.status === 404) {
+      cloudEvalCache.set(cacheKey, null);
+      return null;
+    }
+
+    if (res.status === 429) {
+      if (attempt <= MAX_RETRIES) {
+        const backoff = 3000 * Math.pow(2, attempt - 1);
+        logError?.('warning', `Lichess cloud eval rate limited. Waiting ${backoff / 1000}s before retry ${attempt}/${MAX_RETRIES}...`);
+        await delay(backoff);
+        return getCloudEval(fen, requestedPv, logError, attempt + 1);
+      }
+      throw new Error(`Lichess cloud eval rate limited after ${MAX_RETRIES} retries`);
+    }
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Lichess cloud eval returned ${res.status}: ${body || res.statusText || '(empty)'}`);
+    }
+
+    const data = await res.json();
+    if (!data || !Array.isArray(data.pvs) || data.pvs.length === 0 || typeof data.depth !== 'number') {
+      cloudEvalCache.set(cacheKey, null);
+      return null;
+    }
+
+    const result = data as LichessCloudEval;
+    cloudEvalCache.set(cacheKey, result);
+    return result;
+  } catch (err: any) {
+    logError?.('warning', `Lichess cloud eval unavailable: ${err.message}`);
+    return null;
+  }
 }
 
 interface LichessMoveEntry {

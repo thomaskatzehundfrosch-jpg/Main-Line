@@ -3,6 +3,7 @@ import type { ImportedGame, MistakeRecord, MistakeTier } from '../types/game';
 import { classifyMistake, generateMistakeId } from '../types/game';
 import type { MoveCandidate, RepertoireStyle } from '../types/generator';
 import { logger } from '../utils/errorLogger';
+import { getCloudEval } from '../utils/lichessApi';
 
 const ENGINE_READY_TIMEOUT_MS = 15000;
 const POSITION_ANALYSIS_TIMEOUT_MS = 45000;
@@ -40,6 +41,51 @@ export interface PositionEval {
   depth: number;
 }
 
+function firstUciFromPv(moves: string): string {
+  return moves.trim().split(/\s+/)[0] ?? '';
+}
+
+function cloudScoreToCentipawns(pv: { cp?: number; mate?: number }): {
+  score: number;
+  isMate: boolean;
+  mateIn: number | null;
+} {
+  if (typeof pv.mate === 'number') {
+    return {
+      score: pv.mate > 0 ? 10000 : -10000,
+      isMate: true,
+      mateIn: pv.mate,
+    };
+  }
+
+  return {
+    score: typeof pv.cp === 'number' ? pv.cp : 0,
+    isMate: false,
+    mateIn: null,
+  };
+}
+
+async function analyzePositionFromCloud(fen: string): Promise<PositionEval | null> {
+  const cloudEval = await getCloudEval(fen, 1);
+  const pv = cloudEval?.pvs?.[0];
+  if (!cloudEval || !pv) return null;
+
+  const bestMoveUci = firstUciFromPv(pv.moves);
+  if (!bestMoveUci) return null;
+
+  const score = cloudScoreToCentipawns(pv);
+
+  return {
+    fen,
+    score: score.score,
+    isMate: score.isMate,
+    mateIn: score.mateIn,
+    bestMoveUci,
+    bestMoveSan: uciToSan(fen, bestMoveUci) ?? bestMoveUci,
+    depth: cloudEval.depth,
+  };
+}
+
 /**
  * Callback for progress updates during analysis.
  */
@@ -60,6 +106,17 @@ export type CancellationCheck = () => boolean;
  * where every call resolves with the previous position's evaluation.
  */
 export function analyzePosition(
+  worker: Worker,
+  fen: string,
+  depth: number
+): Promise<PositionEval> {
+  return analyzePositionFromCloud(fen).then((cloudResult) => {
+    if (cloudResult) return cloudResult;
+    return analyzePositionWithStockfish(worker, fen, depth);
+  });
+}
+
+function analyzePositionWithStockfish(
   worker: Worker,
   fen: string,
   depth: number
@@ -507,6 +564,34 @@ export interface TopMoveResult {
   depth: number;
 }
 
+async function getTopMovesFromCloud(fen: string, numMoves: number): Promise<TopMoveResult[] | null> {
+  const cloudEval = await getCloudEval(fen, numMoves);
+  if (!cloudEval || !Array.isArray(cloudEval.pvs) || cloudEval.pvs.length === 0) return null;
+
+  const results = cloudEval.pvs
+    .slice(0, numMoves)
+    .map((pv) => {
+      const uci = firstUciFromPv(pv.moves);
+      if (!uci) return null;
+
+      let evalScore: number | null = null;
+      if (typeof pv.cp === 'number') {
+        evalScore = pv.cp / 100;
+      } else if (typeof pv.mate === 'number') {
+        evalScore = pv.mate > 0 ? 99 : -99;
+      }
+
+      return {
+        uci,
+        eval: evalScore,
+        depth: cloudEval.depth,
+      };
+    })
+    .filter((result): result is TopMoveResult => result !== null);
+
+  return results.length > 0 ? results : null;
+}
+
 /**
  * Get top N moves for a position using Stockfish MultiPV.
  * Sets MultiPV, runs analysis, collects info lines, returns sorted moves.
@@ -519,8 +604,21 @@ export function getTopMoves(
   numMoves: number = 3,
   timeoutMs: number = 90000
 ): Promise<TopMoveResult[]> {
+  return getTopMovesFromCloud(fen, numMoves).then((cloudResults) => {
+    if (cloudResults) return cloudResults;
+    return getTopMovesWithStockfish(worker, fen, depth, numMoves, timeoutMs);
+  });
+}
+
+function getTopMovesWithStockfish(
+  worker: Worker,
+  fen: string,
+  depth: number,
+  numMoves: number = 3,
+  timeoutMs: number = 90000
+): Promise<TopMoveResult[]> {
   if (numMoves <= 1) {
-    return analyzePosition(worker, fen, depth).then((result) => ([{
+    return analyzePositionWithStockfish(worker, fen, depth).then((result) => ([{
       uci: result.bestMoveUci,
       eval: result.score / 100,
       depth: result.depth,

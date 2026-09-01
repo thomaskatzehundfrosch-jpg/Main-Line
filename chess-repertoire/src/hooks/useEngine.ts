@@ -3,6 +3,7 @@ import { useEngineContext } from '../context/EngineContext';
 import type { EngineLine } from '../types';
 import { Chess } from 'chess.js';
 import { logger } from '../utils/errorLogger';
+import { getCloudEval } from '../utils/lichessApi';
 
 /**
  * Create a Stockfish worker.
@@ -32,6 +33,7 @@ export function useEngine() {
   const linesBufferRef = useRef<Map<number, EngineLine>>(new Map());
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initRef = useRef(false);
+  const analysisSeqRef = useRef(0);
 
   // ─── Engine state-machine refs ──────────────────────────────────────
   // Whether the very first UCI handshake + setoption round has finished.
@@ -166,6 +168,37 @@ export function useEngine() {
     }
   }, [dispatch, sendCommand, uciToSan]);
 
+  const getCloudLines = useCallback(async (fen: string): Promise<EngineLine[] | null> => {
+    const cloudEval = await getCloudEval(fen, multiPVRef.current);
+    if (!cloudEval || !Array.isArray(cloudEval.pvs) || cloudEval.pvs.length === 0) {
+      return null;
+    }
+
+    const lines = cloudEval.pvs.slice(0, multiPVRef.current).map((pv, index) => {
+      const pvUci = pv.moves.trim().split(/\s+/).filter(Boolean);
+      const pvSan = uciToSan(fen, pvUci);
+      let score = 0;
+      let mate: number | null = null;
+
+      if (typeof pv.cp === 'number') {
+        score = pv.cp;
+      } else if (typeof pv.mate === 'number') {
+        mate = pv.mate;
+      }
+
+      return {
+        depth: cloudEval.depth,
+        score,
+        mate,
+        pv: pvSan.length > 0 ? pvSan : pvUci.map((uci) => uci.substring(2, 4)),
+        pvUci,
+        multipv: index + 1,
+      };
+    });
+
+    return lines.length > 0 ? lines : null;
+  }, [uciToSan]);
+
   // ─── Worker setup helper (stored as ref so the error handler can call it
   //     to re-initialise a fresh worker without stale-closure issues) ────────
   const setupWorkerRef = useRef<(worker: Worker) => void>(() => {});
@@ -265,22 +298,36 @@ export function useEngine() {
   const analyze = useCallback(
     (fen: string) => {
       if (!state.enabled || !workerRef.current) return;
+      const seq = ++analysisSeqRef.current;
 
       // Debounce rapid position changes
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
 
-      debounceTimerRef.current = setTimeout(() => {
+      debounceTimerRef.current = setTimeout(async () => {
         if (!workerRef.current) return;
-
-        // Queue the FEN for the readyok handler
-        pendingFenRef.current = fen;
 
         // Clear previous results in the UI
         linesBufferRef.current.clear();
         dispatch({ type: 'CLEAR_LINES' });
         dispatch({ type: 'SET_THINKING', isThinking: true });
+        dispatch({ type: 'SET_CURRENT_FEN', fen });
+
+        const cloudLines = await getCloudLines(fen);
+        if (seq !== analysisSeqRef.current || !enabledRef.current) return;
+
+        if (cloudLines) {
+          dispatch({ type: 'SET_LINES', lines: cloudLines });
+          dispatch({ type: 'SET_THINKING', isThinking: false });
+          currentAnalysisRef.current = fen;
+          return;
+        }
+
+        if (!workerRef.current) return;
+
+        // Queue the FEN for the readyok handler
+        pendingFenRef.current = fen;
 
         // Safely stop the current analysis, reset internal engine state,
         // and synchronise via isready / readyok.
@@ -290,13 +337,14 @@ export function useEngine() {
         // → readyok handler will send  position fen … → go depth …
       }, 150);
     },
-    [state.enabled, sendCommand, dispatch]
+    [state.enabled, sendCommand, dispatch, getCloudLines]
   );
 
   /**
    * Stop current analysis.
    */
   const stopAnalysis = useCallback(() => {
+    analysisSeqRef.current++;
     pendingFenRef.current = null;
     sendCommand('stop');
     dispatch({ type: 'SET_THINKING', isThinking: false });
@@ -309,6 +357,7 @@ export function useEngine() {
     const newEnabled = !state.enabled;
     dispatch({ type: 'SET_ENABLED', enabled: newEnabled });
     if (!newEnabled) {
+      analysisSeqRef.current++;
       pendingFenRef.current = null;
       sendCommand('stop');
       dispatch({ type: 'CLEAR_LINES' });
@@ -339,6 +388,7 @@ export function useEngine() {
       sendCommand(`setoption name MultiPV value ${clamped}`);
 
       if (currentAnalysisRef.current && state.enabled) {
+        analysisSeqRef.current++;
         pendingFenRef.current = currentAnalysisRef.current;
         linesBufferRef.current.clear();
         dispatch({ type: 'CLEAR_LINES' });

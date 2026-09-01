@@ -23,6 +23,7 @@ import { getMostPlayedMoves, getLichessMoveCounts } from '../utils/lichessApi';
 
 const DEFAULT_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const MAX_OUR_MOVE_DROP_FROM_BEST = 0.75;
+const OPPONENT_RESPONSE_CHECK_DEPTH = 25;
 
 let _nodeIdCounter = 0;
 
@@ -920,6 +921,51 @@ export async function buildTree(
       }
 
       candidates = kept;
+    }
+
+    if (!isOurTurn && candidates.length > 0) {
+      if (!sfWorker) {
+        logError('warning', 'Opponent response check skipped — Stockfish worker unavailable for local fallback.');
+      } else {
+        const checkedCandidates: MoveCandidate[] = [];
+
+        for (const candidate of candidates) {
+          const resultFen = makeMove(fen, candidate.san);
+          if (!resultFen) {
+            logError('info', `Opponent response check: ${candidate.san} is illegal — skipped`);
+            continue;
+          }
+
+          try {
+            const checkResult = await analyzePosition(
+              sfWorker,
+              resultFen,
+              OPPONENT_RESPONSE_CHECK_DEPTH
+            );
+
+            if (checkResult.depth <= 0) {
+              logError('warning', `Opponent response check: ${candidate.san} rejected — no usable eval returned.`);
+              continue;
+            }
+
+            const evalPawns = checkResult.score / 100;
+            checkedCandidates.push({
+              ...candidate,
+              _sfEval: evalPawns,
+              _sfDepth: checkResult.depth,
+            });
+
+            logError(
+              'info',
+              `Opponent response check: ${candidate.san} eval ${evalPawns.toFixed(2)} at depth ${checkResult.depth}; best reply ${checkResult.bestMoveSan || checkResult.bestMoveUci || '?'}.`
+            );
+          } catch (err: any) {
+            logError('warning', `Opponent response check: ${candidate.san} evaluation failed: ${err.message}`);
+          }
+        }
+
+        candidates = checkedCandidates;
+      }
     }
 
     // ── Avoid queen trades ──────────────────────────────────────────────────
