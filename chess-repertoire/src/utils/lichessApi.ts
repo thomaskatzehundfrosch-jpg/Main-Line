@@ -41,7 +41,8 @@ const cloudEvalCache = new Map<string, LichessCloudEval | null>();
 export function buildLichessUrl(fen: string, settings: GeneratorSettings): string {
   const params = new URLSearchParams();
   params.set('fen', fen);
-  params.set('moves', '12');
+  // Request enough moves to observe all replies meeting a 1% frequency floor.
+  params.set('moves', '100');
 
   if (settings.useMasters) {
     // Masters DB — no rating/speed filters, different endpoint

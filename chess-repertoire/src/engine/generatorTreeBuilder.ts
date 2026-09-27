@@ -9,7 +9,7 @@ import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils
 import { abortError, abortableDelay } from '../utils/generatorCancellation';
 
 const dependencies = { analyze: analyzePositionWithStockfish, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
-type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; stats?: LichessMove; reason: string };
+type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; stats?: LichessMove; strongestDefense?: boolean; reason: string };
 const positionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
 const scoreFor = (score: number, color: 'white' | 'black') => color === 'white' ? score : -score;
 
@@ -37,11 +37,16 @@ export function allowsImmediateQueenTrade(fen: string, san: string): boolean {
 
 /** Common mistakes remain useful preparation; reserve a place for the best defense. */
 export function selectOpponentReplies<T extends { uci: string; playRate: number }>(
-  popular: T[], best: T, coverageTarget: number, maxReplies: number
+  popular: T[], best: T, coverageTarget: number, maxReplies: number, minPlayRate: number = 5
 ): T[] {
   const selected: T[] = [popular.find(move => move.uci === best.uci) ?? best];
-  let coverage = selected[0].playRate / 100;
-  for (const move of popular) {
+  const ranked = [...popular].sort((a, b) => b.playRate - a.playRate);
+  // Frequency-qualified replies override both soft study-size limits.
+  for (const move of ranked) {
+    if (move.playRate + 1e-8 >= minPlayRate && !selected.some(chosen => chosen.uci === move.uci)) selected.push(move);
+  }
+  let coverage = selected.reduce((sum, move) => sum + move.playRate / 100, 0);
+  for (const move of ranked) {
     if (selected.length >= maxReplies || coverage >= coverageTarget) break;
     if (selected.some(chosen => chosen.uci === move.uci)) continue;
     selected.push(move);
@@ -101,7 +106,7 @@ export async function buildTree(
     check();
     try {
       apiCalls++;
-      const replies = await services.replies(fen, settings, (level, message) => { check(); log(level, message); }, 30, signal);
+      const replies = await services.replies(fen, settings, (level, message) => { check(); log(level, message); }, 100, signal);
       check();
       // Very small samples do not establish human coverage. Fall back explicitly.
       const supported = replies.filter(reply => reply.totalGames >= settings.minGames);
@@ -163,7 +168,7 @@ export async function buildTree(
     }
     let selected: Array<{ uci: string; playRate: number }>;
     if (popular.length) {
-      selected = selectOpponentReplies(popular, { uci: strongest.uci, playRate: 0 } as LichessMove, coverage, maxReplies);
+      selected = selectOpponentReplies(popular, { uci: strongest.uci, playRate: 0 } as LichessMove, coverage, maxReplies, settings.opponentMinPlayRate);
       node.responseCoverage = Math.min(1, selected.reduce((sum, move) => sum + move.playRate / 100, 0));
       coverages.push(node.responseCoverage);
       if (node.responseCoverage + 1e-8 < coverage) {
@@ -180,19 +185,20 @@ export async function buildTree(
     const result: Candidate[] = [];
     for (const move of selected) {
       const checked = await candidate(fen, move.uci, popular.find(reply => reply.uci === move.uci));
-      checked.reason = move.uci === strongest.uci ? 'Strongest engine defense'
+      checked.strongestDefense = move.uci === strongest.uci;
+      checked.reason = checked.strongestDefense ? 'Strongest engine defense'
         : checked.stats ? `Common opponent reply (${checked.stats.playRate.toFixed(1)}% of database games)` : 'Engine defense';
       result.push(checked);
     }
     return result;
   }
 
-  type Pending = { node: GeneratorNode; likelihood: number; ancestors: Set<string> };
+  type Pending = { node: GeneratorNode; likelihood: number; targetDepth: number; ancestors: Set<string> };
   const queue: Pending[] = [];
   const seedNodes: Array<{ node: GeneratorNode; parent: GeneratorNode }> = [];
   function collect(node: GeneratorNode, ancestors = new Set<string>()) {
     const next = new Set(ancestors).add(positionKey(node.fen));
-    if (!node.children.length) queue.push({ node, likelihood: 1, ancestors });
+    if (!node.children.length) queue.push({ node, likelihood: 1, targetDepth: settings.maxMoveNumber * 2, ancestors });
     for (const child of node.children) { seedNodes.push({ node: child, parent: node }); collect(child, next); }
   }
   collect(root);
@@ -234,10 +240,10 @@ export async function buildTree(
         if (item.ancestors.has(positionKey(active.fen))) active.reason = 'Repeated position; continuation already represented on this line';
         continue;
       }
-      const baseDepth = settings.maxMoveNumber * 2;
+      const baseDepth = item.targetDepth;
       const hardDepth = baseDepth + settings.tacticalExtension * 2;
       if (active.depth >= baseDepth && (!isTactical(active.fen) || settings.tacticalExtension === 0)) {
-        active.endReason = 'target'; active.cappedByMoveLimit = true; continue;
+        active.endReason = baseDepth < settings.maxMoveNumber * 2 ? 'adaptive-depth' : 'target'; active.cappedByMoveLimit = true; continue;
       }
       if (active.depth >= hardDepth) {
         active.endReason = 'extension-limit'; active.cappedByMoveLimit = true; continue;
@@ -261,7 +267,14 @@ export async function buildTree(
           };
           active.children.push(node); added.push(move); totalNodes++;
           const probability = move.stats ? move.stats.playRate / 100 : 1 / Math.max(1, moves.length);
-          queue.push({ node, likelihood: item.likelihood * (ourTurn ? 1 : probability), ancestors: new Set(item.ancestors).add(positionKey(active.fen)) });
+          const rareReply = !ourTurn && settings.adaptiveOpponentDepth && !move.strongestDefense
+            && move.stats !== undefined && move.stats.playRate < settings.opponentMinPlayRate;
+          // Reduce the overall horizon once, not once per rare move. Always leave
+          // room for our answer; tactical extensions still apply at the shorter horizon.
+          const targetDepth = rareReply
+            ? Math.min(item.targetDepth, Math.max(node.depth + 1, settings.maxMoveNumber * 2 - 4))
+            : item.targetDepth;
+          queue.push({ node, targetDepth, likelihood: item.likelihood * (ourTurn ? 1 : probability), ancestors: new Set(item.ancestors).add(positionKey(active.fen)) });
           callbacks.onNewNode?.({ ...node, children: [] });
         }
         if (active.responseCoverage !== undefined) {
@@ -303,7 +316,7 @@ export async function buildTree(
   const status = stopped ? `Stopped — ${unfinished} unfinished positions`
     : unfinished ? `Partial repertoire — ${unfinished} unfinished positions`
     : coverageGaps ? `Target reached; reply coverage limited at ${coverageGaps} positions`
-    : 'Target reached for all selected lines';
+    : 'Study depth reached for all selected lines';
   log(outcome === 'complete' ? 'info' : 'warning', status);
   if (explorerFailures) log('warning', `${explorerFailures} positions used engine replies after a database error.`);
   publish();

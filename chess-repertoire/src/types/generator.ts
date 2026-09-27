@@ -18,6 +18,9 @@ export interface GeneratorSettings {
   ratingMax: number;
   speeds: string[];
   minGames: number;
+  /** Include supported opponent replies at or above this local play percentage. */
+  opponentMinPlayRate: number;
+  adaptiveOpponentDepth: boolean;
 }
 
 export const STUDY_SIZES = {
@@ -32,6 +35,7 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   tacticalExtension: 2, avoidQueenTrades: false,
   useMasters: true, ratingMin: 1600, ratingMax: 2500,
   speeds: ['blitz', 'rapid', 'classical'], minGames: 10,
+  opponentMinPlayRate: 5, adaptiveOpponentDepth: true,
 };
 
 export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorSettings {
@@ -49,6 +53,8 @@ export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorS
     sfDepth: Math.round(number(input.sfDepth, 16, 8, 25)),
     maxEvalLoss: number(input.maxEvalLoss, 0.3, 0, 1),
     tacticalExtension: Math.round(number(input.tacticalExtension, 2, 0, 4)),
+    opponentMinPlayRate: number(input.opponentMinPlayRate, 5, 1, 100),
+    adaptiveOpponentDepth: input.adaptiveOpponentDepth ?? true,
     minGames: Math.round(number(input.minGames, 10, 1, 10000)),
     ratingMin: Math.min(min, max), ratingMax: Math.max(min, max),
     speeds: speeds.length ? speeds : ['rapid'],
@@ -64,8 +70,9 @@ export interface GeneratorLichessStats {
   drawRate: number;
   averageRating: number | null;
 }
-export type GeneratorEndReason = 'target' | 'terminal' | 'repetition' | 'budget' | 'stopped' | 'analysis-failed' | 'extension-limit';
+export type GeneratorEndReason = 'target' | 'adaptive-depth' | 'terminal' | 'repetition' | 'budget' | 'stopped' | 'analysis-failed' | 'extension-limit';
 export const END_REASON_LABELS: Record<GeneratorEndReason, string> = {
+  'adaptive-depth': 'Rare reply — shorter study depth reached',
   repetition: 'Repeated position — line ends here',
   target: 'Target length reached', terminal: 'Game over', budget: 'Study budget reached — continuation unfinished',
   stopped: 'Stopped — continuation unfinished', 'analysis-failed': 'Analysis failed — continuation unfinished',

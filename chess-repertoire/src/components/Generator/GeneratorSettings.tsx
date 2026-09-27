@@ -84,8 +84,18 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
       </label>
       <p className="text-[11px] text-text-muted">{settings.analysisMode === 'stockfish'
         ? `Up to ${preset.maxReplies} engine replies per position.`
-        : `Aim to cover ${Math.round(preset.coverage * 100)}% of recorded replies at each position, including the strongest defense; up to ${preset.maxReplies} replies.`}
+        : `Aim to cover ${Math.round(preset.coverage * 100)}% of recorded replies at each position, including the strongest defense; normally up to ${preset.maxReplies} replies. Moves meeting your frequency threshold are included beyond this limit.`}
         {' '}Budget: {preset.maxNodes} moves. Limited data or budget can leave gaps.</p>
+      {settings.analysisMode !== 'stockfish' && <div className="space-y-2">
+        <label className={labelClass}>Include opponent moves played at least (%)
+          <input className={inputClass} type="number" min="1" max="100" step="1" value={settings.opponentMinPlayRate}
+            onChange={e => update('opponentMinPlayRate', e.target.valueAsNumber)} />
+        </label>
+        <p className="text-[11px] text-text-muted">At each position, include all available replies meeting this frequency and the minimum game count, regardless of evaluation. The strongest defense is always selected. The total move budget and analysis failures can still leave gaps.</p>
+        <label className="flex gap-2 text-xs text-text-secondary"><input type="checkbox" checked={settings.adaptiveOpponentDepth}
+          onChange={e => update('adaptiveOpponentDepth', e.target.checked)} />Shorten rare opponent branches</label>
+        <p className="text-[11px] text-text-muted">Additional replies below this frequency end up to two moves earlier, including your next answer when the current depth limit allows. Common replies and the strongest defense keep the current branch depth. Missing human data does not shorten lines.</p>
+      </div>}
       <label className={labelClass}>Target move number
         <input className={inputClass} type="number" min="1" max="40" value={settings.maxMoveNumber} onChange={e => update('maxMoveNumber', e.target.valueAsNumber)} />
       </label>

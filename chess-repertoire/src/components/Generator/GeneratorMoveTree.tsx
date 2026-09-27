@@ -90,7 +90,7 @@ const TreeNodeRow: React.FC<{
           {moveLabel}
         </span>
 
-        {node.endReason && !["target", "terminal", "repetition"].includes(node.endReason) && <span className="text-accent-amber text-[9px]">unfinished</span>}
+        {node.endReason && !["target", "adaptive-depth", "terminal", "repetition"].includes(node.endReason) && <span className="text-accent-amber text-[9px]">unfinished</span>}
         {/* Eval */}
         {evalStr && (
           <span className="text-[9px] text-text-muted ml-auto">{evalStr}</span>

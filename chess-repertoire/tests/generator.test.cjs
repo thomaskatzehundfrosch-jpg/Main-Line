@@ -199,3 +199,54 @@ test('failed reply verification cannot claim coverage for branches that were not
   assert.equal(progress.averageResponseCoverage, 0);
   assert.equal(progress.outcome, 'partial');
 });
+
+
+test('frequency threshold overrides both coverage and reply caps, including equality', () => {
+  const popular = [{ uci: 'best', playRate: 90 }, { uci: 'common', playRate: 5 }, { uci: 'rare', playRate: 4 }];
+  assert.deepEqual(selectOpponentReplies(popular, popular[0], .7, 1, 5).map(m => m.uci), ['best', 'common']);
+  const many = Array.from({ length: 10 }, (_, i) => ({ uci: String(i), playRate: 10 }));
+  assert.equal(selectOpponentReplies(many, many[0], .7, 3, 5).length, 10);
+});
+test('opponent frequency settings normalize missing and out-of-range values', () => {
+  assert.equal(normalizeGeneratorSettings({ ...defaults, opponentMinPlayRate: undefined }).opponentMinPlayRate, 5);
+  assert.equal(normalizeGeneratorSettings({ ...defaults, opponentMinPlayRate: 0 }).opponentMinPlayRate, 1);
+  assert.equal(normalizeGeneratorSettings({ ...defaults, opponentMinPlayRate: 101 }).opponentMinPlayRate, 100);
+});
+test('frequent inferior opponent replies survive the evaluation guard for either color', async () => {
+  for (const color of ['white', 'black']) {
+    const position = new Chess(); if (color === 'white') position.move('e4');
+    const moves = position.moves({ verbose: true });
+    const root = await buildTree(color === 'white' ? [['e4']] : null,
+      { ...defaults, color, analysisMode: 'lichess+stockfish', maxEvalLoss: 0 }, {}, { current: false }, dummyWorker, services({
+        replies: async fen => fen === position.fen() ? moves.slice(0, 5).map((m, i) => ({ san: m.san, uci: uci(m), totalGames: 100, playRate: i === 0 ? 80 : 5, winRate: 50, lossRate: 30, drawRate: 20, averageRating: null })) : [],
+        analyze: async (_w, _fen, depth) => ({ score: color === 'white' ? 100 : -100, depth }),
+      }));
+    const parent = color === 'white' ? root.children[0] : root;
+    assert.equal(parent.children.length, 5);
+    assert.ok(parent.children.some(n => n.uci === uci(moves[4])));
+  }
+});
+test('adaptive depth shortens only rare additional replies and can be disabled', async () => {
+  const start = new Chess(); start.move('e4');
+  for (const adaptive of [true, false]) {
+    const root = await buildTree([['e4']], { ...defaults, analysisMode: 'lichess+stockfish', studySize: 'broad', maxMoveNumber: 4, opponentMinPlayRate: 10, adaptiveOpponentDepth: adaptive }, {}, { current: false }, dummyWorker, services({
+      topMoves: async (_w, fen, depth) => {
+        const chess = new Chess(fen);
+        const move = fen === start.fen() ? chess.moves({ verbose: true }).find(m => m.san === 'e5') : chess.moves({ verbose: true })[0];
+        return [{ uci: uci(move), eval: 0, depth }];
+      },
+      replies: async fen => fen === start.fen() ? ['e5', 'c5', 'e6'].map((san, i) => {
+        const chess = new Chess(fen); const move = chess.move(san);
+        return { san, uci: uci(move), totalGames: 100, playRate: [5, 85, 5][i], winRate: 50, lossRate: 30, drawRate: 20, averageRating: null };
+      }) : [],
+    }));
+    const branches = root.children[0].children;
+    for (const san of ['e5', 'c5', 'e6']) {
+      const branch = branches.find(n => n.san === san);
+      assert.ok(branch, san);
+      const expected = adaptive && san === 'e6' ? 4 : 8;
+      assert.equal(Math.max(...walk(branch).map(n => n.depth)), expected, san);
+      if (adaptive && san === 'e6') assert.ok(walk(branch).some(n => n.endReason === 'adaptive-depth'));
+    }
+  }
+});
