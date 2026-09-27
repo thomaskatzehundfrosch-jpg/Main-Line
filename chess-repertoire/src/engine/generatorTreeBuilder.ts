@@ -19,7 +19,7 @@ import {
 } from './analyzer';
 import { getMaiaMoves } from '../utils/maiaApi';
 import type { MaiaLevel } from '../utils/maiaApi';
-import { getMostPlayedMoves, getLichessMoveCounts } from '../utils/lichessApi';
+import { getMostPlayedMoves, getMostLikelyMoves } from '../utils/lichessApi';
 
 const DEFAULT_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const MAX_OUR_MOVE_DROP_FROM_BEST = 0.75;
@@ -168,16 +168,16 @@ function allowsImmediateQueenTrade(fromFen: string, san: string): boolean {
     const moveResult = chess.move(san);
     if (!moveResult) return false;
 
-    // If the move itself reaches a position without both queens, treat it as
-    // queen-trade territory and prefer any sound alternative.
-    if (!bothQueensPresent(chess)) return true;
+    // A real immediate trade removes both queens. Do not classify a move that
+    // merely wins or sacrifices one queen as a queen trade.
+    if (!hasQueen(chess, 'w') && !hasQueen(chess, 'b')) return true;
 
     const replies = chess.moves({ verbose: true });
     for (const reply of replies) {
       const afterReply = new Chess(chess.fen());
       const replyResult = afterReply.move(reply);
       if (!replyResult) continue;
-      if (!bothQueensPresent(afterReply)) return true;
+      if (!hasQueen(afterReply, 'w') && !hasQueen(afterReply, 'b')) return true;
     }
 
     return false;
@@ -708,7 +708,9 @@ export async function buildTree(
         const lichessRequestCount = isOurTurn
           ? Math.max(approvalTarget * 4, 8)
           : targetPV * 2;
-        const lichessMoves = await getMostPlayedMoves(fen, settings, logError, lichessRequestCount);
+        const lichessMoves = isOurTurn
+          ? await getMostPlayedMoves(fen, settings, logError, lichessRequestCount)
+          : await getMostLikelyMoves(fen, settings, logError, lichessRequestCount);
         apiCalls++;
         for (const lm of lichessMoves) {
           lichessCandidates.push({
@@ -810,26 +812,11 @@ export async function buildTree(
           }
         }
       } else {
-        // Opponent moves: SF ordering enriched with Lichess stats
-        const lichessMap: Record<string, MoveCandidate> = {};
-        for (const lc of lichessCandidates) lichessMap[lc.san] = lc;
-
-        for (const sc of sfCandidates) {
-          const lMatch = lichessMap[sc.san];
-          candidates.push({
-            san: sc.san,
-            uci: sc.uci,
-            _sfEval: sc._sfEval,
-            _sfDepth: sc._sfDepth,
-            _lichess: lMatch ? lMatch._lichess : null,
-          });
-        }
-        // Add popular Lichess moves not covered by SF
-        const sfSans = new Set(sfCandidates.map((c) => c.san));
-        for (const lc of lichessCandidates) {
-          if (candidates.length >= targetPV) break;
-          if (!sfSans.has(lc.san)) candidates.push(lc);
-        }
+        // Opponent moves: actual human play frequency is the primary order.
+        // Stockfish still evaluates every candidate below, and supplies a
+        // fallback when Explorer has too little data.
+        for (const lc of lichessCandidates) addOrMergeCandidate(candidates, lc);
+        for (const sc of sfCandidates) addOrMergeCandidate(candidates, sc);
       }
     } else {
       candidates = sfCandidates;
@@ -1007,43 +994,70 @@ export async function buildTree(
           if (!mvT) continue;
           const resultFen = chessT.fen();
 
-          // SF MultiPV: get evals for the opponent's top moves
-          const oppTopMoves = await getTopMoves(sfWorker, resultFen, trickynessDepth, 5);
-
-          // Lichess counts: frequency-weight each move so a mistake 40% of
-          // players make counts far more than one only 2% attempt.
-          // Falls back to uniform weights (1 per move) if the call fails.
-          let lichessCounts = new Map<string, number>();
+          // Measure the replies humans are actually likely to choose, rather
+          // than only Stockfish's top five replies.
+          let likelyReplies: Awaited<ReturnType<typeof getMostLikelyMoves>> = [];
           if (gatherUseLichess) {
             try {
-              lichessCounts = await getLichessMoveCounts(resultFen, settings, logError);
+              likelyReplies = await getMostLikelyMoves(resultFen, settings, logError, 8);
               apiCalls++;
             } catch {
-              // non-fatal — uniform weights used below
+              // Non-fatal: use engine replies as a fallback below.
             }
           }
 
-          const oppCandidates: MoveCandidate[] = oppTopMoves
-            .filter((m) => m.eval != null)
-            .map((m) => {
-              const san = uciToSan(resultFen, m.uci) ?? m.uci;
-              const games = lichessCounts.get(san) ?? 0;
-              return {
-                san,
-                uci: m.uci,
-                _sfEval: m.eval,
-                // Only attach lichess stats when we have a real game count;
-                // computeOpponentErrorRate falls back to uniform weight otherwise
-                _lichess: games > 0
-                  ? { totalGames: games, winRate: 0, lossRate: 0, drawRate: 0, averageRating: null }
-                  : null,
-              };
+          const oppCandidates: MoveCandidate[] = [];
+          for (const reply of likelyReplies) {
+            const afterReply = makeMove(resultFen, reply.san);
+            if (!afterReply) continue;
+            const replyEval = await analyzePosition(sfWorker, afterReply, trickynessDepth);
+            oppCandidates.push({
+              san: reply.san,
+              uci: reply.uci,
+              _sfEval: replyEval.score / 100,
+              _sfDepth: replyEval.depth,
+              _lichess: {
+                totalGames: reply.totalGames,
+                winRate: reply.winRate,
+                lossRate: reply.lossRate,
+                drawRate: reply.drawRate,
+                averageRating: reply.averageRating,
+              },
             });
+          }
+
+          // Always include the engine's best response as the zero-error
+          // reference. If humans rarely play it, its fallback weight of one is
+          // negligible beside real game counts but its eval anchors the test.
+          const bestReply = await getTopMoves(sfWorker, resultFen, trickynessDepth, 1);
+          for (const move of bestReply) {
+            if (move.eval == null) continue;
+            addOrMergeCandidate(oppCandidates, {
+              san: uciToSan(resultFen, move.uci) ?? move.uci,
+              uci: move.uci,
+              _sfEval: move.eval,
+              _sfDepth: move.depth,
+            });
+          }
+
+          // If Explorer is unavailable, retain the previous engine-only fallback.
+          if (oppCandidates.length < 2) {
+            const oppTopMoves = await getTopMoves(sfWorker, resultFen, trickynessDepth, 5);
+            for (const move of oppTopMoves) {
+              if (move.eval == null) continue;
+              addOrMergeCandidate(oppCandidates, {
+                san: uciToSan(resultFen, move.uci) ?? move.uci,
+                uci: move.uci,
+                _sfEval: move.eval,
+                _sfDepth: move.depth,
+              });
+            }
+          }
 
           const errorRate = computeOpponentErrorRate(oppCandidates, opponentIsBlack);
           candidate._trickynessErrorRate = errorRate;
           if (errorRate !== null) {
-            const weighted = lichessCounts.size > 0 ? ' (freq-weighted)' : ' (uniform)';
+            const weighted = likelyReplies.length > 0 ? ' (human-frequency weighted)' : ' (engine fallback)';
             logError(
               'info',
               `Trickyness: ${candidate.san} → opponent error rate ${(errorRate * 100).toFixed(0)}%${weighted}`
@@ -1242,7 +1256,7 @@ export async function buildTree(
     }
 
     // Smart filtering: reduce opponent responses when one move is clearly dominant
-    if (!item.isOurTurn && settings.smartFiltering && useStockfish && candidates.length > 1) {
+    if (!item.isOurTurn && settings.smartFiltering && useStockfish && !useLichess && candidates.length > 1) {
       const opponentIsBlack = color === 'white';
       const { filtered, reason } = selectSignificantMoves(
         candidates,

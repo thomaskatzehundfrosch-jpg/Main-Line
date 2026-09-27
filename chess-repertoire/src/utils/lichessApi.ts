@@ -364,6 +364,38 @@ export async function getMostPlayedMoves(
 }
 
 /**
+ * Get moves ordered strictly by how often opponents actually play them.
+ * Unlike getMostPlayedMoves, this deliberately applies no win-rate or
+ * repertoire-colour quality bias.
+ */
+export async function getMostLikelyMoves(
+  fen: string,
+  settings: GeneratorSettings,
+  logError: LogFn,
+  maxMoves: number = 5
+): Promise<LichessMove[]> {
+  const data = await fetchLichess(fen, settings, logError);
+  const moves = [...(data.moves || [])].sort((a, b) => totalGames(b) - totalGames(a));
+  const totalGamesInPosition = moves.reduce((sum, move) => sum + totalGames(move), 0);
+  const color = settings.color || 'white';
+
+  return moves.slice(0, maxMoves).flatMap((move) => {
+    const total = totalGames(move);
+    if (total <= 0) return [];
+    return [{
+      san: move.san,
+      uci: move.uci,
+      totalGames: total,
+      playRate: totalGamesInPosition > 0 ? (total / totalGamesInPosition) * 100 : 0,
+      winRate: winRate(move, color),
+      lossRate: lossRate(move, color),
+      drawRate: drawRate(move),
+      averageRating: move.averageRating || null,
+    }];
+  });
+}
+
+/**
  * Fetch raw game-count data for all moves in a position, keyed by SAN.
  * Used by the trickyness system to frequency-weight opponent error rates:
  * a mistake that 40% of players make is far more relevant than one only
