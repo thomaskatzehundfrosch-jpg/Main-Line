@@ -4,6 +4,7 @@
  */
 
 import type { GeneratorSettings, GeneratorLichessStats } from '../types/generator';
+import { abortableDelay, abortError } from './generatorCancellation';
 import { getStoredToken } from './lichessAuth';
 
 /** Timestamp of last successful request start (for throttling). */
@@ -157,6 +158,9 @@ interface LichessMoveEntry {
 }
 
 interface LichessApiResponse {
+  white?: number;
+  black?: number;
+  draws?: number;
   moves: LichessMoveEntry[];
 }
 
@@ -205,29 +209,32 @@ async function fetchLichess(
   fen: string,
   settings: GeneratorSettings,
   logError: LogFn,
-  attempt: number = 1
+  attempt: number = 1,
+  signal?: AbortSignal
 ): Promise<LichessApiResponse> {
-  await throttle();
+  if (signal?.aborted) throw abortError();
+  await abortableDelay(Math.max(0, THROTTLE_MS - (Date.now() - _lastRequestTime)), signal);
+  _lastRequestTime = Date.now();
 
   try {
     const url = buildLichessUrl(fen, settings);
     const token = getStoredToken();
     if (!token) {
       throw new Error(
-        'Lichess Opening Explorer now requires authentication. Connect your Lichess account before using Lichess + SF generation.'
+        'Lichess Opening Explorer requires authentication (not retrying). Connect your Lichess account before using Lichess + SF generation.'
       );
     }
     const headers: Record<string, string> = { 'Accept': 'application/json' };
     headers['Authorization'] = `Bearer ${token}`;
     logError('info', `Lichess request (attempt ${attempt}): ${url}`);
-    const res = await fetch(url, { headers });
+    const res = await fetch(url, { headers, signal });
 
     if (res.status === 429) {
       if (attempt <= MAX_RETRIES) {
         const backoff = 3000 * Math.pow(2, attempt - 1);
         logError('warning', `Lichess rate limited (429). Waiting ${backoff / 1000}s before retry ${attempt}/${MAX_RETRIES}...`);
-        await delay(backoff);
-        return fetchLichess(fen, settings, logError, attempt + 1);
+        await abortableDelay(backoff, signal);
+        return fetchLichess(fen, settings, logError, attempt + 1, signal);
       }
       throw new Error(`Lichess API rate limited after ${MAX_RETRIES} retries`);
     }
@@ -255,14 +262,15 @@ async function fetchLichess(
 
     return data as LichessApiResponse;
   } catch (err: any) {
+    if (signal?.aborted || err.name === 'AbortError') throw abortError();
     const isNonRetryable =
       err.message.includes('rate limited after') ||
       err.message.includes('not retrying');
     if (attempt <= MAX_RETRIES && !isNonRetryable) {
       const retryDelay = 3000 * Math.pow(2, attempt - 1);
       logError('warning', `Lichess request failed (attempt ${attempt}/${MAX_RETRIES}): ${err.message}. Retrying in ${retryDelay / 1000}s...`);
-      await delay(retryDelay);
-      return fetchLichess(fen, settings, logError, attempt + 1);
+      await abortableDelay(retryDelay, signal);
+      return fetchLichess(fen, settings, logError, attempt + 1, signal);
     }
     logError('error', `Lichess API failed after ${attempt} attempts: ${err.message}`);
     throw err;
@@ -372,11 +380,12 @@ export async function getMostLikelyMoves(
   fen: string,
   settings: GeneratorSettings,
   logError: LogFn,
-  maxMoves: number = 5
+  maxMoves: number = 5,
+  signal?: AbortSignal
 ): Promise<LichessMove[]> {
-  const data = await fetchLichess(fen, settings, logError);
+  const data = await fetchLichess(fen, settings, logError, 1, signal);
   const moves = [...(data.moves || [])].sort((a, b) => totalGames(b) - totalGames(a));
-  const totalGamesInPosition = moves.reduce((sum, move) => sum + totalGames(move), 0);
+  const totalGamesInPosition = (data.white ?? 0) + (data.black ?? 0) + (data.draws ?? 0) || moves.reduce((sum, move) => sum + totalGames(move), 0);
   const color = settings.color || 'white';
 
   return moves.slice(0, maxMoves).flatMap((move) => {

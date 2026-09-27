@@ -3,13 +3,16 @@
  * Also supports manual tree building by playing moves on the board.
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import type {
   GeneratorNode,
   GeneratorSettings,
   GeneratorProgress,
   GeneratorLogEntry,
 } from '../types/generator';
+import { STUDY_SIZES } from '../types/generator';
+import { buildSeedTree } from '../utils/generatorSeeds';
+import { createAnalysisWorker } from '../engine/analyzer';
 import { buildTree } from '../engine/generatorTreeBuilder';
 
 /* ------------------------------------------------------------------ */
@@ -77,6 +80,7 @@ function createRootNode(color: 'white' | 'black'): GeneratorNode {
     cappedByMoveLimit: false,
     children: [],
     isRoot: true,
+    repertoireColor: color,
   };
 }
 
@@ -120,6 +124,7 @@ export interface UseGeneratorReturn {
   goToRoot: () => void;
   deleteSelected: () => void;
   getSeeds: () => string[][];
+  loadSeeds: (seeds: string[][], color: 'white' | 'black') => void;
 }
 
 const INITIAL_PROGRESS: GeneratorProgress = {
@@ -143,6 +148,12 @@ export function useGenerator(): UseGeneratorReturn {
   const [errorLog, setErrorLog] = useState<GeneratorLogEntry[]>([]);
   const [latestNode, setLatestNode] = useState<GeneratorNode | null>(null);
   const stopRef = useRef(false);
+  const runRef = useRef<{ controller: AbortController; stop: { current: boolean; signal: AbortSignal }; worker: Worker | null } | null>(null);
+  useEffect(() => () => {
+    const run = runRef.current;
+    runRef.current = null;
+    if (run) { run.stop.current = true; run.controller.abort(); run.worker?.terminate(); }
+  }, []);
 
   // Wrapped setters that also update the module-level cache
   const setTree = useCallback((val: GeneratorNode | null | ((prev: GeneratorNode | null) => GeneratorNode | null)) => {
@@ -166,76 +177,90 @@ export function useGenerator(): UseGeneratorReturn {
   }, []);
 
   const startGeneration = useCallback(
-    (
-      settings: GeneratorSettings,
-      pgnSeeds: string[][] | null,
-      sfWorker: Worker | null,
-      onComplete?: (finalRoot: GeneratorNode) => void,
-      onError?: (error: Error) => void
-    ) => {
+    (settings: GeneratorSettings, pgnSeeds: string[][] | null, sfWorker: Worker | null,
+      onComplete?: (root: GeneratorNode) => void, onError?: (error: Error) => void) => {
+      // Every run owns its cancellation state and dedicated worker. Old results cannot
+      // write into a later run, even if a promise completes after cancellation.
+      if (runRef.current) {
+        runRef.current.stop.current = true;
+        runRef.current.controller.abort();
+        runRef.current.worker?.terminate();
+      }
+      const controller = new AbortController();
+      const run = { controller, stop: { current: false, signal: controller.signal }, worker: sfWorker };
+      runRef.current = run;
       stopRef.current = false;
       setIsGenerating(true);
       setErrorLog([]);
-      setProgress({
-        nodes: 0,
-        maxNodes: settings.maxNodes || 300,
-        status: 'Starting...',
-        apiCalls: 0,
-      });
-      setTree(null);
-      setSelectedNode(null);
+      setProgress({ nodes: 0, maxNodes: STUDY_SIZES[settings.studySize].maxNodes, status: 'Starting…', apiCalls: 0, outcome: 'running' });
       setLatestNode(null);
-
-      const callbacks = {
-        onNodeAdded: (updatedRoot: GeneratorNode) => {
-          setTree(updatedRoot);
-        },
-        onNewNode: (node: GeneratorNode) => {
-          setLatestNode(node);
-        },
-        onLog: (entry: GeneratorLogEntry) => {
-          addLogEntry(entry);
-        },
-        onProgress: (prog: GeneratorProgress) => {
-          setProgress(prog);
-        },
-        onComplete: (finalRoot: GeneratorNode) => {
-          const wasStopped = stopRef.current;
-          setTree(finalRoot);
+      const isCurrent = () => runRef.current === run;
+      const execute = async () => {
+        const worker = sfWorker ?? await createAnalysisWorker(1);
+        run.worker = worker;
+        if (!isCurrent() || run.stop.current) { worker.terminate(); throw new DOMException('Generation stopped', 'AbortError'); }
+        return buildTree(pgnSeeds, settings, {
+        onNodeAdded: root => { if (isCurrent()) setTree(root); },
+        onNewNode: node => { if (isCurrent()) setLatestNode(node); },
+        onLog: entry => { if (isCurrent()) addLogEntry(entry); },
+        onProgress: value => { if (isCurrent()) setProgress(value); },
+        onComplete: root => {
+          if (!isCurrent()) return;
+          setTree(root);
+          setSelectedNode(root);
+          setLatestNode(null);
           setIsGenerating(false);
-          if (!wasStopped) onComplete?.(finalRoot);
+          if (!run.stop.current) onComplete?.(root);
         },
+        }, run.stop, worker);
       };
-
-      buildTree(pgnSeeds, settings, callbacks, stopRef, sfWorker).catch((err: any) => {
-        const error = err instanceof Error ? err : new Error(String(err?.message ?? err));
-        addLogEntry({
-          id: `log_error_${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-          level: 'error',
-          message: `Tree building failed: ${error.message}`,
-          context: null,
-        });
+      execute().catch((cause: unknown) => {
+        if (!isCurrent()) return;
+        if (run.stop.current) {
+          setIsGenerating(false);
+          setProgress(prev => ({ ...prev, status: 'Stopped — current moves preserved', outcome: 'stopped' }));
+          return;
+        }
+        const error = cause instanceof Error ? cause : new Error(String(cause));
+        addLogEntry({ id: `error_${Date.now()}`, timestamp: new Date().toLocaleTimeString(), level: 'error', message: error.message, context: null });
+        setProgress(prev => ({ ...prev, status: `Failed: ${error.message}`, outcome: 'failed' }));
         setIsGenerating(false);
         onError?.(error);
+      }).finally(() => {
+        run.worker?.terminate();
+        if (isCurrent()) runRef.current = null;
       });
-    },
-    [addLogEntry]
+    }, [addLogEntry, setTree, setSelectedNode]
   );
 
   const stopGeneration = useCallback(() => {
     stopRef.current = true;
-    setIsGenerating(false);
-    addLogEntry({
-      id: `log_stop_${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-      level: 'info',
-      message: 'Generation stopped by user.',
-      context: null,
-    });
-  }, [addLogEntry]);
+    const run = runRef.current;
+    if (!run) return;
+    run.stop.current = true;
+    run.controller.abort();
+    run.worker?.terminate();
+    // Keep editing disabled until the builder publishes its final stopped snapshot.
+    setProgress(prev => ({ ...prev, status: 'Stopping…' }));
+    if (!run.worker) {
+      runRef.current = null;
+      setIsGenerating(false);
+      setProgress(prev => ({ ...prev, status: 'Stopped before analysis started', outcome: 'stopped' }));
+    }
+  }, []);
+
+  const loadSeeds = useCallback((seeds: string[][], color: 'white' | 'black') => {
+    if (runRef.current) return;
+    const root = buildSeedTree(seeds, color);
+    setTree(root);
+    setSelectedNode(root);
+    setLatestNode(null);
+    setErrorLog([]);
+    setProgress(INITIAL_PROGRESS);
+  }, [setTree, setSelectedNode]);
 
   const clearTree = useCallback(() => {
+    if (runRef.current) return;
     _cachedTree = null;
     _cachedSelectedNodeId = null;
     setTree(null);
@@ -251,6 +276,7 @@ export function useGenerator(): UseGeneratorReturn {
 
   const addManualMove = useCallback(
     (san: string, uci: string, newFen: string, color: 'white' | 'black'): boolean => {
+      if (runRef.current) return false;
       let currentTree = tree;
       let currentSelected = selectedNode;
 
@@ -300,7 +326,10 @@ export function useGenerator(): UseGeneratorReturn {
       const parentInClone = findNodeInTree(cloned, currentSelected.id);
       if (!parentInClone) return false;
 
+      setProgress(INITIAL_PROGRESS);
       parentInClone.children.push(newNode);
+      delete parentInClone.endReason;
+      parentInClone.cappedByMoveLimit = false;
       setTree(cloned);
 
       const added = findNodeInTree(cloned, newNode.id);
@@ -330,7 +359,7 @@ export function useGenerator(): UseGeneratorReturn {
   }, [tree]);
 
   const deleteSelected = useCallback(() => {
-    if (!tree || !selectedNode || selectedNode.isRoot) return;
+    if (runRef.current || !tree || !selectedNode || selectedNode.isRoot) return;
     const parent = findParentInTree(tree, selectedNode.id);
     if (!parent) return;
 
@@ -341,6 +370,10 @@ export function useGenerator(): UseGeneratorReturn {
     parentInClone.children = parentInClone.children.filter(
       (c) => c.id !== selectedNode.id
     );
+    if (parentInClone.children.length) parentInClone.children[0].isMainLine = true;
+    delete parentInClone.endReason;
+    delete parentInClone.responseCoverage;
+    setProgress(INITIAL_PROGRESS);
     setTree(cloned);
     setSelectedNode(parentInClone);
   }, [tree, selectedNode]);
@@ -371,5 +404,6 @@ export function useGenerator(): UseGeneratorReturn {
     goToRoot,
     deleteSelected,
     getSeeds,
+    loadSeeds,
   };
 }

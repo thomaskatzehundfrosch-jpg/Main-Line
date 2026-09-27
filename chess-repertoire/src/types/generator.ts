@@ -1,70 +1,62 @@
-/**
- * Types for the auto-repertoire generator.
- */
-
+/** Settings and results for repertoire continuation generation. */
 export type AnalysisMode = 'stockfish' | 'lichess+stockfish';
-export type RepertoireStyle = 'aggressive' | 'solid' | 'balanced';
+export type StudySize = 'compact' | 'standard' | 'broad';
 
-/** Settings controlling repertoire generation. */
 export interface GeneratorSettings {
   color: 'white' | 'black';
   analysisMode: AnalysisMode;
-  maxMoveNumber: number;          // stop expanding after move N (5–40); also drives tree depth (plies = N*2)
-  depthDecay: boolean;            // reduce depth for sidelines by 4 plies
-  maxBranchesOur: number;         // top N of our candidate moves (1–3)
-  maxOpponentResponses: number;   // top N opponent responses (1–3)
-  adaptiveBranching: boolean;     // adjust opponent response count by branch likelihood
-  adaptiveBranchingLikelyExtraResponses: number; // extra opponent responses in likely/main branches
-  maxNodes: number;               // total node limit (10–2000)
-  sfDepth: number;                // Stockfish depth for individual position evaluations
-  candidateDepth: number;         // Stockfish MultiPV depth for move discovery
-  trickynessDepth: number;        // Stockfish MultiPV depth for trickyness checks
-  /** Extra moves past maxMoveNumber allowed in tactical positions (captures/check). 0 = disabled. */
+  maxMoveNumber: number;
+  studySize: StudySize;
+  /** One depth for discovery and verification. Generator analysis is local. */
+  sfDepth: number;
+  /** Maximum loss in pawns relative to the best verified candidate. */
+  maxEvalLoss: number;
   tacticalExtension: number;
-  evalThreshold: number;          // min acceptable eval for our moves (pawns)
-  avoidQueenTrades: boolean;      // avoid our moves that enter or allow immediate queen trades when alternatives meet the eval threshold
-  flagDangerousResponses: boolean;
-  smartFiltering: boolean;         // skip weak opponent responses when eval gap is large
-  /**
-   * Continuous style bias on a −2 … +2 integer scale.
-   *   −2 = very aggressive (loosest eval threshold, prefers high win-rate / sharp lines)
-   *   −1 = aggressive
-   *    0 = balanced  (engine-first, no bias)
-   *   +1 = solid
-   *   +2 = very solid (strictest eval threshold, minimises losing chances)
-   */
-  styleValue: number;
-  // Lichess settings
-  useMasters: boolean;            // use /masters endpoint instead of /lichess
-  ratingMin: number;              // 1000–2500
-  ratingMax: number;              // 1000–2500
-  speeds: string[];               // 'bullet'|'blitz'|'rapid'|'classical'
-  minGames: number;               // min Lichess games per move
-  minWinRate: number;             // min win rate (%) for our moves in Lichess mode (0–60)
-  lichessToken: string;           // optional Lichess personal API token (for auth)
-  // Maia settings
-  maiaLevel: 1100 | 1300 | 1500 | 1700 | 1900 | 2100; // target human skill level
-  maiaApiUrl: string;             // Maia API endpoint (default: maiachess.com)
-  maiaSfMaxDrop: number;          // max eval drop vs SF best (pawns) in Maia+SF mode
-  // Trickyness settings
-  /**
-   * How strongly to prefer moves that put the opponent in tricky positions.
-   * Measured as the weighted fraction of opponent play that falls ≥0.5 pawns
-   * below the best response (opponent error rate), computed via Stockfish MultiPV.
-   *   0 = disabled (no trickyness preference)
-   *   1 = subtle bonus for tricky positions
-   *   5 = maximum — may surface lower-eval moves if they're trickier
-   */
-  trickynessWeight: number;       // 0–5
+  avoidQueenTrades: boolean;
+  useMasters: boolean;
+  ratingMin: number;
+  ratingMax: number;
+  speeds: string[];
+  minGames: number;
 }
 
-/** Stockfish evaluation attached to a generator node. */
-export interface GeneratorSfEval {
-  eval: number | null;  // pawns from White's perspective
-  depth: number;
+export const STUDY_SIZES = {
+  compact: { maxNodes: 150, coverage: 0.7, maxReplies: 3 },
+  standard: { maxNodes: 500, coverage: 0.85, maxReplies: 5 },
+  broad: { maxNodes: 1200, coverage: 0.95, maxReplies: 8 },
+} as const;
+
+export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
+  color: 'white', analysisMode: 'lichess+stockfish', maxMoveNumber: 15,
+  studySize: 'standard', sfDepth: 16, maxEvalLoss: 0.3,
+  tacticalExtension: 2, avoidQueenTrades: false,
+  useMasters: true, ratingMin: 1600, ratingMax: 2500,
+  speeds: ['blitz', 'rapid', 'classical'], minGames: 10,
+};
+
+export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorSettings {
+  const number = (value: number, fallback: number, min: number, max: number) =>
+    Math.min(max, Math.max(min, Number.isFinite(value) ? value : fallback));
+  const min = number(input.ratingMin, 1600, 1000, 2500);
+  const max = number(input.ratingMax, 2500, 1000, 2500);
+  const speeds = [...new Set(input.speeds.filter(s => ['bullet', 'blitz', 'rapid', 'classical'].includes(s)))];
+  return {
+    ...input,
+    color: input.color === 'black' ? 'black' : 'white',
+    analysisMode: input.analysisMode === 'stockfish' ? 'stockfish' : 'lichess+stockfish',
+    studySize: input.studySize in STUDY_SIZES ? input.studySize : 'standard',
+    maxMoveNumber: Math.round(number(input.maxMoveNumber, 15, 1, 40)),
+    sfDepth: Math.round(number(input.sfDepth, 16, 8, 25)),
+    maxEvalLoss: number(input.maxEvalLoss, 0.3, 0, 1),
+    tacticalExtension: Math.round(number(input.tacticalExtension, 2, 0, 4)),
+    minGames: Math.round(number(input.minGames, 10, 1, 10000)),
+    ratingMin: Math.min(min, max), ratingMax: Math.max(min, max),
+    speeds: speeds.length ? speeds : ['rapid'],
+  };
 }
 
-/** Lichess statistics attached to a generator node. */
+export interface GeneratorSfEval { eval: number | null; depth: number; }
+/** Win/loss rates are from the repertoire side's perspective. */
 export interface GeneratorLichessStats {
   totalGames: number;
   winRate: number;
@@ -72,8 +64,13 @@ export interface GeneratorLichessStats {
   drawRate: number;
   averageRating: number | null;
 }
-
-/** A node in the generator's tree (intermediate, maps to TreeNode for import). */
+export type GeneratorEndReason = 'target' | 'terminal' | 'repetition' | 'budget' | 'stopped' | 'analysis-failed' | 'extension-limit';
+export const END_REASON_LABELS: Record<GeneratorEndReason, string> = {
+  repetition: 'Repeated position — line ends here',
+  target: 'Target length reached', terminal: 'Game over', budget: 'Study budget reached — continuation unfinished',
+  stopped: 'Stopped — continuation unfinished', 'analysis-failed': 'Analysis failed — continuation unfinished',
+  'extension-limit': 'Tactical extension limit reached — review this position',
+};
 export interface GeneratorNode {
   id: string;
   san: string | null;
@@ -90,17 +87,26 @@ export interface GeneratorNode {
   lichess: GeneratorLichessStats | null;
   isRoot?: boolean;
   isSeed?: boolean;
+  reason?: string;
+  warning?: string;
+  endReason?: GeneratorEndReason;
+  /** At opponent positions, fraction of database games covered by the children. */
+  responseCoverage?: number;
+  coverageLimited?: boolean;
+  repertoireColor?: 'white' | 'black';
 }
-
-/** Progress tracking during generation. */
 export interface GeneratorProgress {
   nodes: number;
   maxNodes: number;
   status: string;
   apiCalls: number;
+  outcome?: 'running' | 'complete' | 'partial' | 'stopped' | 'failed';
+  unfinished?: number;
+  /** Mean local reply coverage, not whole-repertoire probability. */
+  averageResponseCoverage?: number;
+  coveragePositions?: number;
+  coverageGaps?: number;
 }
-
-/** A single log entry from the generator. */
 export interface GeneratorLogEntry {
   id: string;
   timestamp: string;
@@ -108,67 +114,10 @@ export interface GeneratorLogEntry {
   message: string;
   context: string | null;
 }
-
-/** Callbacks passed to the tree builder. */
 export interface GeneratorCallbacks {
   onNodeAdded?: (root: GeneratorNode) => void;
-  /** Fired with a shallow copy of each newly-created node (no children).
-   *  Used for live board animation: the node carries the FEN and UCI of the
-   *  move just played so the board can animate to it immediately. */
   onNewNode?: (node: GeneratorNode) => void;
   onLog?: (entry: GeneratorLogEntry) => void;
   onProgress?: (progress: GeneratorProgress) => void;
   onComplete?: (root: GeneratorNode) => void;
 }
-
-/** Maia move prediction attached to a candidate. */
-export interface GeneratorMaiaStats {
-  probability: number; // 0–1, predicted probability from Maia
-}
-
-/** A move candidate from Stockfish, Lichess, and/or Maia. */
-export interface MoveCandidate {
-  san: string;
-  uci: string;
-  _sfEval?: number | null;
-  _sfDepth?: number;
-  _lichess?: GeneratorLichessStats | null;
-  _maia?: GeneratorMaiaStats | null;
-  /** Fraction of opponent play (0–1) that falls ≥0.5 pawns below the best
-   *  response in the position reached after this move. Computed on-demand
-   *  when trickynessWeight > 0. */
-  _trickynessErrorRate?: number | null;
-}
-
-/** Default generator settings. */
-export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
-  color: 'white',
-  analysisMode: 'lichess+stockfish',
-  maxMoveNumber: 15,
-  depthDecay: false,
-  maxBranchesOur: 1,
-  maxOpponentResponses: 1,
-  adaptiveBranching: true,
-  adaptiveBranchingLikelyExtraResponses: 2,
-  maxNodes: 500,
-  sfDepth: 25,
-  candidateDepth: 15,
-  trickynessDepth: 15,
-  tacticalExtension: 4,
-  evalThreshold: -0.3,
-  avoidQueenTrades: true,
-  flagDangerousResponses: true,
-  smartFiltering: true,
-  styleValue: -1,
-  useMasters: true,
-  ratingMin: 1600,
-  ratingMax: 2500,
-  speeds: ['blitz', 'rapid', 'classical'],
-  minGames: 6,
-  minWinRate: 40,
-  lichessToken: '',
-  maiaLevel: 2100,
-  maiaApiUrl: 'https://maiachess.com/api/maia_move',
-  maiaSfMaxDrop: 1.5,
-  trickynessWeight: 5,
-};

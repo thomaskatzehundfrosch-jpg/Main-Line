@@ -23,13 +23,13 @@ export const GeneratorProgressBar: React.FC<GeneratorProgressProps> = ({
   return (
     <div className="space-y-3">
       {/* Progress Bar */}
-      {(isGenerating || progress.nodes > 0) && (
+      {(isGenerating || progress.nodes > 0 || progress.status) && (
         <div className="panel">
           <div className="p-3">
             <div className="flex justify-between text-[11px] text-text-secondary mb-1.5">
               <span>{progress.status || 'Idle'}</span>
               <span>
-                {progress.nodes}/{progress.maxNodes} nodes ({pct}%)
+                Budget used: {progress.nodes}/{progress.maxNodes} moves
               </span>
             </div>
             <div className="w-full h-1.5 bg-bg-hover rounded-full overflow-hidden">
@@ -38,9 +38,10 @@ export const GeneratorProgressBar: React.FC<GeneratorProgressProps> = ({
                 style={{ width: `${pct}%` }}
               />
             </div>
+            {progress.averageResponseCoverage !== undefined && <p className="text-xs text-text-muted mt-2">Average local reply coverage: {(progress.averageResponseCoverage * 100).toFixed(0)}% across {progress.coveragePositions} positions with data. This is not whole-repertoire coverage.</p>}
             {progress.apiCalls > 0 && (
               <div className="text-[10px] text-text-muted mt-1">
-                {progress.apiCalls} Lichess API call{progress.apiCalls !== 1 ? 's' : ''}
+                {progress.apiCalls} database lookup{progress.apiCalls !== 1 ? 's' : ''}
               </div>
             )}
           </div>
@@ -67,7 +68,7 @@ export const GeneratorProgressBar: React.FC<GeneratorProgressProps> = ({
                   <span className={`flex-shrink-0 uppercase ${levelClass}`}>
                     [{entry.level.substring(0, 4)}]
                   </span>
-                  <span className="text-text-secondary truncate">{entry.message}</span>
+                  <span className="text-text-secondary break-words">{entry.message}</span>
                 </div>
               );
             })}

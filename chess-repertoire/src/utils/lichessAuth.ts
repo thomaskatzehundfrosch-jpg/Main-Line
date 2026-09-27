@@ -44,6 +44,7 @@ export function getStoredUsername(): string | null {
 export function clearStoredToken(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USERNAME_KEY);
+  window.dispatchEvent(new Event('lichess-auth-updated'));
 }
 
 /**

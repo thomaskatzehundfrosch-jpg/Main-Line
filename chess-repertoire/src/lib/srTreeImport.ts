@@ -39,7 +39,7 @@ export function treeToCards(
   existingCards: Card[] = [],
 ): TreeImportResult {
   // Build a set of existing (front, back) pairs for fast dedup
-  const existingByKey = new Map(
+  const existingByKey = new Map<string, Card>(
     existingCards.map((c) => [`${c.front}|||${c.back}`, c] as const),
   );
 

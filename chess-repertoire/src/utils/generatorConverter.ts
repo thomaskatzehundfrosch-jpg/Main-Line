@@ -5,7 +5,7 @@
 import type { TreeNode } from '../types';
 import type { GeneratorNode } from '../types/generator';
 import { generateNodeId, resetNodeIdCounter } from './treeBuilder';
-import { pruneOurTranspositionChoices } from './generatorTreePruner';
+import { END_REASON_LABELS } from '../types/generator';
 
 /**
  * Convert a GeneratorNode tree to a TreeNode tree for import into the main repertoire.
@@ -21,12 +21,13 @@ export function convertToTreeNode(
     resetNodeIdCounter();
   }
 
-  return convertNodeRecursive(pruneOurTranspositionChoices(genNode, color), parentId);
+  return convertNodeRecursive(genNode, parentId, color);
 }
 
 function convertNodeRecursive(
   genNode: GeneratorNode,
-  parentId: string | null
+  parentId: string | null,
+  color: string
 ): TreeNode {
   const id = genNode.isRoot ? generateNodeId() : generateNodeId();
 
@@ -38,7 +39,7 @@ function convertNodeRecursive(
 
   if (genNode.lichess) {
     gameCount = genNode.lichess.totalGames;
-    whiteWins = Math.round(gameCount * (genNode.lichess.winRate / 100));
+    whiteWins = Math.round(gameCount * ((color === 'white' ? genNode.lichess.winRate : genNode.lichess.lossRate) / 100));
     draws = Math.round(gameCount * (genNode.lichess.drawRate / 100));
     blackWins = gameCount - whiteWins - draws;
   }
@@ -63,7 +64,7 @@ function convertNodeRecursive(
 
   // Recursively convert children
   treeNode.children = genNode.children.map((child) =>
-    convertNodeRecursive(child, id)
+    convertNodeRecursive(child, id, color)
   );
 
   return treeNode;
@@ -91,5 +92,8 @@ function buildComment(node: GeneratorNode): string {
     parts.push('⚠ dangerous line');
   }
 
+  if (node.reason) parts.push(node.reason);
+  if (node.warning) parts.push(node.warning);
+  if (node.endReason) parts.push(END_REASON_LABELS[node.endReason]);
   return parts.join(' | ');
 }

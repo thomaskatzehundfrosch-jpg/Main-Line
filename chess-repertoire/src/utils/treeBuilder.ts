@@ -164,7 +164,7 @@ interface ParsedMove {
 
 interface ParsedGame {
   moves?: ParsedMove[];
-  tags?: Record<string, string>;
+  tags?: { Result?: string };
 }
 
 /**

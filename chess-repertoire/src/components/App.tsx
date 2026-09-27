@@ -33,7 +33,6 @@ import { toFigurine } from '../utils/figurineNotation';
 import { ErrorToast } from './ErrorToast';
 import { ErrorLogPanel } from './ErrorLogPanel';
 import { analyzeRepertoire } from '../engine/repertoireAnalyzer';
-import { createAnalysisWorker } from '../engine/analyzer';
 import { MISTAKE_THRESHOLDS } from '../types/game';
 import type { MistakeTier } from '../types/game';
 import type { NodeAnnotation } from '../context/RepertoireEvalContext';
@@ -54,6 +53,7 @@ import {
   type ImportantLineRecommendation,
 } from '../utils/gameGapRecommendations';
 import { getCachedGeneratorSettings } from '../utils/generatorSettingsCache';
+import { END_REASON_LABELS } from '../types/generator';
 import type { GeneratorNode } from '../types/generator';
 
 type SidebarTab = 'analysis' | 'games';
@@ -134,38 +134,27 @@ function buildGeneratedNodeComment(node: GeneratorNode): string {
   if (node.lichess && node.lichess.totalGames > 0) {
     parts.push(`${node.lichess.totalGames} games`);
   }
+  if (node.reason) parts.push(node.reason);
+  if (node.warning) parts.push(node.warning);
+  if (node.endReason) parts.push(END_REASON_LABELS[node.endReason]);
   return parts.join(' | ');
 }
 
-function convertGeneratedChild(node: GeneratorNode, parentId: string | null): TreeNode {
+function convertGeneratedChild(node: GeneratorNode, parentId: string | null, color: 'white' | 'black', original?: TreeNode): TreeNode {
   return {
     id: node.id,
     move: node.san || '',
     fen: node.fen,
-    children: node.children.map((child) => convertGeneratedChild(child, node.id)),
+    children: node.children.map((child) => convertGeneratedChild(child, node.id, color, original?.children.find(existing => existing.move === child.san))),
     parentId,
     gameCount: node.lichess?.totalGames ?? 0,
-    whiteWins: node.lichess ? Math.round(node.lichess.totalGames * (node.lichess.winRate / 100)) : 0,
-    blackWins: node.lichess ? Math.round(node.lichess.totalGames * (node.lichess.lossRate / 100)) : 0,
+    whiteWins: node.lichess ? Math.round(node.lichess.totalGames * ((color === 'white' ? node.lichess.winRate : node.lichess.lossRate) / 100)) : 0,
+    blackWins: node.lichess ? Math.round(node.lichess.totalGames * ((color === 'white' ? node.lichess.lossRate : node.lichess.winRate) / 100)) : 0,
     draws: node.lichess ? Math.round(node.lichess.totalGames * (node.lichess.drawRate / 100)) : 0,
-    comment: buildGeneratedNodeComment(node),
-    nags: [],
+    comment: [original?.comment, buildGeneratedNodeComment(node)].filter(Boolean).join(' | '),
+    nags: original?.nags ?? [],
     depth: node.depth,
   };
-}
-
-function terminateWorker(worker: Worker | null): void {
-  if (!worker) return;
-  try {
-    worker.postMessage('quit');
-  } catch {
-    // Ignore workers that are already gone.
-  }
-  try {
-    worker.terminate();
-  } catch {
-    // Ignore workers that are already gone.
-  }
 }
 
 export const App: React.FC = () => {
@@ -271,13 +260,12 @@ export const App: React.FC = () => {
   const [activeSignal, setActiveSignal] = useState<'tricky' | 'gaps' | 'important' | null>(null);
   const [regeneratingNodeId, setRegeneratingNodeId] = useState<string | null>(null);
   const [regenerationError, setRegenerationError] = useState<string | null>(null);
-  const treeRegenerationWorkerRef = useRef<Worker | null>(null);
-  const ownsTreeRegenerationWorkerRef = useRef(false);
   const treeRegenerationTargetRef = useRef<{
     nodeId: string;
     fen: string;
     seed: string[];
     lastSignature: string | null;
+    original: TreeNode;
   } | null>(null);
 
   const classifyWithThresholds = useCallback(
@@ -359,12 +347,16 @@ export const App: React.FC = () => {
     setViewingMoveIndex(0);
   }, []);
 
+  const latestRepertoireTreeRef = useRef(tree);
+  useEffect(() => { latestRepertoireTreeRef.current = tree; }, [tree]);
+
   const graftGeneratedContinuation = useCallback((finalRoot: GeneratorNode): number => {
     const target = treeRegenerationTargetRef.current;
     if (!target) return 0;
+    const currentTarget = findNodeById(latestRepertoireTreeRef.current, target.nodeId);
+    if (!currentTarget || JSON.stringify(currentTarget) !== JSON.stringify(target.original)) return -1;
 
-    const generatedLeaf = findGeneratorNodeByFen(finalRoot, target.fen)
-      ?? findGeneratorNodeByMovePath(finalRoot, target.seed);
+    const generatedLeaf = findGeneratorNodeByMovePath(finalRoot, target.seed);
 
     if (!generatedLeaf || generatedLeaf.children.length === 0) return 0;
 
@@ -374,19 +366,15 @@ export const App: React.FC = () => {
     treeRegenerationTargetRef.current = { ...target, lastSignature: signature };
     replaceNodeChildren(
       target.nodeId,
-      generatedLeaf.children.map((child) => convertGeneratedChild(child, target.nodeId))
+      generatedLeaf.children.map((child) => convertGeneratedChild(child, target.nodeId, finalRoot.repertoireColor ?? 'white', target.original.children.find(existing => existing.move === child.san)))
     );
 
     return generatedLeaf.children.length;
   }, [replaceNodeChildren]);
 
-  useEffect(() => {
-    if (!regeneratingNodeId || !generator.tree) return;
-    graftGeneratedContinuation(generator.tree);
-  }, [generator.tree, graftGeneratedContinuation, regeneratingNodeId]);
-
   const handleFinishLineFromNode = useCallback(
     async (node: TreeNode) => {
+      if (generator.isGenerating) return;
       const path = getPathToNode(tree, node.id);
       const seed = (path ?? currentPath)
         .slice(1)
@@ -400,6 +388,7 @@ export const App: React.FC = () => {
         fen: node.fen,
         seed,
         lastSignature: null,
+        original: cloneTree(node),
       };
 
       const cachedGeneratorSettings = getCachedGeneratorSettings();
@@ -414,63 +403,33 @@ export const App: React.FC = () => {
         return;
       }
 
-      terminateWorker(treeRegenerationWorkerRef.current);
-      treeRegenerationWorkerRef.current = null;
-      ownsTreeRegenerationWorkerRef.current = false;
-
-      let sfWorker: Worker;
-      try {
-        sfWorker = await createAnalysisWorker(1);
-        treeRegenerationWorkerRef.current = sfWorker;
-        ownsTreeRegenerationWorkerRef.current = true;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const sharedWorker = engine.workerReady ? engine.workerRef.current : null;
-        if (sharedWorker) {
-          engine.stopAnalysis();
-          sfWorker = sharedWorker;
-          treeRegenerationWorkerRef.current = sharedWorker;
-          ownsTreeRegenerationWorkerRef.current = false;
-          generator.addLogEntry({
-            id: `log_regen_engine_fallback_${Date.now()}`,
-            timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-            level: 'warning',
-            message: 'Dedicated Stockfish worker failed; using the active analysis engine for this continuation.',
-            context: message,
-          });
-        } else {
-        generator.addLogEntry({
-          id: `log_regen_engine_${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-          level: 'error',
-          message: 'Could not start a dedicated Stockfish worker for continuation generation.',
-          context: message,
-        });
-        setRegenerationError('Could not start Stockfish for continuation generation. Refresh the page and try again.');
-        return;
-        }
-      }
-
       setRegeneratingNodeId(node.id);
       generator.addLogEntry({
         id: `log_regen_start_${Date.now()}`,
         timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
         level: 'info',
-        message: `Regenerating continuation after ${node.move} with current generator settings.`,
+        message: `Extending continuation after ${node.move} with current generator settings.`,
         context: null,
       });
 
       generator.startGeneration(
         generatorSettings,
-        [seed],
-        sfWorker,
+        (() => {
+          const leaves = (current: TreeNode, moves: string[]): string[][] => current.children.length
+            ? current.children.flatMap(child => leaves(child, [...moves, child.move])) : [moves];
+          return leaves(node, seed);
+        })(),
+        null,
         (finalRoot: GeneratorNode) => {
           const graftedCount = graftGeneratedContinuation(finalRoot);
 
+          if (graftedCount === -1) {
+            treeRegenerationTargetRef.current = null;
+            setRegeneratingNodeId(null);
+            setRegenerationError('This line changed during generation. Your edits were preserved; review the generated result in the generator.');
+            return;
+          }
           if (graftedCount === 0) {
-            if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
-            treeRegenerationWorkerRef.current = null;
-            ownsTreeRegenerationWorkerRef.current = false;
             treeRegenerationTargetRef.current = null;
             generator.addLogEntry({
               id: `log_regen_missing_${Date.now()}`,
@@ -484,9 +443,6 @@ export const App: React.FC = () => {
             return;
           }
 
-          if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
-          treeRegenerationWorkerRef.current = null;
-          ownsTreeRegenerationWorkerRef.current = false;
           treeRegenerationTargetRef.current = null;
           setRegenerationError(null);
           setRegeneratingNodeId(null);
@@ -494,14 +450,11 @@ export const App: React.FC = () => {
             id: `log_regen_done_${Date.now()}`,
             timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
             level: 'info',
-            message: `Regenerated ${graftedCount} continuation move${graftedCount !== 1 ? 's' : ''} after ${node.move}.`,
+            message: `Prepared ${graftedCount} continuation move${graftedCount !== 1 ? 's' : ''} after ${node.move}.`,
             context: null,
           });
         },
         (error) => {
-          if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
-          treeRegenerationWorkerRef.current = null;
-          ownsTreeRegenerationWorkerRef.current = false;
           treeRegenerationTargetRef.current = null;
           setRegeneratingNodeId(null);
           setRegenerationError(error.message || 'Continuation generation failed.');
@@ -511,20 +464,21 @@ export const App: React.FC = () => {
     [currentPath, engine, generator, graftGeneratedContinuation, tree]
   );
 
+  useEffect(() => {
+    if (!generator.isGenerating && generator.progress.outcome === 'stopped') {
+      treeRegenerationTargetRef.current = null;
+      setRegeneratingNodeId(null);
+    }
+  }, [generator.isGenerating, generator.progress.outcome]);
+
   const handleStopTreeRegeneration = useCallback(() => {
     generator.stopGeneration();
-    if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
-    treeRegenerationWorkerRef.current = null;
-    ownsTreeRegenerationWorkerRef.current = false;
     treeRegenerationTargetRef.current = null;
     setRegeneratingNodeId(null);
   }, [generator]);
 
   useEffect(() => {
     return () => {
-      if (ownsTreeRegenerationWorkerRef.current) terminateWorker(treeRegenerationWorkerRef.current);
-      treeRegenerationWorkerRef.current = null;
-      ownsTreeRegenerationWorkerRef.current = false;
       treeRegenerationTargetRef.current = null;
     };
   }, []);
@@ -1077,7 +1031,7 @@ export const App: React.FC = () => {
           >
             <span className="inline-flex items-center justify-center gap-1.5">
               <RefreshCw className={`h-3.5 w-3.5 ${regeneratingNodeId ? 'animate-spin' : ''}`} />
-              {regeneratingNodeId === currentNode.id ? 'Regenerating...' : 'Regenerate Continuation'}
+              {regeneratingNodeId === currentNode.id ? 'Regenerating...' : 'Extend Continuation'}
             </span>
           </button>
           {regeneratingNodeId && (
@@ -1499,7 +1453,7 @@ export const App: React.FC = () => {
   // Keyboard navigation — game viewer mode takes priority
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
+      if (generatorOpen || (e.target instanceof HTMLElement && (e.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)))) return;
 
       if (viewingGame) {
         switch (e.key) {
@@ -1573,7 +1527,7 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [viewingGame, navigateBack, navigateForward, navigateToStart, navigateToEnd, flipBoard, gameViewerBack, gameViewerForward, gameViewerStart, gameViewerEnd, handleCloseGameViewer]);
+  }, [generatorOpen, viewingGame, navigateBack, navigateForward, navigateToStart, navigateToEnd, flipBoard, gameViewerBack, gameViewerForward, gameViewerStart, gameViewerEnd, handleCloseGameViewer]);
 
   // Handle Lichess OAuth2 callback (?code=... in URL after redirect)
   useEffect(() => {
@@ -1649,6 +1603,7 @@ export const App: React.FC = () => {
         <GeneratorPage
           gen={generator}
           initialSeeds={generatorInitialSeeds}
+          isActive={generatorOpen}
           onClose={() => setGeneratorOpen(false)}
           onImportTree={(importedTree) => {
             setTree(importedTree);

@@ -3,8 +3,9 @@
  * Shows the generated repertoire as an indented tree with SAN moves.
  */
 
-import React, { useCallback } from 'react';
+import React from 'react';
 import { Trash2 } from 'lucide-react';
+import { END_REASON_LABELS } from '../../types/generator';
 import type { GeneratorNode } from '../../types/generator';
 
 interface GeneratorMoveTreeProps {
@@ -13,6 +14,7 @@ interface GeneratorMoveTreeProps {
   onSelect: (node: GeneratorNode) => void;
   color: string;
   onClear: () => void;
+  disabled?: boolean;
 }
 
 function countNodesRecursive(node: GeneratorNode): number {
@@ -52,9 +54,7 @@ const TreeNodeRow: React.FC<{
   if (isRoot) {
     moveLabel = 'Start';
   } else if (node.san) {
-    const isBlackMove = !node.isOurMove
-      ? (color === 'white')
-      : (color === 'black');
+    const isBlackMove = node.fen.split(' ')[1] === 'w';
     if (!isBlackMove) {
       moveLabel = `${node.fullMoveNumber}. ${node.san}`;
     } else {
@@ -66,6 +66,7 @@ const TreeNodeRow: React.FC<{
     <>
       <div
         onClick={() => onSelect(node)}
+        title={[node.reason, node.warning, node.endReason ? END_REASON_LABELS[node.endReason] : null].filter(Boolean).join(" · ")}
         className={`flex items-center gap-1.5 px-2 py-0.5 cursor-pointer rounded transition-colors text-[11px] font-mono ${
           isSelected
             ? 'bg-accent-teal/15 text-accent-teal'
@@ -89,6 +90,7 @@ const TreeNodeRow: React.FC<{
           {moveLabel}
         </span>
 
+        {node.endReason && !["target", "terminal", "repetition"].includes(node.endReason) && <span className="text-accent-amber text-[9px]">unfinished</span>}
         {/* Eval */}
         {evalStr && (
           <span className="text-[9px] text-text-muted ml-auto">{evalStr}</span>
@@ -121,6 +123,7 @@ export const GeneratorMoveTree: React.FC<GeneratorMoveTreeProps> = ({
   onSelect,
   color,
   onClear,
+  disabled,
 }) => {
   const nodeCount = tree ? countNodesRecursive(tree) - 1 : 0; // -1 for root
 
@@ -139,6 +142,7 @@ export const GeneratorMoveTree: React.FC<GeneratorMoveTreeProps> = ({
         {tree && (
           <button
             onClick={onClear}
+            disabled={disabled}
             className="btn-icon p-1"
             title="Clear tree"
           >

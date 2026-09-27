@@ -1,1477 +1,315 @@
-/**
- * Core BFS tree expansion logic for auto-repertoire generation.
- * Supports Stockfish-only, Lichess-only, or combined mode.
- * BFS ensures the tree grows evenly across all branches.
- */
-
+/** Preserve supplied moves, then expand a breadth-first frontier of continuations. */
 import { Chess } from 'chess.js';
-import type {
-  GeneratorNode,
-  GeneratorSettings,
-  GeneratorCallbacks,
-  GeneratorLogEntry,
-  MoveCandidate,
-} from '../types/generator';
-import {
-  getTopMoves, uciToSan, failsEvalThreshold, isDangerousResponse,
-  selectSignificantMoves, getStyleEvalThreshold, styleScore,
-  computeOpponentErrorRate, applyTrickynessBonus, analyzePosition,
-} from './analyzer';
-import { getMaiaMoves } from '../utils/maiaApi';
-import type { MaiaLevel } from '../utils/maiaApi';
-import { getMostPlayedMoves, getMostLikelyMoves } from '../utils/lichessApi';
+import type { GeneratorCallbacks, GeneratorNode, GeneratorSettings, GeneratorEndReason } from '../types/generator';
+import { normalizeGeneratorSettings, STUDY_SIZES } from '../types/generator';
+import { analyzePositionWithStockfish, getTopMovesWithStockfish } from './analyzer';
+import { getMostLikelyMoves } from '../utils/lichessApi';
+import type { LichessMove } from '../utils/lichessApi';
+import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils/generatorSeeds';
+import { abortError, abortableDelay } from '../utils/generatorCancellation';
 
-const DEFAULT_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-const MAX_OUR_MOVE_DROP_FROM_BEST = 0.75;
-// Popular opponent moves remain useful repertoire coverage, but moves this far
-// below the opponent's best response are noise rather than serious branches.
-const MAX_OPPONENT_MOVE_DROP_FROM_BEST = 1.5;
-const OPPONENT_RESPONSE_CHECK_DEPTH = 25;
+const dependencies = { analyze: analyzePositionWithStockfish, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
+type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; stats?: LichessMove; reason: string };
+const positionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
+const scoreFor = (score: number, color: 'white' | 'black') => color === 'white' ? score : -score;
 
-let _nodeIdCounter = 0;
-
-function genNodeId(): string {
-  return 'gen_' + (++_nodeIdCounter);
+export function isTactical(fen: string): boolean {
+  const chess = new Chess(fen);
+  return chess.isCheck() || chess.moves({ verbose: true }).some(move => Boolean(move.captured));
 }
 
-function resetGenNodeIdCounter(): void {
-  _nodeIdCounter = 0;
-}
-
-/**
- * Apply a SAN move to a FEN and return the resulting FEN. Returns null if illegal.
- */
-function makeMove(fen: string, san: string): string | null {
-  try {
-    const game = new Chess(fen);
-    const result = game.move(san);
-    if (!result) return null;
-    return game.fen();
-  } catch {
-    return null;
+/** Only immediate queen captures/recaptures; never claims to predict later exchanges. */
+export function allowsImmediateQueenTrade(fen: string, san: string): boolean {
+  const chess = new Chess(fen);
+  const queens = (board: Chess) => board.board().flat().filter(p => p?.type === 'q').length;
+  if (queens(chess) !== 2) return false;
+  const move = chess.move(san);
+  if (move.piece === 'q' && move.captured === 'q') {
+    return chess.moves({ verbose: true }).some(reply => reply.to === move.to && reply.captured === 'q');
   }
-}
-
-/**
- * Get the full move number from a FEN string.
- */
-function getFullMoveNumber(fen: string): number {
-  if (!fen) return 1;
-  const parts = fen.split(' ');
-  return parseInt(parts[5], 10) || 1;
-}
-
-/**
- * Create a delay promise.
- */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Create a generator tree node from a move candidate.
- */
-function createNode(
-  candidate: MoveCandidate,
-  sfEval: number | null,
-  sfDepth: number,
-  fullMoveNumber: number,
-  fen: string,
-  isOurMove: boolean,
-  depth: number
-): GeneratorNode {
-  const node: GeneratorNode = {
-    id: genNodeId(),
-    san: candidate.san,
-    uci: candidate.uci || '',
-    fen,
-    fullMoveNumber,
-    isOurMove,
-    depth,
-    stockfish: {
-      eval: sfEval,
-      depth: sfDepth || 0,
-    },
-    lichess: null,
-    isMainLine: false,
-    isDangerous: false,
-    cappedByMoveLimit: false,
-    children: [],
-  };
-
-  // Attach Lichess stats if present
-  if (candidate._lichess) {
-    node.lichess = {
-      totalGames: candidate._lichess.totalGames,
-      winRate: candidate._lichess.winRate,
-      lossRate: candidate._lichess.lossRate,
-      drawRate: candidate._lichess.drawRate,
-      averageRating: candidate._lichess.averageRating,
-    };
-  }
-
-  return node;
-}
-
-/**
- * Deep clone a generator tree (for React state updates).
- */
-function deepCloneTree(node: GeneratorNode): GeneratorNode {
-  const clone: any = {};
-  for (const key in node) {
-    if (key === 'children') {
-      clone.children = (node as any).children.map((c: GeneratorNode) => deepCloneTree(c));
-    } else if (key === 'stockfish' || key === 'lichess') {
-      clone[key] = (node as any)[key] ? { ...(node as any)[key] } : null;
-    } else {
-      clone[key] = (node as any)[key];
-    }
-  }
-  return clone as GeneratorNode;
-}
-
-/**
- * Check whether a position is "tactical" (not quiet).
- * Tactical = side to move is in check OR captures are available.
- */
-function isPositionTactical(fen: string): boolean {
-  try {
-    const chess = new Chess(fen);
-    if (chess.isCheck()) return true;
-    const moves = chess.moves({ verbose: true });
-    return moves.some((m) => (m as any).captured);
-  } catch {
-    return false;
-  }
-}
-
-/** Standard piece values in pawns. */
-const PIECE_VALUES: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
-
-function hasQueen(chess: Chess, color: 'w' | 'b'): boolean {
-  return chess.board().some((rank) =>
-    rank.some((piece) => piece?.type === 'q' && piece.color === color)
-  );
-}
-
-function bothQueensPresent(chess: Chess): boolean {
-  return hasQueen(chess, 'w') && hasQueen(chess, 'b');
-}
-
-/**
- * True when our candidate either reaches a queenless/traded-queen position or
- * gives the opponent an immediate queen-trade reply. Only meaningful while
- * both queens are still on the board before the move.
- */
-function allowsImmediateQueenTrade(fromFen: string, san: string): boolean {
-  try {
-    const chess = new Chess(fromFen);
-    if (!bothQueensPresent(chess)) return false;
-
-    const moveResult = chess.move(san);
-    if (!moveResult) return false;
-
-    // A real immediate trade removes both queens. Do not classify a move that
-    // merely wins or sacrifices one queen as a queen trade.
-    if (!hasQueen(chess, 'w') && !hasQueen(chess, 'b')) return true;
-
-    const replies = chess.moves({ verbose: true });
-    for (const reply of replies) {
-      const afterReply = new Chess(chess.fen());
-      const replyResult = afterReply.move(reply);
-      if (!replyResult) continue;
-      if (!hasQueen(afterReply, 'w') && !hasQueen(afterReply, 'b')) return true;
-    }
-
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Detect whether a move is a sacrifice — moving side gives away more material
- * than it captures (e.g. Nxf7 when the knight isn't recaptured cleanly).
- * Returns the number of extra moves the line should stay alive after the sac,
- * or 0 if it's a normal capture or non-capture.
- */
-function sacrificeExtensionMoves(fromFen: string, san: string, baseExtension: number): number {
-  try {
-    const chess = new Chess(fromFen);
-    const result = chess.move(san);
-    if (!result || !result.captured) return 0;                  // not a capture
-    const movingVal  = PIECE_VALUES[result.piece]    ?? 0;
-    const capturedVal = PIECE_VALUES[result.captured] ?? 0;
-    if (movingVal <= capturedVal) return 0;                     // equal or winning trade
-    // Material given away — extend proportionally to how big the sacrifice is
-    const deficit = movingVal - capturedVal;                    // e.g. 2 for N×P
-    return baseExtension + Math.min(deficit * 2, 6);            // cap bonus at 6 extra moves
-  } catch {
-    return 0;
-  }
-}
-
-/** DFS stack item. */
-interface QueueItem {
-  node: GeneratorNode;
-  isOurTurn: boolean;
-  depth: number;
-  effectiveMaxDepth: number;
-  fullMoveNumber: number;
-  branchPriority: AdaptiveDepthCategory;
-  /** Moves still allowed past maxMoveNumber due to a sacrifice earlier in the line. */
-  sacrificeMovesLeft: number;
-}
-
-type AdaptiveDepthCategory = 'likely' | 'possible' | 'rare';
-
-function classifyAdaptiveDepth(
-  candidate: MoveCandidate,
-  candidateIndex: number,
-  siblingLichessGames: number
-): { category: AdaptiveDepthCategory; likelihood: number | null; source: 'lichess' | 'stockfish' } {
-  const games = candidate._lichess?.totalGames ?? 0;
-
-  if (games > 0 && siblingLichessGames > 0) {
-    const likelihood = games / siblingLichessGames;
-    return {
-      category: likelihood >= 0.4 ? 'likely' : likelihood >= 0.15 ? 'possible' : 'rare',
-      likelihood,
-      source: 'lichess',
-    };
-  }
-
-  if (candidateIndex === 0) {
-    return { category: 'likely', likelihood: null, source: 'stockfish' };
-  }
-  if (candidateIndex === 1) {
-    return { category: 'possible', likelihood: null, source: 'stockfish' };
-  }
-  return { category: 'rare', likelihood: null, source: 'stockfish' };
-}
-
-function getAdaptiveOpponentResponseCount(
-  baseCount: number,
-  branchPriority: AdaptiveDepthCategory,
-  likelyExtraResponses: number
-): number {
-  if (branchPriority === 'likely') {
-    return Math.max(1, baseCount + Math.max(0, likelyExtraResponses));
-  }
-  if (branchPriority === 'rare') {
-    return 1;
-  }
-  return Math.max(1, baseCount);
-}
-
-function addOrMergeCandidate(candidates: MoveCandidate[], next: MoveCandidate): boolean {
-  const existing = candidates.find((candidate) => candidate.san === next.san);
-  if (!existing) {
-    candidates.push(next);
-    return true;
-  }
-
-  if (!existing.uci && next.uci) existing.uci = next.uci;
-  const existingSfDepth = existing._sfDepth ?? 0;
-  const nextSfDepth = next._sfDepth ?? 0;
-  if (
-    next._sfEval !== undefined &&
-    (existing._sfEval === undefined || nextSfDepth >= existingSfDepth)
-  ) {
-    existing._sfEval = next._sfEval;
-  }
-  if (existingSfDepth < nextSfDepth) existing._sfDepth = next._sfDepth;
-  if (!existing._lichess && next._lichess) existing._lichess = next._lichess;
-  if (!existing._maia && next._maia) existing._maia = next._maia;
-  if (existing._trickynessErrorRate === undefined && next._trickynessErrorRate !== undefined) {
-    existing._trickynessErrorRate = next._trickynessErrorRate;
-  }
-  return false;
-}
-
-function evalForColor(candidate: MoveCandidate, color: 'white' | 'black'): number | null {
-  if (candidate._sfEval == null) return null;
-  return color === 'white' ? candidate._sfEval : -candidate._sfEval;
-}
-
-function bestEngineMoveGap(candidates: MoveCandidate[], color: 'white' | 'black'): number | null {
-  const evals = candidates
-    .map((candidate) => evalForColor(candidate, color))
-    .filter((value): value is number => value !== null)
-    .sort((a, b) => b - a);
-
-  if (evals.length < 2) return null;
-  return evals[0] - evals[1];
-}
-
-function sortByEngineEval(candidates: MoveCandidate[], color: 'white' | 'black'): MoveCandidate[] {
-  return [...candidates].sort((a, b) => {
-    const evalA = evalForColor(a, color);
-    const evalB = evalForColor(b, color);
-    if (evalA == null && evalB == null) return 0;
-    if (evalA == null) return 1;
-    if (evalB == null) return -1;
-    return evalB - evalA;
+  return chess.moves({ verbose: true }).some(reply => {
+    if (reply.piece !== 'q' || reply.captured !== 'q') return false;
+    const after = new Chess(chess.fen());
+    after.move(reply);
+    return after.moves({ verbose: true }).some(recapture => recapture.to === reply.to && recapture.captured === 'q');
   });
 }
 
-function keepMovesCloseToBestEval(
-  candidates: MoveCandidate[],
-  color: 'white' | 'black',
-  maxDrop: number
-): { kept: MoveCandidate[]; rejected: { candidate: MoveCandidate; drop: number }[]; bestScore: number | null } {
-  if (candidates.length <= 1) {
-    return { kept: candidates, rejected: [], bestScore: null };
+/** Common mistakes remain useful preparation; reserve a place for the best defense. */
+export function selectOpponentReplies<T extends { uci: string; playRate: number }>(
+  popular: T[], best: T, coverageTarget: number, maxReplies: number
+): T[] {
+  const selected: T[] = [popular.find(move => move.uci === best.uci) ?? best];
+  let coverage = selected[0].playRate / 100;
+  for (const move of popular) {
+    if (selected.length >= maxReplies || coverage >= coverageTarget) break;
+    if (selected.some(chosen => chosen.uci === move.uci)) continue;
+    selected.push(move);
+    coverage += move.playRate / 100;
   }
-
-  const scored = candidates
-    .map((candidate) => ({ candidate, score: evalForColor(candidate, color) }))
-    .filter((entry): entry is { candidate: MoveCandidate; score: number } => entry.score !== null);
-
-  if (scored.length <= 1) {
-    return { kept: candidates, rejected: [], bestScore: scored[0]?.score ?? null };
-  }
-
-  const bestScore = Math.max(...scored.map((entry) => entry.score));
-  const rejectedSans = new Set<string>();
-  const rejected: { candidate: MoveCandidate; drop: number }[] = [];
-
-  for (const entry of scored) {
-    const drop = bestScore - entry.score;
-    if (drop > maxDrop) {
-      rejectedSans.add(entry.candidate.san);
-      rejected.push({ candidate: entry.candidate, drop });
-    }
-  }
-
-  const kept = candidates.filter((candidate) => !rejectedSans.has(candidate.san));
-  return { kept: kept.length > 0 ? kept : sortByEngineEval(candidates, color).slice(0, 1), rejected, bestScore };
+  return selected; // strongest first, including when the remaining node budget is small
 }
 
-function allowedDropFromBestScore(bestScoreForUs: number): number {
-  if (bestScoreForUs >= 3.0) return 0.20;
-  if (bestScoreForUs >= 1.5) return 0.30;
-  if (bestScoreForUs >= 0.7) return 0.40;
-  return 0.45;
-}
-
-function keepMovesCloseToReferenceEval(
-  candidates: MoveCandidate[],
-  color: 'white' | 'black',
-  referenceScoreForUs: number,
-  maxDrop: number
-): { kept: MoveCandidate[]; rejected: { candidate: MoveCandidate; drop: number }[] } {
-  const rejectedSans = new Set<string>();
-  const rejected: { candidate: MoveCandidate; drop: number }[] = [];
-
-  for (const candidate of candidates) {
-    const candidateScore = evalForColor(candidate, color);
-    if (candidateScore === null) continue;
-
-    const drop = referenceScoreForUs - candidateScore;
-    if (drop > maxDrop) {
-      rejectedSans.add(candidate.san);
-      rejected.push({ candidate, drop });
-    }
-  }
-
-  const kept = candidates.filter((candidate) => !rejectedSans.has(candidate.san));
-  return { kept: kept.length > 0 ? kept : sortByEngineEval(candidates, color).slice(0, 1), rejected };
-}
-
-function getOurMoveBranchPriority(
-  parentPriority: AdaptiveDepthCategory,
-  candidateIndex: number
-): AdaptiveDepthCategory {
-  if (candidateIndex === 0) return parentPriority;
-  if (candidateIndex === 1) return parentPriority === 'rare' ? 'rare' : 'possible';
-  return 'rare';
-}
-
-/**
- * Build a practical opponent set: engine-sound first, human frequency second.
- * The strongest response is always represented; remaining slots retain the
- * original Lichess-frequency order.
- */
-function selectPracticalOpponentMoves(
-  candidates: MoveCandidate[],
-  opponentIsBlack: boolean,
-  targetCount: number
-): {
-  selected: MoveCandidate[];
-  rejected: { candidate: MoveCandidate; drop: number }[];
-  best: MoveCandidate | null;
-} {
-  if (candidates.length === 0 || targetCount <= 0) {
-    return { selected: [], rejected: [], best: null };
-  }
-
-  const evaluated = candidates.filter(
-    (candidate): candidate is MoveCandidate & { _sfEval: number } => candidate._sfEval != null
-  );
-  if (evaluated.length === 0) {
-    return { selected: candidates.slice(0, targetCount), rejected: [], best: null };
-  }
-
-  const best = evaluated.reduce((currentBest, candidate) => {
-    if (opponentIsBlack) return candidate._sfEval < currentBest._sfEval ? candidate : currentBest;
-    return candidate._sfEval > currentBest._sfEval ? candidate : currentBest;
-  });
-
-  const rejected: { candidate: MoveCandidate; drop: number }[] = [];
-  const sound = candidates.filter((candidate) => {
-    if (candidate._sfEval == null) return false;
-    const drop = opponentIsBlack
-      ? candidate._sfEval - best._sfEval
-      : best._sfEval - candidate._sfEval;
-    if (drop > MAX_OPPONENT_MOVE_DROP_FROM_BEST) {
-      rejected.push({ candidate, drop });
-      return false;
-    }
-    return true;
-  });
-
-  const selected = sound.slice(0, targetCount);
-  if (!selected.some((candidate) => candidate.san === best.san)) {
-    if (selected.length >= targetCount) selected[selected.length - 1] = best;
-    else selected.push(best);
-  }
-
-  return { selected, rejected, best };
-}
-
-/**
- * Build a complete repertoire tree using Stockfish and/or Lichess.
- * Uses BFS so the tree grows evenly across all branches.
- *
- * @param seeds - Array of SAN move arrays (starting positions), or null for starting position
- * @param settings - Generation settings
- * @param callbacks - Progress/log/completion callbacks
- * @param stopRef - Set stopRef.current = true to halt generation
- * @param sfWorker - Stockfish Web Worker (optional if Lichess-only)
- */
 export async function buildTree(
   seeds: string[][] | null,
-  settings: GeneratorSettings,
+  input: GeneratorSettings,
   callbacks: GeneratorCallbacks,
-  stopRef: { current: boolean },
-  sfWorker: Worker | null
-): Promise<GeneratorNode | null> {
-  let totalNodes = 0;
+  stop: { current: boolean; signal?: AbortSignal },
+  worker: Worker | null,
+  services = dependencies
+): Promise<GeneratorNode> {
+  if (!worker) throw new Error('Stockfish is required to verify continuations.');
+  const settings = normalizeGeneratorSettings(input);
+  const { maxNodes, maxReplies, coverage } = STUDY_SIZES[settings.studySize];
+  const root = buildSeedTree(seeds ?? [], settings.color);
+  const signal = stop.signal;
+  let totalNodes = countGeneratorNodes(root);
   let apiCalls = 0;
-  resetGenNodeIdCounter();
-
-  const color = settings.color || 'white';
-  const maxMoveNumber = settings.maxMoveNumber || 15;
-  const maxDepth = maxMoveNumber * 2;
-  const maxNodes = settings.maxNodes || 300;
-  const analysisMode = settings.analysisMode || 'stockfish';
-  const useStockfish = (
-    analysisMode === 'stockfish' ||
-    analysisMode === 'lichess+stockfish'
-  ) && sfWorker !== null;
-  const useMaia = false;
-  const maiaOnly = false;
-  const useLichess = analysisMode === 'lichess+stockfish';
-  const lichessOnly = false;
-
-  if (!useStockfish && !useMaia && !useLichess) {
-    logError('error', 'No analysis source available. Stockfish, Maia, or Lichess required.');
-    return null;
-  }
-
-  // Create root node
-  const root: GeneratorNode = {
-    id: 'root',
-    san: null,
-    uci: '',
-    fen: DEFAULT_FEN,
-    fullMoveNumber: 0,
-    isOurMove: color === 'white',
-    depth: 0,
-    stockfish: { eval: null, depth: 0 },
-    lichess: null,
-    isMainLine: false,
-    isDangerous: false,
-    cappedByMoveLimit: false,
-    children: [],
-    isRoot: true,
+  let nextId = 0;
+  const check = () => { if (stop.current || signal?.aborted) throw abortError(); };
+  const log = (level: 'info' | 'warning' | 'error', message: string) => {
+    callbacks.onLog?.({ id: `log_${Date.now()}_${++nextId}`, timestamp: new Date().toLocaleTimeString(), level, message, context: null });
   };
+  const publish = () => callbacks.onNodeAdded?.(cloneGeneratorTree(root));
+  const progress = (status: string) => callbacks.onProgress?.({ nodes: totalNodes, maxNodes, apiCalls, status, outcome: 'running' });
+  const evalCache = new Map<string, Promise<{ score: number; depth: number }>>();
+  const replyCache = new Map<string, LichessMove[]>();
+  const choiceCache = new Map<string, Candidate[]>();
+  const coverages: number[] = [];
+  let explorerFailures = 0;
 
-  function logError(level: 'info' | 'warning' | 'error', message: string, context?: string) {
-    if (callbacks.onLog) {
-      callbacks.onLog({
-        id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-        level,
-        message,
-        context: context || null,
-      });
+  async function evaluate(fen: string): Promise<{ score: number; depth: number }> {
+    check();
+    const chess = new Chess(fen);
+    if (chess.isCheckmate()) return { score: chess.turn() === 'w' ? -100 : 100, depth: settings.sfDepth };
+    if (chess.isGameOver()) return { score: 0, depth: settings.sfDepth };
+    if (!evalCache.has(fen)) {
+      evalCache.set(fen, services.analyze(worker!, fen, settings.sfDepth, signal).then(result => {
+        if (result.depth < settings.sfDepth || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
+        return { score: result.score / 100, depth: result.depth };
+      }));
+    }
+    const result = await evalCache.get(fen)!;
+    check();
+    return result;
+  }
+
+  async function popularReplies(fen: string): Promise<LichessMove[]> {
+    if (settings.analysisMode === 'stockfish') return [];
+    const key = positionKey(fen);
+    if (replyCache.has(key)) return replyCache.get(key)!;
+    check();
+    try {
+      apiCalls++;
+      const replies = await services.replies(fen, settings, (level, message) => { check(); log(level, message); }, 30, signal);
+      check();
+      // Very small samples do not establish human coverage. Fall back explicitly.
+      const supported = replies.filter(reply => reply.totalGames >= settings.minGames);
+      replyCache.set(key, supported);
+      return supported;
+    } catch (error) {
+      check();
+      explorerFailures++;
+      log('warning', `Human reply data unavailable; using engine replies here. ${error instanceof Error ? error.message : error}`);
+      replyCache.set(key, []);
+      return [];
     }
   }
 
-  function updateProgress(nodes: number, status: string) {
-    if (callbacks.onProgress) {
-      callbacks.onProgress({ nodes, maxNodes, status, apiCalls });
-    }
+  async function candidate(fen: string, uci: string, stats?: LichessMove): Promise<Candidate> {
+    const chess = new Chess(fen);
+    const move = chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+    if (!move) throw new Error(`Engine returned an illegal move: ${uci}`);
+    const evaluation = await evaluate(chess.fen());
+    return { san: move.san, uci, fen: chess.fen(), ...evaluation, stats, reason: '' };
   }
 
-  async function validateSeedMoves(seedMoves: string[], seedIndex: number): Promise<string[]> {
-    if (!sfWorker || seedMoves.length === 0) return seedMoves;
-
-    const validated: string[] = [];
-    let currentFen = root.fen;
-    const sfAnalysisDepth = settings.sfDepth || 12;
-    const styleValue = settings.styleValue ?? 0;
-    const effectiveThreshold = getStyleEvalThreshold(settings.evalThreshold ?? -0.3, styleValue);
-
-    for (const san of seedMoves) {
-      const turn = currentFen.split(' ')[1];
-      const isOurSeedMove = (color === 'white' && turn === 'w') || (color === 'black' && turn === 'b');
-      const nextFen = makeMove(currentFen, san);
-
-      if (!nextFen) {
-        logError('warning', `Seed ${seedIndex}: stopped at illegal move ${san}.`);
-        break;
-      }
-
-      if (isOurSeedMove) {
-        try {
-          const evalResult = await analyzePosition(sfWorker, nextFen, sfAnalysisDepth);
-          const evalPawns = evalResult.score / 100;
-
-          if (evalResult.depth <= 0 || failsEvalThreshold(evalPawns, color, effectiveThreshold)) {
-            logError(
-              'warning',
-              `Seed ${seedIndex}: stopped before ${san} — eval ${evalPawns.toFixed(2)} at depth ${evalResult.depth} fails threshold ${effectiveThreshold.toFixed(2)} for ${color}.`
-            );
-            break;
-          }
-        } catch (err: any) {
-          logError(
-            'warning',
-            `Seed ${seedIndex}: stopped before ${san} — Stockfish validation failed: ${err.message}`
-          );
-          break;
-        }
-      }
-
-      validated.push(san);
-      currentFen = nextFen;
-    }
-
-    return validated;
-  }
-
-  /**
-   * Find or create the parent path in the tree for seed moves.
-   */
-  function ensureSeedPath(seedMoves: string[]): GeneratorNode {
-    let current = root;
-    let currentFen = root.fen;
-
-    for (let i = 0; i < seedMoves.length; i++) {
-      const san = seedMoves[i];
-      const newFen = makeMove(currentFen, san);
-      if (!newFen) break;
-
-      let existing: GeneratorNode | null = null;
-      for (const child of current.children) {
-        if (child.san === san) {
-          existing = child;
-          break;
-        }
-      }
-
-      if (!existing) {
-        const fmn = getFullMoveNumber(newFen);
-        const turn = newFen.split(' ')[1];
-        const wasOurMove = (color === 'white' && turn === 'b') || (color === 'black' && turn === 'w');
-
-        existing = {
-          id: genNodeId(),
-          san,
-          uci: '',
-          fen: newFen,
-          fullMoveNumber: getFullMoveNumber(currentFen),
-          isOurMove: wasOurMove,
-          depth: i + 1,
-          stockfish: { eval: null, depth: 0 },
-          lichess: null,
-          isMainLine: true,
-          isDangerous: false,
-          cappedByMoveLimit: false,
-          children: [],
-          isSeed: true,
-        };
-        current.children.push(existing);
-        totalNodes++;
-      }
-
-      current = existing;
-      currentFen = newFen;
-    }
-
-    return current;
-  }
-
-  /**
-   * Gather move candidates for a position from Stockfish and/or Lichess.
-   */
-  async function gatherCandidates(
-    fen: string,
-    isOurTurn: boolean,
-    fullMoveNumber: number,
-    opponentResponseTarget?: number,
-    forceStockfishOnly = false
-  ): Promise<MoveCandidate[]> {
-    const sfAnalysisDepth = settings.sfDepth || 12;
-    const multiPvDepth = settings.candidateDepth || sfAnalysisDepth;
-    const trickynessDepth = settings.trickynessDepth || sfAnalysisDepth;
-    const styleValue = settings.styleValue ?? 0;
-    const tw = settings.trickynessWeight ?? 0;
-    const avoidQueenTrades = settings.avoidQueenTrades ?? false;
-
-    // How many candidates we ultimately want
-    const targetPV = isOurTurn
-      ? (settings.maxBranchesOur || 1)
-      : (opponentResponseTarget || settings.maxOpponentResponses || 2);
-
-    // When trickyness is active, approve up to 2 extra candidates beyond
-    // targetPV so the combined style+trickyness sort has a real choice to make.
-    const trickExtra = (isOurTurn && tw > 0) ? Math.min(2, targetPV) : 0;
-    const queenTradeExtra = (isOurTurn && avoidQueenTrades) ? 4 : 0;
-    const approvalTarget = targetPV + trickExtra + queenTradeExtra;
-
-    // Style-adjusted eval threshold (only applies to our moves)
-    const effectiveThreshold = isOurTurn
-      ? getStyleEvalThreshold(settings.evalThreshold ?? -0.3, styleValue)
-      : (settings.evalThreshold ?? -0.3);
-
-    const gatherAnalysisMode = forceStockfishOnly ? 'stockfish' : analysisMode;
-    const gatherUseLichess = useLichess && !forceStockfishOnly;
-
-    // For maia+stockfish / lichess+stockfish (our turn): skip the expensive upfront MultiPV.
-    // Maia/Lichess suggests moves in order; SF evaluates each one lazily
-    // and we stop as soon as we have enough approved candidates.
-    // For all other cases, gather SF candidates upfront.
-    const skipUpfrontSF = gatherAnalysisMode === 'lichess+stockfish' && isOurTurn;
-
-    // Request extra SF PVs when style/trickyness/queen-trade avoidance needs
-    // a wider candidate pool.
-    const sfRequestPV = isOurTurn && (styleValue !== 0 || tw > 0 || avoidQueenTrades)
-      ? Math.min(8, approvalTarget)
-      : targetPV;
-
-    const sfCandidates: MoveCandidate[] = [];
-    const maiaCandidates: MoveCandidate[] = [];
-
-    // Stockfish candidates (upfront, for non-lazy cases)
-    if (useStockfish && sfWorker && (!skipUpfrontSF || isOurTurn)) {
-      const SF_RETRIES = 2;
-      let sfAttempt = 0;
-      let sfSearchSucceeded = false;
-      while (sfAttempt <= SF_RETRIES && !sfSearchSucceeded) {
-        if (sfAttempt > 0) {
-          logError('warning', `SF MultiPV retry ${sfAttempt}/${SF_RETRIES} at move ${fullMoveNumber}...`);
-        }
-        try {
-          const stockfishRequestPV = skipUpfrontSF ? 1 : sfRequestPV;
-          const topMoves = await getTopMoves(sfWorker, fen, multiPvDepth, stockfishRequestPV);
-          sfSearchSucceeded = true;
-          for (const tm of topMoves) {
-            const san = uciToSan(fen, tm.uci);
-            if (!san) continue;
-
-            if (isOurTurn && failsEvalThreshold(tm.eval, color, effectiveThreshold)) {
-              logError('info', `SF: Move ${san} filtered by eval: ${tm.eval !== null ? tm.eval.toFixed(2) : '?'} fails threshold ${effectiveThreshold.toFixed(2)}`);
-              continue;
-            }
-
-            sfCandidates.push({
-              san,
-              uci: tm.uci,
-              _sfEval: tm.eval,
-              _sfDepth: tm.depth,
-            });
-          }
-          if (sfCandidates.length === 0) {
-            logError('info', `SF: no candidate passed filters at move ${fullMoveNumber}.`);
-          }
-        } catch (err: any) {
-          logError('warning', `SF MultiPV attempt ${sfAttempt + 1} failed at move ${fullMoveNumber}: ${err.message}`);
-        }
-        sfAttempt++;
-      }
-      if (!sfSearchSucceeded && sfCandidates.length === 0 && sfAttempt > 1) {
-        logError('warning', `SF MultiPV gave up after ${SF_RETRIES} retries at move ${fullMoveNumber} — trying single-PV recovery.`);
-        try {
-          const singlePv = await analyzePosition(sfWorker, fen, multiPvDepth);
-          const san = uciToSan(fen, singlePv.bestMoveUci);
-          const evalPawns = singlePv.score / 100;
-          if (!san) {
-            logError('warning', `SF single-PV recovery failed at move ${fullMoveNumber}: could not convert best move ${singlePv.bestMoveUci}.`);
-          } else if (isOurTurn && failsEvalThreshold(evalPawns, color, effectiveThreshold)) {
-            logError('info', `SF single-PV recovery: ${san} filtered by eval ${evalPawns.toFixed(2)} fails threshold ${effectiveThreshold.toFixed(2)}.`);
-          } else {
-            sfCandidates.push({
-              san,
-              uci: singlePv.bestMoveUci,
-              _sfEval: evalPawns,
-              _sfDepth: singlePv.depth,
-            });
-            logError('info', `SF single-PV recovery kept ${san} at depth ${singlePv.depth}.`);
-          }
-        } catch (err: any) {
-          logError('warning', `SF single-PV recovery failed at move ${fullMoveNumber}: ${err.message}`);
-        }
-      }
-    }
-
-    // Maia candidates — practical human-like moves at the selected skill level
-    if (useMaia) {
-      try {
-        // Request extra Maia candidates so the lazy SF loop has more choices to
-        // approve from before falling back to SF. We ask for at least targetPV*4
-        // moves to give a good chance of finding SF-approved ones early.
-        const maiaRequestCount = (isOurTurn && styleValue !== 0)
-            ? Math.max(sfRequestPV * 2, targetPV * 3)
-            : targetPV * 2;
-        const maiaMoves = await getMaiaMoves(
-          fen,
-          (settings.maiaLevel || 1500) as MaiaLevel,
-          logError,
-          maiaRequestCount,
-          settings.maiaApiUrl || undefined
-        );
-        for (const mm of maiaMoves) {
-          maiaCandidates.push({
-            san: mm.san,
-            uci: mm.uci,
-            _maia: { probability: mm.probability },
-          });
-        }
-      } catch (err: any) {
-        logError('warning', `Maia API failed at move ${fullMoveNumber}: ${err.message}. Falling back to Stockfish.`);
-      }
-    }
-
-    // Lichess Explorer candidates — popularity + win-rate ranked
-    const lichessCandidates: MoveCandidate[] = [];
-    if (gatherUseLichess) {
-      try {
-        const lichessRequestCount = isOurTurn
-          ? Math.max(approvalTarget * 4, 8)
-          : targetPV * 2;
-        const lichessMoves = isOurTurn
-          ? await getMostPlayedMoves(fen, settings, logError, lichessRequestCount)
-          : await getMostLikelyMoves(fen, settings, logError, lichessRequestCount);
-        apiCalls++;
-        for (const lm of lichessMoves) {
-          lichessCandidates.push({
-            san: lm.san,
-            uci: lm.uci,
-            _lichess: {
-              totalGames: lm.totalGames,
-              winRate: lm.winRate,
-              lossRate: lm.lossRate,
-              drawRate: lm.drawRate,
-              averageRating: lm.averageRating,
-            },
-          });
-        }
-      } catch (err: any) {
-        logError('warning', `Lichess API failed at move ${fullMoveNumber}: ${err.message}`);
-      }
-    }
-
-    // Merge candidates
-    let candidates: MoveCandidate[] = [];
-
-    if (gatherAnalysisMode === 'lichess+stockfish') {
-      if (isOurTurn) {
-        // Lichess popularity-ranked with individual SF approval
-        const usedSans = new Set<string>();
-
-        for (const lc of lichessCandidates) {
-          if (candidates.length >= approvalTarget) break;
-          if (!sfWorker) break;
-
-          // Enforce minGames threshold
-          const minG = settings.minGames || 10;
-          if (lc._lichess && lc._lichess.totalGames < minG) {
-            logError('info', `Lichess+SF: ${lc.san} skipped — only ${lc._lichess.totalGames} games < minGames ${minG}`);
-            continue;
-          }
-
-          try {
-            const chess = new Chess(fen);
-            const moveResult = chess.move(lc.san);
-            if (!moveResult) {
-              logError('info', `Lichess+SF: ${lc.san} is illegal — skipped`);
-              continue;
-            }
-            const resultFen = chess.fen();
-            const indivResult = await analyzePosition(sfWorker, resultFen, sfAnalysisDepth);
-            if (indivResult.depth <= 0) {
-              logError('warning', `Lichess+SF: ${lc.san} rejected — Stockfish returned no usable depth.`);
-              continue;
-            }
-            const evalPawns = indivResult.score / 100;
-
-            if (failsEvalThreshold(evalPawns, color, effectiveThreshold)) {
-              logError('info', `Lichess+SF: ${lc.san} rejected — eval ${evalPawns.toFixed(2)} fails threshold ${effectiveThreshold.toFixed(2)}`);
-              continue;
-            }
-
-            addOrMergeCandidate(candidates, {
-              san: lc.san,
-              uci: lc.uci,
-              _sfEval: evalPawns,
-              _sfDepth: indivResult.depth,
-              _lichess: lc._lichess,
-            });
-            usedSans.add(lc.san);
-          } catch (err: any) {
-            logError('warning', `Lichess+SF: ${lc.san} evaluation failed: ${err.message}`);
-          }
-        }
-
-        // Fallback: not enough Lichess moves approved → ask SF directly
-        if (candidates.length < approvalTarget && sfWorker) {
-          logError('info', `Lichess+SF: only ${candidates.length}/${approvalTarget} desired moves approved — falling back to SF`);
-          const needed = approvalTarget - candidates.length;
-          const SF_RETRIES = 2;
-          for (let attempt = 0; attempt <= SF_RETRIES; attempt++) {
-            if (attempt > 0) logError('warning', `Lichess+SF fallback MultiPV retry ${attempt}/${SF_RETRIES}...`);
-            try {
-              const fallbackMoves = await getTopMoves(sfWorker, fen, multiPvDepth, needed + 4);
-              for (const tm of fallbackMoves) {
-                if (candidates.length >= approvalTarget) break;
-                const san = uciToSan(fen, tm.uci);
-                if (!san || usedSans.has(san)) continue;
-                if (failsEvalThreshold(tm.eval, color, effectiveThreshold)) continue;
-                addOrMergeCandidate(candidates, {
-                  san,
-                  uci: tm.uci,
-                  _sfEval: tm.eval,
-                  _sfDepth: tm.depth,
-                  _lichess: null,
-                });
-                usedSans.add(san);
-              }
-              break; // success — exit retry loop
-            } catch (err: any) {
-              logError('warning', `Lichess+SF fallback MultiPV attempt ${attempt + 1} failed: ${err.message}`);
-            }
-          }
-        }
-      } else {
-        // Opponent moves: actual human play frequency is the primary order.
-        // Stockfish still evaluates every candidate below, and supplies a
-        // fallback when Explorer has too little data.
-        for (const lc of lichessCandidates) addOrMergeCandidate(candidates, lc);
-        for (const sc of sfCandidates) addOrMergeCandidate(candidates, sc);
-      }
-    } else {
-      candidates = sfCandidates;
-    }
-
-    if (isOurTurn && sfCandidates.length > 0) {
-      for (const sc of sfCandidates) {
-        addOrMergeCandidate(candidates, sc);
-      }
-    }
-
-    // Final soundness gate for every move we add for our side, regardless of
-    // whether it came from Lichess, Stockfish MultiPV, or fallback discovery.
-    let bestReferenceScoreForUs: number | null = null;
-    if (isOurTurn && sfWorker && candidates.length > 0) {
-      const verifiedCandidates: MoveCandidate[] = [];
-
-      try {
-        const bestCurrentResult = await analyzePosition(sfWorker, fen, sfAnalysisDepth);
-        if (bestCurrentResult.depth > 0) {
-          bestReferenceScoreForUs = color === 'white'
-            ? bestCurrentResult.score / 100
-            : -bestCurrentResult.score / 100;
-          logError(
-            'info',
-            `Best-move reference: ${bestCurrentResult.bestMoveSan || bestCurrentResult.bestMoveUci || '?'} eval ${bestReferenceScoreForUs.toFixed(2)} for ${color} at depth ${bestCurrentResult.depth}.`
-          );
-        } else {
-          logError('warning', 'Best-move reference failed — Stockfish returned no usable depth.');
-        }
-      } catch (err: any) {
-        logError('warning', `Best-move reference failed: ${err.message}`);
-      }
-
-      for (const candidate of candidates) {
-        const resultFen = makeMove(fen, candidate.san);
-        if (!resultFen) {
-          logError('info', `Final SF check: ${candidate.san} is illegal — skipped`);
-          continue;
-        }
-
-        try {
-          const finalResult = await analyzePosition(sfWorker, resultFen, sfAnalysisDepth);
-          if (finalResult.depth <= 0) {
-            logError('warning', `Final SF check: ${candidate.san} rejected — Stockfish returned no usable depth.`);
-            continue;
-          }
-          const finalEval = finalResult.score / 100;
-
-          if (failsEvalThreshold(finalEval, color, effectiveThreshold)) {
-            logError(
-              'info',
-              `Final SF check: ${candidate.san} rejected — eval ${finalEval.toFixed(2)} at depth ${finalResult.depth} fails threshold ${effectiveThreshold.toFixed(2)}; best reply ${finalResult.bestMoveSan || finalResult.bestMoveUci || '?'}.`
-            );
-            continue;
-          }
-
-          logError(
-            'info',
-            `Final SF check: ${candidate.san} accepted — eval ${finalEval.toFixed(2)} at depth ${finalResult.depth}; best reply ${finalResult.bestMoveSan || finalResult.bestMoveUci || '?'}.`
-          );
-
-          verifiedCandidates.push({
-            ...candidate,
-            _sfEval: finalEval,
-            _sfDepth: finalResult.depth,
-          });
-        } catch (err: any) {
-          logError('warning', `Final SF check: ${candidate.san} evaluation failed: ${err.message}`);
-        }
-      }
-
-      candidates = verifiedCandidates;
-    }
-
-    if (isOurTurn && candidates.length > 0) {
-      const maxDrop = bestReferenceScoreForUs !== null
-        ? allowedDropFromBestScore(bestReferenceScoreForUs)
-        : MAX_OUR_MOVE_DROP_FROM_BEST;
-      const { kept, rejected } = bestReferenceScoreForUs !== null
-        ? keepMovesCloseToReferenceEval(candidates, color, bestReferenceScoreForUs, maxDrop)
-        : keepMovesCloseToBestEval(candidates, color, maxDrop);
-
-      if (rejected.length > 0) {
-        logError(
-          'info',
-          `Best-move guard: rejected ${rejected.map(({ candidate, drop }) => `${candidate.san} (-${drop.toFixed(2)})`).join(', ')}; max allowed drop ${maxDrop.toFixed(2)}.`
-        );
-      }
-
-      candidates = kept;
-    }
-
-    if (!isOurTurn && candidates.length > 0) {
-      if (!sfWorker) {
-        logError('warning', 'Opponent response check skipped — Stockfish worker unavailable for local fallback.');
-      } else {
-        const checkedCandidates: MoveCandidate[] = [];
-
-        for (const candidate of candidates) {
-          const resultFen = makeMove(fen, candidate.san);
-          if (!resultFen) {
-            logError('info', `Opponent response check: ${candidate.san} is illegal — skipped`);
-            continue;
-          }
-
-          try {
-            const checkResult = await analyzePosition(
-              sfWorker,
-              resultFen,
-              OPPONENT_RESPONSE_CHECK_DEPTH
-            );
-
-            if (checkResult.depth <= 0) {
-              logError('warning', `Opponent response check: ${candidate.san} rejected — no usable eval returned.`);
-              continue;
-            }
-
-            const evalPawns = checkResult.score / 100;
-            checkedCandidates.push({
-              ...candidate,
-              _sfEval: evalPawns,
-              _sfDepth: checkResult.depth,
-            });
-
-            logError(
-              'info',
-              `Opponent response check: ${candidate.san} eval ${evalPawns.toFixed(2)} at depth ${checkResult.depth}; best reply ${checkResult.bestMoveSan || checkResult.bestMoveUci || '?'}.`
-            );
-          } catch (err: any) {
-            logError('warning', `Opponent response check: ${candidate.san} evaluation failed: ${err.message}`);
-          }
-        }
-
-        candidates = checkedCandidates;
-      }
-    }
-
-    // ── Avoid queen trades ──────────────────────────────────────────────────
-    // At this point our candidates have already passed the eval threshold.
-    // Prefer any eval-approved move that keeps queens on and does not allow an
-    // immediate queen-trade reply.
-    if (isOurTurn && avoidQueenTrades && candidates.length > 1) {
-      const queenTradeMoves = candidates.filter((candidate) =>
-        allowsImmediateQueenTrade(fen, candidate.san)
-      );
-      if (queenTradeMoves.length > 0 && queenTradeMoves.length < candidates.length) {
-        const queenTradeSans = new Set(queenTradeMoves.map((candidate) => candidate.san));
-        candidates = candidates.filter((candidate) => !queenTradeSans.has(candidate.san));
-        logError(
-          'info',
-          `Avoid queen trades: skipped ${queenTradeMoves.map((candidate) => candidate.san).join(', ')} because eval-approved alternatives exist.`
-        );
-      } else if (queenTradeMoves.length === candidates.length) {
-        logError(
-          'info',
-          'Avoid queen trades: all eval-approved moves allow a queen trade, so keeping the approved candidate pool.'
-        );
-      }
-    }
-
-    // ── Trickyness: opponent error rate ──────────────────────────────────────
-    // For each of our move candidates, run a quick MultiPV on the resulting
-    // position (opponent's turn) and compute what fraction of the engine's
-    // top moves are significantly worse than the best response.  High error
-    // rate → tricky for the opponent.
-    if (isOurTurn && tw > 0 && sfWorker && candidates.length > 0) {
-      const opponentIsBlack = color === 'white';
-      for (const candidate of candidates) {
-        // Skip if already computed (e.g. in a future inline path)
-        if (candidate._trickynessErrorRate !== undefined) continue;
-        try {
-          const chessT = new Chess(fen);
-          const mvT = chessT.move(candidate.san);
-          if (!mvT) continue;
-          const resultFen = chessT.fen();
-
-          // Measure the replies humans are actually likely to choose, rather
-          // than only Stockfish's top five replies.
-          let likelyReplies: Awaited<ReturnType<typeof getMostLikelyMoves>> = [];
-          if (gatherUseLichess) {
-            try {
-              likelyReplies = await getMostLikelyMoves(resultFen, settings, logError, 8);
-              apiCalls++;
-            } catch {
-              // Non-fatal: use engine replies as a fallback below.
-            }
-          }
-
-          const oppCandidates: MoveCandidate[] = [];
-          for (const reply of likelyReplies) {
-            const afterReply = makeMove(resultFen, reply.san);
-            if (!afterReply) continue;
-            const replyEval = await analyzePosition(sfWorker, afterReply, trickynessDepth);
-            oppCandidates.push({
-              san: reply.san,
-              uci: reply.uci,
-              _sfEval: replyEval.score / 100,
-              _sfDepth: replyEval.depth,
-              _lichess: {
-                totalGames: reply.totalGames,
-                winRate: reply.winRate,
-                lossRate: reply.lossRate,
-                drawRate: reply.drawRate,
-                averageRating: reply.averageRating,
-              },
-            });
-          }
-
-          // Always include the engine's best response as the zero-error
-          // reference. If humans rarely play it, its fallback weight of one is
-          // negligible beside real game counts but its eval anchors the test.
-          const bestReply = await getTopMoves(sfWorker, resultFen, trickynessDepth, 1);
-          for (const move of bestReply) {
-            if (move.eval == null) continue;
-            addOrMergeCandidate(oppCandidates, {
-              san: uciToSan(resultFen, move.uci) ?? move.uci,
-              uci: move.uci,
-              _sfEval: move.eval,
-              _sfDepth: move.depth,
-            });
-          }
-
-          // If Explorer is unavailable, retain the previous engine-only fallback.
-          if (oppCandidates.length < 2) {
-            const oppTopMoves = await getTopMoves(sfWorker, resultFen, trickynessDepth, 5);
-            for (const move of oppTopMoves) {
-              if (move.eval == null) continue;
-              addOrMergeCandidate(oppCandidates, {
-                san: uciToSan(resultFen, move.uci) ?? move.uci,
-                uci: move.uci,
-                _sfEval: move.eval,
-                _sfDepth: move.depth,
-              });
-            }
-          }
-
-          const errorRate = computeOpponentErrorRate(oppCandidates, opponentIsBlack);
-          candidate._trickynessErrorRate = errorRate;
-          if (errorRate !== null) {
-            const weighted = likelyReplies.length > 0 ? ' (human-frequency weighted)' : ' (engine fallback)';
-            logError(
-              'info',
-              `Trickyness: ${candidate.san} → opponent error rate ${(errorRate * 100).toFixed(0)}%${weighted}`
-            );
-          }
-        } catch {
-          candidate._trickynessErrorRate = null; // non-fatal — skip for this candidate
-        }
-      }
-    }
-
-    // ── Combined style + trickyness re-ranking ───────────────────────────────
-    // Replaces the old style-only sort; no-op when both are neutral (style=0,
-    // trickyness=0) or only one candidate is available.
-    if (isOurTurn && (styleValue !== 0 || tw > 0) && candidates.length > 1) {
-      const engineGap = bestEngineMoveGap(candidates, color);
-
-      if (engineGap !== null && engineGap >= 1.25) {
-        candidates = sortByEngineEval(candidates, color);
-        logError(
-          'info',
-          `Engine priority: top move is ahead by ${engineGap.toFixed(1)} pawns, so style/trickyness re-ranking was skipped.`
-        );
-      } else {
-        candidates = [...candidates].sort((a, b) => {
-          const sA = applyTrickynessBonus(
-            styleScore(a, styleValue, color),
-            a._trickynessErrorRate ?? null,
-            tw
-          );
-          const sB = applyTrickynessBonus(
-            styleScore(b, styleValue, color),
-            b._trickynessErrorRate ?? null,
-            tw
-          );
-          return sB - sA;
-        });
-      }
-    }
-
-    if (!isOurTurn && gatherUseLichess && candidates.length > 0) {
-      const opponentIsBlack = color === 'white';
-      const { selected, rejected, best } = selectPracticalOpponentMoves(
-        candidates,
-        opponentIsBlack,
-        targetPV
-      );
-
-      if (rejected.length > 0) {
-        logError(
-          'info',
-          `Opponent quality gate: rejected ${rejected.map(({ candidate, drop }) => `${candidate.san} (-${drop.toFixed(2)})`).join(', ')}; max allowed drop ${MAX_OPPONENT_MOVE_DROP_FROM_BEST.toFixed(2)}.`
-        );
-      }
-      if (best && !candidates.slice(0, targetPV).some((candidate) => candidate.san === best.san)) {
-        logError('info', `Opponent quality gate: reserved a branch for strongest response ${best.san}.`);
-      }
-
-      candidates = selected;
-    } else {
-      candidates = candidates.slice(0, targetPV);
-    }
-    return candidates;
-  }
-
-  // ============================================================
-  // Main execution — BFS (breadth-first) expansion
-  // ============================================================
-  const sourceDesc = analysisMode === 'lichess+stockfish'
-    ? 'Lichess Explorer + Stockfish'
-    : 'Stockfish';
-  logError('info', `Starting repertoire generation for ${color} using ${sourceDesc} (BFS)...`);
-  updateProgress(0, 'Initializing...');
-
-  // Build the BFS queue with starting points
-  const queue: QueueItem[] = [];
-  // Track which node IDs have already been enqueued to prevent the same node
-  // from being expanded twice (e.g. when two seed lines share a leaf node).
-  const enqueuedNodeIds = new Set<string>();
-
-  if (seeds && seeds.length > 0) {
-    for (let si = 0; si < seeds.length; si++) {
-      if (stopRef.current) break;
-
-      const seedNumber = si + 1;
-      const seedMoves = await validateSeedMoves(seeds[si], seedNumber);
-      logError('info', `Processing seed line ${seedNumber}/${seeds.length} (${seedMoves.length} moves)`);
-
-      const leafNode = ensureSeedPath(seedMoves);
-
-      updateProgress(totalNodes, `Seed line ${seedNumber}/${seeds.length} loaded`);
-      if (callbacks.onNodeAdded) {
-        callbacks.onNodeAdded(deepCloneTree(root));
-      }
-
-      // Don't enqueue the same leaf node twice (happens when two seeds share
-      // a common endpoint, which would cause duplicate white-move generation).
-      if (enqueuedNodeIds.has(leafNode.id)) {
-        logError('info', `Seed ${seedNumber}: leaf node already queued — skipping duplicate enqueue`);
-        continue;
-      }
-      enqueuedNodeIds.add(leafNode.id);
-
-      const seedFen = leafNode.fen;
-      const seedTurn = seedFen.split(' ')[1];
-      const seedIsOurTurn = (color === 'white' && seedTurn === 'w') || (color === 'black' && seedTurn === 'b');
-      const seedFullMove = getFullMoveNumber(seedFen);
-      const seedDepth = leafNode.depth || seedMoves.length;
-
-      queue.push({
-        node: leafNode,
-        isOurTurn: seedIsOurTurn,
-        depth: seedDepth,
-        effectiveMaxDepth: maxDepth,
-        fullMoveNumber: seedFullMove,
-        branchPriority: 'likely',
-        sacrificeMovesLeft: 0,
-      });
-    }
-  } else {
-    queue.push({
-      node: root,
-      isOurTurn: color === 'white',
-      depth: 0,
-      effectiveMaxDepth: maxDepth,
-      fullMoveNumber: 1,
-      branchPriority: 'likely',
-      sacrificeMovesLeft: 0,
+  async function choose(fen: string, ourTurn: boolean, node: GeneratorNode): Promise<Candidate[]> {
+    const key = positionKey(fen);
+    // Same position, same recommendation; preserve explicit alternatives in seeds.
+    if (ourTurn && choiceCache.has(key)) return choiceCache.get(key)!.map(c => {
+      const chess = new Chess(fen); chess.move(c.san); return { ...c, fen: chess.fen() };
     });
+    const popular = await popularReplies(fen);
+    const count = ourTurn ? (settings.avoidQueenTrades ? 4 : 1) : maxReplies;
+    const top = await services.topMoves(worker!, fen, settings.sfDepth, count, 90000, signal);
+    check();
+    if (!top.length || top.some(move => move.depth < settings.sfDepth || move.eval == null)) {
+      throw new Error('Engine did not return a verified best move.');
+    }
+    const strongest = top[0];
+    if (ourTurn) {
+      const pool = [...new Set([...top.map(m => m.uci), ...popular.slice(0, 3).map(m => m.uci)])];
+      const checked: Candidate[] = [];
+      for (const uci of pool) {
+        try { checked.push(await candidate(fen, uci, popular.find(move => move.uci === uci))); }
+        catch (error) { check(); if (uci === strongest.uci) throw error; }
+      }
+      const best = Math.max(...checked.map(move => scoreFor(move.score, settings.color)));
+      let sound = checked.filter(move => best - scoreFor(move.score, settings.color) <= settings.maxEvalLoss + 1e-8);
+      if (settings.avoidQueenTrades) {
+        const keepQueens = sound.filter(move => !allowsImmediateQueenTrade(fen, move.san));
+        if (keepQueens.length) sound = keepQueens;
+      }
+      sound.sort((a, b) => (b.stats?.totalGames ?? 0) - (a.stats?.totalGames ?? 0) || scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color));
+      const chosen = sound[0];
+      if (!chosen) throw new Error('No verified continuation available.');
+      const loss = Math.max(0, best - scoreFor(chosen.score, settings.color));
+      chosen.reason = chosen.stats
+        ? `Common in your opponent profile; ${loss.toFixed(2)} pawns below the best verified candidate`
+        : 'Best verified candidate within your preferences';
+      choiceCache.set(key, [chosen]);
+      return [chosen];
+    }
+    let selected: Array<{ uci: string; playRate: number }>;
+    if (popular.length) {
+      selected = selectOpponentReplies(popular, { uci: strongest.uci, playRate: 0 } as LichessMove, coverage, maxReplies);
+      node.responseCoverage = Math.min(1, selected.reduce((sum, move) => sum + move.playRate / 100, 0));
+      coverages.push(node.responseCoverage);
+      if (node.responseCoverage + 1e-8 < coverage) {
+        node.coverageLimited = true;
+        node.warning = 'Reply limit or limited data prevented the requested human coverage.';
+      }
+    } else {
+      selected = top.map(move => ({ uci: move.uci, playRate: 0 }));
+      if (settings.analysisMode !== 'stockfish') {
+        node.coverageLimited = true;
+        node.warning = 'Insufficient human data; replies selected by the engine. Human coverage is unknown.';
+      }
+    }
+    const result: Candidate[] = [];
+    for (const move of selected) {
+      const checked = await candidate(fen, move.uci, popular.find(reply => reply.uci === move.uci));
+      checked.reason = move.uci === strongest.uci ? 'Strongest engine defense'
+        : checked.stats ? `Common opponent reply (${checked.stats.playRate.toFixed(1)}% of database games)` : 'Engine defense';
+      result.push(checked);
+    }
+    return result;
   }
 
-  // ── DFS expansion with deferred branch queue ─────────────────────────────
-  // Main line (ci=0) is always prepended (DFS) so it goes to full depth first.
-  // Branch alternatives (ci>0) are placed in deferredBranches, sorted by depth
-  // ascending. When the DFS stack drains, the shallowest deferred branch is
-  // promoted — guaranteeing early branching is always covered before deep sidelines.
-  const sfAnalysisDepth = settings.sfDepth || 12;
-  const tacticalExtension = settings.tacticalExtension ?? 4;
-  const adaptiveBranching = settings.adaptiveBranching ?? false;
-  const adaptiveLikelyExtraResponses = settings.adaptiveBranchingLikelyExtraResponses ?? 2;
-
-  // Deferred branch items, kept sorted by depth ascending (shallowest first).
-  const deferredBranches: QueueItem[] = [];
-
-  function insertDeferred(newItem: QueueItem): void {
-    // Binary-search insertion to keep array sorted by depth ascending.
-    let lo = 0, hi = deferredBranches.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (deferredBranches[mid].depth <= newItem.depth) lo = mid + 1;
-      else hi = mid;
-    }
-    deferredBranches.splice(lo, 0, newItem);
+  type Pending = { node: GeneratorNode; likelihood: number; ancestors: Set<string> };
+  const queue: Pending[] = [];
+  const seedNodes: Array<{ node: GeneratorNode; parent: GeneratorNode }> = [];
+  function collect(node: GeneratorNode, ancestors = new Set<string>()) {
+    const next = new Set(ancestors).add(positionKey(node.fen));
+    if (!node.children.length) queue.push({ node, likelihood: 1, ancestors });
+    for (const child of node.children) { seedNodes.push({ node: child, parent: node }); collect(child, next); }
   }
-
-  while ((queue.length > 0 || deferredBranches.length > 0) && totalNodes < maxNodes && !stopRef.current) {
-    // If the DFS stack is empty, promote the shallowest deferred branch.
-    if (queue.length === 0 && deferredBranches.length > 0) {
-      queue.unshift(deferredBranches.shift()!);
-    }
-    // Stack: shift from front — items were prepended (DFS order)
-    const item = queue.shift()!;
-
-    // Check move number limit
-    if (item.fullMoveNumber > maxMoveNumber) {
-      // 1. Sacrifice extension: a sac happened earlier in this line — keep going
-      if (item.sacrificeMovesLeft > 0) {
-        logError('info', `Move ${item.fullMoveNumber}: post-sacrifice extension (${item.sacrificeMovesLeft} moves left).`);
-      // 2. Tactical extension: current position has captures / is in check
-      } else if (item.fullMoveNumber <= maxMoveNumber + tacticalExtension && isPositionTactical(item.node.fen)) {
-        logError('info', `Move ${item.fullMoveNumber}: tactical position — extending past move limit.`);
-      // 3. Hard stop
-      } else {
-        item.node.cappedByMoveLimit = true;
-        continue;
-      }
-    }
-
-    // Check depth limit
-    if (item.depth >= item.effectiveMaxDepth) continue;
-
-    const opponentResponseTarget = !item.isOurTurn && adaptiveBranching
-      ? getAdaptiveOpponentResponseCount(
-          settings.maxOpponentResponses || 2,
-          item.branchPriority,
-          adaptiveLikelyExtraResponses
-        )
-      : (settings.maxOpponentResponses || 2);
-
-    if (!item.isOurTurn && adaptiveBranching && opponentResponseTarget !== (settings.maxOpponentResponses || 2)) {
-      logError(
-        'info',
-        `Adaptive branching: ${item.branchPriority} branch → ${opponentResponseTarget} opponent response${opponentResponseTarget !== 1 ? 's' : ''}.`
-      );
-    }
-
-    // Gather candidates from Stockfish / Lichess
-    let candidates = await gatherCandidates(
-      item.node.fen,
-      item.isOurTurn,
-      item.fullMoveNumber,
-      opponentResponseTarget
-    );
-
-    if (candidates.length === 0 && analysisMode === 'lichess+stockfish' && useStockfish && sfWorker) {
-      logError(
-        'info',
-        `No Lichess-qualified moves at move ${item.fullMoveNumber}; retrying this branch with Stockfish-only candidates.`
-      );
-      candidates = await gatherCandidates(
-        item.node.fen,
-        item.isOurTurn,
-        item.fullMoveNumber,
-        opponentResponseTarget,
-        true
-      );
-    }
-
-    // Smart filtering: reduce opponent responses when one move is clearly dominant
-    if (!item.isOurTurn && settings.smartFiltering && useStockfish && !useLichess && candidates.length > 1) {
-      const opponentIsBlack = color === 'white';
-      const { filtered, reason } = selectSignificantMoves(
-        candidates,
-        opponentResponseTarget,
-        opponentIsBlack
-      );
-      if (reason) {
-        logError('info', `Move ${item.fullMoveNumber}: ${filtered.length} of ${candidates.length} responses kept — ${reason}`);
-      }
-      candidates = filtered;
-    }
-
-    if (candidates.length === 0) {
-      logError('info', `No qualifying moves at move ${item.fullMoveNumber}. Branch ends here.`);
-      continue;
-    }
-
-    // Process each candidate — collect queue items, then prepend (DFS)
-    const newQueueItems: QueueItem[] = [];
-    const opponentSiblingLichessGames = !item.isOurTurn && adaptiveBranching
-      ? candidates.reduce((sum, candidate) => sum + Math.max(0, candidate._lichess?.totalGames ?? 0), 0)
-      : 0;
-
-    for (let ci = 0; ci < candidates.length; ci++) {
-      if (stopRef.current) break;
-      if (totalNodes >= maxNodes) break;
-
-      const candidate = candidates[ci];
-
-      // Skip if this node already has a child with this SAN (e.g. from a seed
-      // line that was loaded before BFS reached this position).
-      if (item.node.children.some((c) => c.san === candidate.san)) {
-        logError('info', `Skipping duplicate move ${candidate.san} at move ${item.fullMoveNumber} (already present from seed/earlier expansion)`);
-        continue;
-      }
-
-      const newFen = makeMove(item.node.fen, candidate.san);
-      if (!newFen) {
-        logError('warning', `Invalid move ${candidate.san} at FEN ${item.node.fen}. Skipping.`);
-        continue;
-      }
-
-      const sfEval = candidate._sfEval !== undefined ? (candidate._sfEval ?? null) : null;
-      const sfDepthUsed = sfEval !== null ? (candidate._sfDepth || sfAnalysisDepth) : 0;
-
-      const node = createNode(
-        candidate, sfEval, sfDepthUsed,
-        item.fullMoveNumber, newFen, item.isOurTurn, item.depth + 1
-      );
-
-      if (ci === 0 && item.isOurTurn) {
-        node.isMainLine = true;
-      }
-
-      // Flag dangerous opponent responses
-      if (!item.isOurTurn && settings.flagDangerousResponses && sfEval !== null) {
-        if (isDangerousResponse(sfEval, color)) {
-          node.isDangerous = true;
+  collect(root);
+  let active: GeneratorNode | null = null;
+  let stopped = false;
+  publish();
+  try {
+    // Seeds are audited, never filtered. Shared prefixes are checked only once.
+    for (const { node, parent } of seedNodes) {
+      check();
+      if (!node.isOurMove) continue;
+      progress(`Checking your move ${node.fullMoveNumber}${settings.color === 'white' ? '.' : '...'} ${node.san} (preserved)`);
+      try {
+        const reference = await evaluate(parent.fen);
+        const actual = await evaluate(node.fen);
+        node.stockfish = { eval: actual.score, depth: actual.depth };
+        const drop = scoreFor(reference.score - actual.score, settings.color);
+        if (drop > settings.maxEvalLoss) {
+          node.warning = `Your move was preserved; engine estimates a ${drop.toFixed(2)} pawn loss against its best continuation.`;
+          log('warning', `${node.san}: ${node.warning}`);
         }
+      } catch (error) {
+        check();
+        node.warning = 'Your move was preserved, but engine verification failed.';
+        log('warning', `${node.san}: ${node.warning}`);
       }
-
-      item.node.children.push(node);
-      totalNodes++;
-
-      // Fire onNewNode with a shallow copy (no children) for live board animation
-      if (callbacks.onNewNode) {
-        callbacks.onNewNode({ ...node, children: [] });
-      }
-
-      let statusMsg = `Move ${item.fullMoveNumber}: ${candidate.san} (node ${totalNodes}/${maxNodes})`;
-      if (candidate._lichess) {
-        statusMsg += ` [${candidate._lichess.totalGames} games]`;
-      }
-      updateProgress(totalNodes, statusMsg);
-
-      if (callbacks.onNodeAdded) {
-        callbacks.onNodeAdded(deepCloneTree(root));
-      }
-
-      const nextFenParts = newFen.split(' ');
-      const nextFullMove = parseInt(nextFenParts[5], 10) || item.fullMoveNumber;
-
-      // Depth decay for sidelines
-      let childMaxDepth = item.effectiveMaxDepth;
-      if (settings.depthDecay && ci > 0) {
-        childMaxDepth = Math.max(item.depth + 2, item.effectiveMaxDepth - 4);
-      }
-
-      // Sacrifice detection: if this move gives away more material than it
-      // captures, the resulting line gets extra moves past maxMoveNumber so
-      // the compensation has room to unfold.
-      const sacMoves = sacrificeExtensionMoves(item.node.fen, candidate.san, tacticalExtension);
-      const childSacrificeMovesLeft = sacMoves > 0
-        ? sacMoves                                    // fresh sacrifice — start countdown
-        : Math.max(0, item.sacrificeMovesLeft - 1);  // carry forward existing countdown
-
-      if (sacMoves > 0) {
-        logError('info', `Sacrifice detected: ${candidate.san} at move ${item.fullMoveNumber} — line extended by ${sacMoves} moves.`);
-      }
-
-      const newItem: QueueItem = {
-        node,
-        isOurTurn: !item.isOurTurn,
-        depth: item.depth + 1,
-        effectiveMaxDepth: childMaxDepth,
-        fullMoveNumber: nextFullMove,
-        branchPriority: !item.isOurTurn
-          ? (adaptiveBranching
-              ? classifyAdaptiveDepth(candidate, ci, opponentSiblingLichessGames).category
-              : item.branchPriority)
-          : getOurMoveBranchPriority(item.branchPriority, ci),
-        sacrificeMovesLeft: childSacrificeMovesLeft,
-      };
-
-      if (ci === 0) {
-        // Main line: keep on DFS stack for immediate deep exploration.
-        newQueueItems.push(newItem);
-      } else {
-        // Branch alternative: defer until the current DFS line completes,
-        // then process shallowest-first so early branches are never skipped.
-        insertDeferred(newItem);
-      }
-
-      // Short delay to keep UI responsive
-      await delay(50);
+      publish();
     }
 
-    // DFS: prepend main-line item so it is processed before any deferred branches.
-    if (newQueueItems.length > 0) {
-      queue.unshift(...newQueueItems);
+    while (queue.length) {
+      check();
+      // Cover shallower positions first, prioritising likely paths at equal depth.
+      queue.sort((a, b) => a.node.depth - b.node.depth || b.likelihood - a.likelihood);
+      const item = queue.shift()!;
+      active = item.node;
+      const chess = new Chess(active.fen);
+      if (chess.isGameOver() || item.ancestors.has(positionKey(active.fen))) {
+        active.endReason = item.ancestors.has(positionKey(active.fen)) ? 'repetition' : 'terminal';
+        if (item.ancestors.has(positionKey(active.fen))) active.reason = 'Repeated position; continuation already represented on this line';
+        continue;
+      }
+      const baseDepth = settings.maxMoveNumber * 2;
+      const hardDepth = baseDepth + settings.tacticalExtension * 2;
+      if (active.depth >= baseDepth && (!isTactical(active.fen) || settings.tacticalExtension === 0)) {
+        active.endReason = 'target'; active.cappedByMoveLimit = true; continue;
+      }
+      if (active.depth >= hardDepth) {
+        active.endReason = 'extension-limit'; active.cappedByMoveLimit = true; continue;
+      }
+      if (totalNodes >= maxNodes) { active.endReason = 'budget'; continue; }
+      progress(`Choosing a continuation at move ${chess.fen().split(' ')[5]}…`);
+      try {
+        const ourTurn = chess.turn() === (settings.color === 'white' ? 'w' : 'b');
+        const moves = await choose(active.fen, ourTurn, active);
+        check();
+        const added: Candidate[] = [];
+        for (const move of moves) {
+          if (totalNodes >= maxNodes) { active.endReason = 'budget'; break; }
+          const node: GeneratorNode = {
+            id: `gen_${++nextId}`, san: move.san, uci: move.uci, fen: move.fen,
+            children: [], depth: active.depth + 1, fullMoveNumber: Number(active.fen.split(' ')[5]),
+            isOurMove: ourTurn, isMainLine: active.children.length === 0,
+            isDangerous: !ourTurn && scoreFor(move.score, settings.color) < -0.5,
+            cappedByMoveLimit: false, stockfish: { eval: move.score, depth: move.depth },
+            lichess: move.stats ? { ...move.stats } : null, reason: move.reason,
+          };
+          active.children.push(node); added.push(move); totalNodes++;
+          const probability = move.stats ? move.stats.playRate / 100 : 1 / Math.max(1, moves.length);
+          queue.push({ node, likelihood: item.likelihood * (ourTurn ? 1 : probability), ancestors: new Set(item.ancestors).add(positionKey(active.fen)) });
+          callbacks.onNewNode?.({ ...node, children: [] });
+        }
+        if (active.responseCoverage !== undefined) {
+          active.responseCoverage = added.reduce((sum, move) => sum + (move.stats?.playRate ?? 0) / 100, 0);
+          coverages[coverages.length - 1] = active.responseCoverage;
+          active.coverageLimited = active.responseCoverage + 1e-8 < coverage;
+        }
+      } catch (error) {
+        check();
+        active.endReason = 'analysis-failed';
+        if (active.responseCoverage !== undefined) {
+          active.responseCoverage = 0;
+          active.coverageLimited = true;
+          coverages[coverages.length - 1] = 0;
+        }
+        active.warning = error instanceof Error ? error.message : String(error);
+        log('warning', `Continuation unfinished: ${active.warning}`);
+      }
+      publish();
+      progress(`${totalNodes} moves prepared`);
+      await abortableDelay(0, signal);
     }
+  } catch (error) {
+    if (!stop.current && !signal?.aborted) throw error;
+    stopped = true;
+    if (active && !active.endReason && !active.children.length) active.endReason = 'stopped';
+    for (const item of queue) if (!item.node.endReason) item.node.endReason = 'stopped';
   }
-
-  logError('info', `Generation complete. ${totalNodes} nodes built. ${apiCalls} Lichess API calls made.`);
-  updateProgress(totalNodes, `Complete! ${totalNodes} nodes.`);
-
-  if (callbacks.onComplete) {
-    callbacks.onComplete(deepCloneTree(root));
-  }
-
+  const unfinishedReasons = new Set<GeneratorEndReason>(['budget', 'stopped', 'analysis-failed', 'extension-limit']);
+  let unfinished = 0;
+  let coverageGaps = 0;
+  const count = (node: GeneratorNode) => {
+    if (node.endReason && unfinishedReasons.has(node.endReason)) unfinished++;
+    if (node.coverageLimited) coverageGaps++;
+    node.children.forEach(count);
+  };
+  count(root);
+  const outcome = stopped ? 'stopped' : (unfinished || coverageGaps) ? 'partial' : 'complete';
+  const status = stopped ? `Stopped — ${unfinished} unfinished positions`
+    : unfinished ? `Partial repertoire — ${unfinished} unfinished positions`
+    : coverageGaps ? `Target reached; reply coverage limited at ${coverageGaps} positions`
+    : 'Target reached for all selected lines';
+  log(outcome === 'complete' ? 'info' : 'warning', status);
+  if (explorerFailures) log('warning', `${explorerFailures} positions used engine replies after a database error.`);
+  publish();
+  callbacks.onProgress?.({ nodes: totalNodes, maxNodes, apiCalls, status, outcome, unfinished,
+    averageResponseCoverage: coverages.length ? coverages.reduce((a, b) => a + b, 0) / coverages.length : undefined,
+    coveragePositions: coverages.length, coverageGaps });
+  callbacks.onComplete?.(cloneGeneratorTree(root));
   return root;
 }

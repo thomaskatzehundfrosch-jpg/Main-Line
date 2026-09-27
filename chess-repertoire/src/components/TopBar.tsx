@@ -28,7 +28,7 @@ function GeneratorStatus({ progress, isGenerating }: { progress?: GeneratorProgr
   const pct = progress.maxNodes > 0
     ? Math.min(100, Math.round((progress.nodes / progress.maxNodes) * 100))
     : 0;
-  const label = isGenerating ? (progress.status || 'Generating') : 'Ready';
+  const label = progress.status || (isGenerating ? 'Generating' : 'Ready');
 
   return (
     <div className="flex items-center gap-2 min-w-0">
@@ -38,11 +38,11 @@ function GeneratorStatus({ progress, isGenerating }: { progress?: GeneratorProgr
       <div className="w-20 sm:w-24 h-1 rounded-full bg-bg-hover overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-200 ${isGenerating ? 'bg-accent-teal' : 'bg-text-muted/60'}`}
-          style={{ width: `${pct}%` }}
+          style={{ width: `${progress.nodes} moves` }}
         />
       </div>
       <span className="text-[10px] text-text-muted font-mono whitespace-nowrap">
-        {pct}%
+        {progress.nodes} moves
       </span>
     </div>
   );

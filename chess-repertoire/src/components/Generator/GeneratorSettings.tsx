@@ -1,734 +1,139 @@
-/**
- * Settings panel for the auto-repertoire generator.
- */
-
-import React, { useCallback, useRef, useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { GeneratorSettings, AnalysisMode } from '../../types/generator';
-import { getStyleEvalThreshold } from '../../engine/analyzer';
+import React, { useEffect, useRef, useState } from 'react';
+import type { GeneratorSettings, StudySize } from '../../types/generator';
+import { normalizeGeneratorSettings, STUDY_SIZES } from '../../types/generator';
 import { parsePGN } from '../../utils/generatorPgn';
-import { getStoredToken, getStoredUsername, clearStoredToken, startOAuthFlow } from '../../utils/lichessAuth';
-import { useIsMobile } from '../../hooks/useIsMobile';
+import { clearStoredToken, getStoredToken, getStoredUsername, startOAuthFlow } from '../../utils/lichessAuth';
 
-interface GeneratorSettingsProps {
+interface Props {
   settings: GeneratorSettings;
   setSettings: React.Dispatch<React.SetStateAction<GeneratorSettings>>;
   onGenerate: () => void;
-  onFinishRepertoire: () => void;
   onStop: () => void;
   isGenerating: boolean;
-  sfReady: boolean;
   canGenerate: boolean;
-  canFinishRepertoire: boolean;
-  pgnSeeds: string[][];
-  setPgnSeeds: React.Dispatch<React.SetStateAction<string[][]>>;
+  onLoadSeeds: (seeds: string[][]) => void;
 }
+const inputClass = 'w-full rounded border border-border-subtle bg-bg-primary px-2 py-1.5 text-xs text-text-primary';
+const labelClass = 'block text-xs text-text-secondary space-y-1';
 
-export const GeneratorSettingsPanel: React.FC<GeneratorSettingsProps> = ({
-  settings,
-  setSettings,
-  onGenerate,
-  onFinishRepertoire,
-  onStop,
-  isGenerating,
-  sfReady,
-  canGenerate,
-  canFinishRepertoire,
-  pgnSeeds,
-  setPgnSeeds,
-}) => {
-  const isMobile = useIsMobile();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [lichessUsername, setLichessUsername] = useState<string | null>(getStoredUsername);
-  const [lichessConnected, setLichessConnected] = useState<boolean>(() => !!getStoredToken());
-  const [collapsed, setCollapsed] = useState(() => isMobile);
-
+export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings, onGenerate, onStop, isGenerating, canGenerate, onLoadSeeds }) => {
+  const [pgn, setPgn] = useState('');
+  const [pgnError, setPgnError] = useState('');
+  const [loaded, setLoaded] = useState('');
+  const [connected, setConnected] = useState(() => !!getStoredToken());
+  const [username, setUsername] = useState(getStoredUsername);
+  const fileInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    setCollapsed(isMobile);
-  }, [isMobile]);
-
-  // Sync auth state when the component re-mounts after OAuth redirect
-  useEffect(() => {
-    setLichessConnected(!!getStoredToken());
-    setLichessUsername(getStoredUsername());
-
-    const onAuthUpdated = () => {
-      setLichessConnected(!!getStoredToken());
-      setLichessUsername(getStoredUsername());
-    };
-    window.addEventListener('lichess-auth-updated', onAuthUpdated);
-    return () => window.removeEventListener('lichess-auth-updated', onAuthUpdated);
+    const updateAuth = () => { setConnected(!!getStoredToken()); setUsername(getStoredUsername()); };
+    window.addEventListener('lichess-auth-updated', updateAuth);
+    return () => window.removeEventListener('lichess-auth-updated', updateAuth);
   }, []);
-
-  const handleLichessConnect = useCallback(() => {
-    startOAuthFlow();
-  }, []);
-
-  const handleLichessDisconnect = useCallback(() => {
-    clearStoredToken();
-    setLichessConnected(false);
-    setLichessUsername(null);
-  }, []);
-
-  const update = useCallback(
-    <K extends keyof GeneratorSettings>(key: K, value: GeneratorSettings[K]) => {
-      setSettings((prev) => ({ ...prev, [key]: value }));
-    },
-    [setSettings]
-  );
-
-  const showSf = settings.analysisMode === 'stockfish' || settings.analysisMode === 'lichess+stockfish';
-  const showLichess = settings.analysisMode === 'lichess+stockfish';
-
-  const handlePgnUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const text = ev.target?.result as string;
-        if (text) {
-          const sequences = parsePGN(text);
-          if (sequences.length > 0) {
-            setPgnSeeds(sequences);
-          }
-        }
-      };
-      reader.readAsText(file);
-    },
-    [setPgnSeeds]
-  );
-
-  const handlePgnTextParse = useCallback(
-    (text: string) => {
-      try {
-        const sequences = parsePGN(text);
-        setPgnSeeds(sequences);
-      } catch {
-        // ignore parse errors during typing
-      }
-    },
-    [setPgnSeeds]
-  );
-
-  const toggleSpeed = useCallback(
-    (speed: string) => {
-      setSettings((prev) => {
-        const speeds = [...prev.speeds];
-        const idx = speeds.indexOf(speed);
-        if (idx >= 0) {
-          speeds.splice(idx, 1);
-        } else {
-          speeds.push(speed);
-        }
-        return { ...prev, speeds };
-      });
-    },
-    [setSettings]
-  );
-
-  return (
-    <div className="flex flex-col h-full overflow-y-auto custom-scrollbar">
-      {/* Header */}
-      <div
-        className="px-4 py-3 border-b border-border-subtle flex items-center justify-between cursor-pointer select-none"
-        onClick={() => isMobile && setCollapsed((prev) => !prev)}
-      >
-        <h3 className="font-mono text-[10px] uppercase tracking-wider text-text-muted">
-          Generator Settings
-        </h3>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setCollapsed((prev) => !prev);
-          }}
-          className="btn-icon p-1 md:hidden"
-          title={collapsed ? 'Expand settings' : 'Collapse settings'}
-        >
-          {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-        </button>
-      </div>
-
-      {!collapsed && (
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-5">
-        {/* Color */}
-        <div>
-          <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-            Color
-          </label>
+  const update = <K extends keyof GeneratorSettings>(key: K, value: GeneratorSettings[K]) =>
+    setSettings(prev => normalizeGeneratorSettings({ ...prev, [key]: value }));
+  const loadPgn = () => {
+    try {
+      const lines = parsePGN(pgn);
+      if (!lines.length) throw new Error('No moves found. Paste or choose a PGN containing opening moves.');
+      onLoadSeeds(lines);
+      setLoaded(`${lines.length} starting lines loaded into the board and move tree.`);
+      setPgnError('');
+      setPgn('');
+    } catch (error) { setPgnError(error instanceof Error ? error.message : String(error)); setLoaded(''); }
+  };
+  const preset = STUDY_SIZES[settings.studySize];
+  return <div className="flex flex-col h-full overflow-y-auto custom-scrollbar">
+    <fieldset disabled={isGenerating} className="p-4 space-y-4 disabled:opacity-60">
+      <p className="text-xs text-text-muted">Your existing moves are preserved. Generate adds continuations at the ends of your lines.</p>
+      <label className={labelClass}>Your side
+        <select className={inputClass} value={settings.color} onChange={e => update('color', e.target.value as 'white' | 'black')}>
+          <option value="white">White</option><option value="black">Black</option>
+        </select>
+      </label>
+      <label className={labelClass}>Opponent profile
+        <select className={inputClass} value={settings.analysisMode === 'stockfish' ? 'engine' : settings.useMasters ? 'masters' : 'online'}
+          onChange={e => setSettings(prev => ({ ...prev, analysisMode: e.target.value === 'engine' ? 'stockfish' : 'lichess+stockfish', useMasters: e.target.value === 'masters' }))}>
+          <option value="masters">Masters games</option><option value="online">Online players</option><option value="engine">Engine defenses only</option>
+        </select>
+      </label>
+      {settings.analysisMode !== 'stockfish' && <div className="space-y-2">
+        {!settings.useMasters && <>
           <div className="flex gap-2">
-            {(['white', 'black'] as const).map((c) => (
-              <button
-                key={c}
-                onClick={() => update('color', c)}
-                disabled={isGenerating}
-                className={`flex-1 px-3 py-1.5 rounded text-xs font-mono border transition-all ${
-                  settings.color === c
-                    ? 'border-accent-teal text-accent-teal bg-accent-teal/10'
-                    : 'border-border-subtle text-text-muted hover:border-border-active'
-                }`}
-              >
-                {c}
-              </button>
-            ))}
+            <label className={labelClass}>Rating from<select className={inputClass} value={settings.ratingMin} onChange={e => update('ratingMin', Number(e.target.value))}>
+              {[1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500].map(n => <option key={n}>{n}</option>)}
+            </select></label>
+            <label className={labelClass}>To<select className={inputClass} value={settings.ratingMax} onChange={e => update('ratingMax', Number(e.target.value))}>
+              {[1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500].map(n => <option key={n}>{n}</option>)}
+            </select></label>
           </div>
-        </div>
-
-        {/* Repertoire Style */}
-        {(() => {
-          const sv = settings.styleValue ?? 0;
-          const styleLabels: Record<number, string> = {
-            '-2': 'Very Aggressive',
-            '-1': 'Aggressive',
-            '0': 'Balanced',
-            '1': 'Solid',
-            '2': 'Very Solid',
-          };
-          const styleDescriptions: Record<number, string> = {
-            '-2': 'Sharp, high-risk lines — maximises win rate, ignores safety',
-            '-1': 'Favors decisive, tactical lines with high win rates',
-            '0': 'Engine-first selection, no style bias',
-            '1': 'Favors safe, positionally sound lines',
-            '2': 'Strictly avoids risky moves — minimises losing chances',
-          };
-          const trackColor =
-            sv <= -1 ? '#ef4444'  // red for aggressive
-            : sv >= 1 ? '#3b82f6' // blue for solid
-            : '#14b8a6';          // teal for balanced
-          return (
-            <div>
-              <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-                Style
-              </label>
-              <div className="flex justify-between text-[10px] font-mono text-text-muted mb-1 px-0.5">
-                <span style={{ color: sv === -2 ? '#ef4444' : undefined }}>Very Agg</span>
-                <span style={{ color: sv === -1 ? '#ef4444' : undefined }}>Agg</span>
-                <span style={{ color: sv === 0 ? '#14b8a6' : undefined }}>Balanced</span>
-                <span style={{ color: sv === 1 ? '#3b82f6' : undefined }}>Solid</span>
-                <span style={{ color: sv === 2 ? '#3b82f6' : undefined }}>V.Solid</span>
-              </div>
-              <input
-                type="range"
-                min={-2}
-                max={2}
-                step={1}
-                value={sv}
-                onChange={(e) => update('styleValue', parseInt(e.target.value))}
-                disabled={isGenerating}
-                style={{ accentColor: trackColor }}
-                className="w-full cursor-pointer"
-              />
-              <p className="text-[10px] mt-1" style={{ color: trackColor }}>
-                <span className="font-semibold">{styleLabels[sv]}</span>
-                {' — '}
-                <span className="opacity-80">{styleDescriptions[sv]}</span>
-              </p>
-            </div>
-          );
-        })()}
-
-        {/* Trickyness */}
-        {(() => {
-          const on = (settings.trickynessWeight ?? 0) > 0;
-          return (
-            <div>
-              <div className="flex items-center justify-between">
-                <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
-                  Trickyness
-                </label>
-                <button
-                  role="switch"
-                  aria-checked={on}
-                  disabled={isGenerating}
-                  onClick={() => update('trickynessWeight', on ? 0 : 5)}
-                  className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
-                    isGenerating ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
-                  } ${on ? 'bg-amber-400' : 'bg-bg-hover border border-border-active'}`}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
-                      on ? 'translate-x-4' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
-              </div>
-              <p className="text-[10px] mt-1" style={{ color: on ? '#f59e0b' : '#6b7280' }}>
-                {on
-                  ? 'Maximum — seeks moves that maximise opponent difficulty'
-                  : 'Off — no trickyness preference'}
-              </p>
-            </div>
-          );
-        })()}
-
-        {/* Avoid Queen Trades */}
-        {(() => {
-          const on = settings.avoidQueenTrades ?? false;
-          return (
-            <div>
-              <div className="flex items-center justify-between">
-                <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider">
-                  Avoid Queen Trades
-                </label>
-                <button
-                  role="switch"
-                  aria-checked={on}
-                  disabled={isGenerating}
-                  onClick={() => update('avoidQueenTrades', !on)}
-                  className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
-                    isGenerating ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
-                  } ${on ? 'bg-accent-teal' : 'bg-bg-hover border border-border-active'}`}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
-                      on ? 'translate-x-4' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
-              </div>
-              <p className="text-[10px] mt-1" style={{ color: on ? '#14b8a6' : '#6b7280' }}>
-                {on
-                  ? 'On - skips queen-trade lines when eval-approved alternatives exist'
-                  : 'Off - queen trades allowed'}
-              </p>
-            </div>
-          );
-        })()}
-
-        {/* Analysis Mode */}
-        <div>
-          <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-            Analysis Mode
+          <div className="flex flex-wrap gap-2 text-xs text-text-secondary">
+            {['bullet', 'blitz', 'rapid', 'classical'].map(speed => <label key={speed} className="flex gap-1 items-center">
+              <input type="checkbox" checked={settings.speeds.includes(speed)}
+                disabled={isGenerating || settings.speeds.length === 1 && settings.speeds.includes(speed)}
+                onChange={e => update('speeds', e.target.checked ? [...settings.speeds, speed] : settings.speeds.filter(s => s !== speed))} />{speed}
+            </label>)}
+          </div>
+        </>}
+        {connected ? <div className="text-xs text-text-muted flex justify-between gap-2"><span>Connected: {username ?? 'Lichess'}</span>
+          <button type="button" onClick={() => { clearStoredToken(); setConnected(false); }}>Disconnect</button></div>
+          : <button type="button" className="btn-secondary w-full" onClick={() => startOAuthFlow()}>Connect Lichess</button>}
+      </div>}
+      <label className={labelClass}>Study size
+        <select className={inputClass} value={settings.studySize} onChange={e => update('studySize', e.target.value as StudySize)}>
+          <option value="compact">Compact</option><option value="standard">Standard</option><option value="broad">Broad</option>
+        </select>
+      </label>
+      <p className="text-[11px] text-text-muted">{settings.analysisMode === 'stockfish'
+        ? `Up to ${preset.maxReplies} engine replies per position.`
+        : `Aim to cover ${Math.round(preset.coverage * 100)}% of recorded replies at each position, including the strongest defense; up to ${preset.maxReplies} replies.`}
+        {' '}Budget: {preset.maxNodes} moves. Limited data or budget can leave gaps.</p>
+      <label className={labelClass}>Target move number
+        <input className={inputClass} type="number" min="1" max="40" value={settings.maxMoveNumber} onChange={e => update('maxMoveNumber', e.target.valueAsNumber)} />
+      </label>
+      <details className="text-xs text-text-secondary">
+        <summary className="cursor-pointer py-1">Advanced preferences</summary>
+        <div className="space-y-3 pt-3">
+          <label className={labelClass}>Analysis quality
+            <select className={inputClass} value={settings.sfDepth} onChange={e => update('sfDepth', Number(e.target.value))}>
+              <option value="12">Quick</option><option value="16">Standard</option><option value="20">Thorough</option><option value="25">Deep — slower</option>
+            </select>
           </label>
-          <div className="grid grid-cols-2 gap-1">
-            {(['stockfish', 'lichess+stockfish'] as AnalysisMode[]).map((mode) => (
-              <button
-                key={mode}
-                onClick={() => update('analysisMode', mode)}
-                disabled={isGenerating}
-                className={`px-2 py-1.5 rounded text-[11px] font-mono border transition-all ${
-                  settings.analysisMode === mode
-                    ? mode === 'stockfish'
-                      ? 'border-accent-teal text-accent-teal bg-accent-teal/10'
-                      : 'border-accent-blue text-accent-blue bg-accent-blue/10'
-                    : 'border-border-subtle text-text-muted hover:border-border-active'
-                }`}
-              >
-                {mode === 'stockfish' ? 'Stockfish' : 'Lichess + SF'}
-              </button>
-            ))}
-          </div>
-          {!sfReady && showSf && (
-            <p className="text-[10px] text-accent-amber mt-1">Stockfish not ready yet...</p>
-          )}
-          {showLichess && (
-            <p className="text-[10px] text-text-muted mt-1">
-              Lichess Explorer data requires a connected account. Moves ranked by popularity + win rate.
-            </p>
-          )}
-        </div>
-
-        {/* Depth Settings */}
-        <div>
-          <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-            Depth
+          <label className={labelClass}>Allowed loss versus best candidate (pawns)
+            <input className={inputClass} type="number" min="0" max="1" step="0.1" value={settings.maxEvalLoss} onChange={e => update('maxEvalLoss', e.target.valueAsNumber)} />
           </label>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-secondary">Max move number</span>
-              <input
-                type="number"
-                min={5}
-                max={40}
-                value={settings.maxMoveNumber}
-                onChange={(e) => update('maxMoveNumber', parseInt(e.target.value) || 15)}
-                disabled={isGenerating}
-                className="w-16 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-              />
-            </div>
-          </div>
-        </div>
-
-        {/* Branching */}
-        <div>
-          <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-            Branching
+          <label className={labelClass}>Extra moves for checks and captures
+            <select className={inputClass} value={settings.tacticalExtension} onChange={e => update('tacticalExtension', Number(e.target.value))}>
+              {[0, 1, 2, 3, 4].map(n => <option key={n} value={n}>{n === 0 ? 'Off' : n}</option>)}
+            </select>
           </label>
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-secondary">Our moves (top N)</span>
-              <select
-                value={settings.maxBranchesOur}
-                onChange={(e) => update('maxBranchesOur', parseInt(e.target.value))}
-                disabled={isGenerating}
-                className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-              >
-                {[1, 2, 3].map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-secondary">Opponent responses</span>
-              <select
-                value={settings.maxOpponentResponses}
-                onChange={(e) => update('maxOpponentResponses', parseInt(e.target.value))}
-                disabled={isGenerating}
-                className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-              >
-                {[1, 2, 3].map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-text-secondary">Adaptive branching</span>
-                <button
-                  role="switch"
-                  aria-checked={settings.adaptiveBranching ?? false}
-                  disabled={isGenerating}
-                  onClick={() => update('adaptiveBranching', !(settings.adaptiveBranching ?? false))}
-                  className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ${
-                    isGenerating ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
-                  } ${(settings.adaptiveBranching ?? false) ? 'bg-accent-teal' : 'bg-bg-hover border border-border-active'}`}
-                >
-                  <span
-                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
-                      (settings.adaptiveBranching ?? false) ? 'translate-x-4' : 'translate-x-0'
-                    }`}
-                  />
-                </button>
-              </div>
-              {(settings.adaptiveBranching ?? false) && (
-                <div className="mt-2 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-text-secondary">Likely extra responses</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={6}
-                      value={settings.adaptiveBranchingLikelyExtraResponses ?? 2}
-                      onChange={(e) => update('adaptiveBranchingLikelyExtraResponses', parseInt(e.target.value) || 0)}
-                      disabled={isGenerating}
-                      className="w-16 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-                    />
-                  </div>
-                  <p className="text-[10px] text-text-muted leading-tight">
-                    Likely/main branches include more opponent replies; rare branches keep only one.
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-secondary">Max nodes</span>
-              <input
-                type="number"
-                min={10}
-                max={2000}
-                step={10}
-                value={settings.maxNodes}
-                onChange={(e) => update('maxNodes', parseInt(e.target.value) || 300)}
-                disabled={isGenerating}
-                className="w-20 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-              />
-            </div>
-          </div>
+          <label className="flex gap-2"><input type="checkbox" checked={settings.avoidQueenTrades} onChange={e => update('avoidQueenTrades', e.target.checked)} />Prefer to avoid immediate queen exchanges</label>
+          <p className="text-[11px] text-text-muted">Only among moves within your allowed evaluation loss. Later exchanges may still happen.</p>
+          {settings.analysisMode !== 'stockfish' && <label className={labelClass}>Minimum games supporting a move
+            <input className={inputClass} type="number" min="1" max="10000" value={settings.minGames} onChange={e => update('minGames', e.target.valueAsNumber)} />
+          </label>}
         </div>
-
-        {/* Stockfish Settings */}
-        {showSf && (
-          <div>
-            <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-              Stockfish
-            </label>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-text-secondary">Eval depth</span>
-                <select
-                  value={settings.sfDepth}
-                  onChange={(e) => update('sfDepth', parseInt(e.target.value))}
-                  disabled={isGenerating}
-                  className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-                >
-                  {[8, 12, 15, 16, 20, 25].map((d) => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-text-secondary">Candidate depth</span>
-                <select
-                  value={settings.candidateDepth ?? settings.sfDepth}
-                  onChange={(e) => update('candidateDepth', parseInt(e.target.value))}
-                  disabled={isGenerating}
-                  className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-                >
-                  {[8, 12, 15, 16, 20, 25].map((d) => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-text-secondary">Trickyness depth</span>
-                <select
-                  value={settings.trickynessDepth ?? settings.sfDepth}
-                  onChange={(e) => update('trickynessDepth', parseInt(e.target.value))}
-                  disabled={isGenerating}
-                  className="h-7 px-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-                >
-                  {[8, 12, 15, 16, 20, 25].map((d) => (
-                    <option key={d} value={d}>{d}</option>
-                  ))}
-                </select>
-              </div>
-              <p className="text-[10px] text-text-muted leading-tight">
-                Candidate depth controls MultiPV move discovery. Eval depth checks individual moves. Trickyness depth checks opponent-error rates.
-              </p>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-text-secondary">Eval threshold</span>
-                <input
-                  type="number"
-                  step={0.1}
-                  min={-10}
-                  max={10}
-                  value={settings.evalThreshold}
-                  onChange={(e) => update('evalThreshold', parseFloat(e.target.value) || -0.3)}
-                  disabled={isGenerating}
-                  className="w-20 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal"
-                />
-              </div>
-              {(() => {
-                const effective = getStyleEvalThreshold(settings.evalThreshold ?? -0.3, settings.styleValue ?? 0);
-                const adjusted = Math.abs(effective - (settings.evalThreshold ?? -0.3)) > 0.001;
-                return adjusted ? (
-                  <p className="text-[10px] text-accent-amber leading-tight">
-                    Effective: <span className="font-mono">{effective.toFixed(2)}</span> (style {settings.styleValue > 0 ? '+' : ''}{settings.styleValue} adjusts by {(effective - (settings.evalThreshold ?? -0.3)).toFixed(2)})
-                  </p>
-                ) : null;
-              })()}
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.flagDangerousResponses}
-                  onChange={(e) => update('flagDangerousResponses', e.target.checked)}
-                  disabled={isGenerating}
-                  className="accent-accent-teal"
-                />
-                <span className="text-[11px] text-text-secondary">Flag dangerous responses</span>
-              </label>
-            </div>
-          </div>
-        )}
-
-        {/* Lichess Settings */}
-        {showLichess && (
-          <div>
-            <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-              Lichess Explorer
-            </label>
-            <div className="space-y-2">
-              {/* Database source */}
-              <div>
-                <span className="text-[11px] text-text-secondary block mb-1">Database</span>
-                <div className="flex gap-1">
-                  {([false, true] as const).map((masters) => (
-                    <button
-                      key={String(masters)}
-                      onClick={() => update('useMasters', masters)}
-                      disabled={isGenerating}
-                      className={`flex-1 px-2 py-1.5 rounded text-[11px] font-mono border transition-all ${
-                        settings.useMasters === masters
-                          ? 'border-accent-blue text-accent-blue bg-accent-blue/10'
-                          : 'border-border-subtle text-text-muted hover:border-border-active'
-                      }`}
-                    >
-                      {masters ? 'Masters' : 'Lichess DB'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Rating range — hidden for masters */}
-              {!settings.useMasters && (
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] text-text-secondary">Rating range</span>
-                  <div className="flex items-center gap-1">
-                    <select
-                      value={settings.ratingMin}
-                      onChange={(e) => update('ratingMin', parseInt(e.target.value))}
-                      disabled={isGenerating}
-                      className="h-7 px-1 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-blue"
-                    >
-                      {[1000, 1200, 1400, 1600, 1800, 2000, 2200].map((r) => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </select>
-                    <span className="text-[10px] text-text-muted">–</span>
-                    <select
-                      value={settings.ratingMax}
-                      onChange={(e) => update('ratingMax', parseInt(e.target.value))}
-                      disabled={isGenerating}
-                      className="h-7 px-1 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-blue"
-                    >
-                      {[1200, 1400, 1600, 1800, 2000, 2200, 2500].map((r) => (
-                        <option key={r} value={r}>{r}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              {/* Time controls — hidden for masters */}
-              {!settings.useMasters && (
-                <div>
-                  <span className="text-[11px] text-text-secondary block mb-1">Time controls</span>
-                  <div className="flex gap-1 flex-wrap">
-                    {(['bullet', 'blitz', 'rapid', 'classical'] as const).map((speed) => (
-                      <button
-                        key={speed}
-                        onClick={() => toggleSpeed(speed)}
-                        disabled={isGenerating}
-                        className={`px-2 py-1 rounded text-[10px] font-mono border transition-all ${
-                          settings.speeds.includes(speed)
-                            ? 'border-accent-blue text-accent-blue bg-accent-blue/10'
-                            : 'border-border-subtle text-text-muted hover:border-border-active'
-                        }`}
-                      >
-                        {speed}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {/* Min games */}
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] text-text-secondary">Min games per move</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={10000}
-                  step={5}
-                  value={settings.minGames}
-                  onChange={(e) => update('minGames', parseInt(e.target.value) || 10)}
-                  disabled={isGenerating}
-                  className="w-20 h-7 text-center rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-blue"
-                />
-              </div>
-              {/* Lichess account */}
-              <div>
-                <span className="text-[11px] text-text-secondary block mb-1">Account</span>
-                {lichessConnected ? (
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[11px] font-mono text-accent-blue truncate">
-                      ✓ {lichessUsername ?? 'connected'}
-                    </span>
-                    <button
-                      onClick={handleLichessDisconnect}
-                      disabled={isGenerating}
-                      className="text-[10px] font-mono text-text-muted hover:text-accent-red transition-colors shrink-0"
-                    >
-                      Disconnect
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleLichessConnect}
-                    disabled={isGenerating}
-                    className="w-full py-3 rounded border border-accent-blue text-accent-blue font-mono text-sm hover:bg-accent-blue/10 transition-colors flex flex-col items-center gap-1"
-                  >
-                    <span className="font-semibold">Connect Lichess</span>
-                    <span className="text-[10px] text-text-secondary leading-tight">
-                      Required for Lichess-powered generation. You can also manage this in Settings → Lichess.
-                    </span>
-                  </button>
-                )}
-              </div>
-
-            </div>
-          </div>
-        )}
-
-        {/* PGN Seeds */}
-        <div>
-          <label className="text-[10px] font-mono text-text-muted uppercase tracking-wider block mb-2">
-            PGN Seeds (optional)
-          </label>
-          <textarea
-            placeholder="Paste PGN to set starting positions..."
-            rows={3}
-            disabled={isGenerating}
-            onChange={(e) => handlePgnTextParse(e.target.value)}
-            className="w-full px-3 py-2 rounded border border-border-subtle bg-bg-primary text-text-primary font-mono text-xs outline-none focus:border-accent-teal resize-none"
-          />
-          <div className="flex items-center gap-2 mt-1">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isGenerating}
-              className="text-[10px] font-mono text-text-muted hover:text-accent-teal transition-colors"
-            >
-              Upload PGN file
-            </button>
-            {pgnSeeds.length > 0 && (
-              <span className="text-[10px] font-mono text-accent-teal">
-                {pgnSeeds.length} seed line{pgnSeeds.length !== 1 ? 's' : ''} loaded
-              </span>
-            )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pgn"
-              onChange={handlePgnUpload}
-              className="hidden"
-            />
-          </div>
+      </details>
+      <details className="text-xs text-text-secondary">
+        <summary className="cursor-pointer py-1">Load starting moves from PGN</summary>
+        <p className="text-[11px] text-text-muted my-2">Replaces the current generator tree. Review and edit the loaded moves on the board before generating.</p>
+        <textarea aria-label="Starting PGN" className={inputClass} rows={4} value={pgn} onChange={e => { setPgn(e.target.value); setPgnError(''); setLoaded(''); }} />
+        <div className="flex gap-2 mt-2">
+          <button type="button" className="btn-secondary" onClick={() => fileInput.current?.click()}>Choose file</button>
+          <button type="button" className="btn-primary" disabled={!pgn.trim()} onClick={loadPgn}>Load moves</button>
         </div>
-      </div>
-      )}
-
-      {/* Action Buttons */}
-      <div className="sticky bottom-0 p-4 border-t border-border-subtle space-y-2 bg-bg-surface/95 backdrop-blur">
-        {showLichess && !lichessConnected && !isGenerating && (
-          <p className="text-[10px] text-accent-amber text-center font-mono">
-            Connect Lichess to generate with Lichess + SF.
-          </p>
-        )}
-        {isGenerating ? (
-          <button
-            onClick={onStop}
-            className="w-full py-2 rounded bg-accent-red text-white font-mono text-xs uppercase tracking-wider hover:bg-accent-red/90 transition-colors flex items-center justify-center gap-2"
-          >
-            Stop Generation
-          </button>
-        ) : (
-          <>
-            <button
-              onClick={onFinishRepertoire}
-              disabled={!canGenerate || !canFinishRepertoire}
-              className={`w-full py-2 rounded font-mono text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 ${
-                canGenerate && canFinishRepertoire
-                  ? 'bg-accent-blue text-white hover:bg-accent-blue/90'
-                  : 'bg-bg-hover text-text-muted cursor-not-allowed'
-              }`}
-              title="Continue every current generator leaf line to the configured max move number"
-            >
-              Finish Repertoire
-            </button>
-            <button
-              onClick={onGenerate}
-              disabled={!canGenerate}
-              className={`w-full py-2 rounded font-mono text-xs uppercase tracking-wider transition-colors flex items-center justify-center gap-2 ${
-                canGenerate
-                  ? 'bg-accent-teal text-white hover:bg-accent-teal/90'
-                  : 'bg-bg-hover text-text-muted cursor-not-allowed'
-              }`}
-            >
-              Generate Repertoire
-            </button>
-          </>
-        )}
-      </div>
+        <input ref={fileInput} type="file" accept=".pgn" className="hidden" onChange={async e => {
+          const file = e.target.files?.[0];
+          if (file) try { setPgn(await file.text()); setPgnError(''); setLoaded(''); } catch { setPgnError('Could not read this file.'); }
+          if (fileInput.current) fileInput.current.value = '';
+        }} />
+        {pgnError && <p role="alert" className="text-accent-red mt-2">{pgnError}</p>}
+        {loaded && <p role="status" className="text-accent-teal mt-2">{loaded}</p>}
+      </details>
+    </fieldset>
+    <div className="sticky bottom-0 p-4 border-t border-border-subtle bg-bg-surface mt-auto">
+      {settings.analysisMode !== 'stockfish' && !connected && <p className="text-xs text-accent-amber mb-2">Connect Lichess or choose engine defenses to generate.</p>}
+      <button className="btn-primary w-full disabled:opacity-40" disabled={!isGenerating && !canGenerate} onClick={isGenerating ? onStop : onGenerate}>
+        {isGenerating ? 'Stop generation' : 'Generate continuations'}
+      </button>
     </div>
-  );
+  </div>;
 };

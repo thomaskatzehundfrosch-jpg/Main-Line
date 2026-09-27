@@ -1,7 +1,6 @@
 import { Chess } from 'chess.js';
 import type { ImportedGame, MistakeRecord, MistakeTier } from '../types/game';
 import { classifyMistake, generateMistakeId } from '../types/game';
-import type { MoveCandidate, RepertoireStyle } from '../types/generator';
 import { logger } from '../utils/errorLogger';
 import { getCloudEval } from '../utils/lichessApi';
 
@@ -111,17 +110,19 @@ export function analyzePosition(
   depth: number
 ): Promise<PositionEval> {
   return analyzePositionFromCloud(fen).then((cloudResult) => {
-    if (cloudResult) return cloudResult;
+    if (cloudResult && cloudResult.depth >= depth) return cloudResult;
     return analyzePositionWithStockfish(worker, fen, depth);
   });
 }
 
-function analyzePositionWithStockfish(
+export function analyzePositionWithStockfish(
   worker: Worker,
   fen: string,
-  depth: number
+  depth: number,
+  signal?: AbortSignal
 ): Promise<PositionEval> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Generation stopped', 'AbortError')); return; }
     let bestScore = 0;
     let isMate = false;
     let mateIn: number | null = null;
@@ -131,6 +132,7 @@ function analyzePositionWithStockfish(
 
     const cleanup = () => {
       clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', abortHandler);
       worker.removeEventListener('message', syncHandler);
       worker.removeEventListener('message', analysisHandler);
       worker.removeEventListener('error', errorHandler);
@@ -148,6 +150,11 @@ function analyzePositionWithStockfish(
       settled = true;
       cleanup();
       reject(error);
+    };
+
+    const abortHandler = () => {
+      rejectOnce(new DOMException('Generation stopped', 'AbortError'));
+      try { worker.postMessage('stop'); } catch { /* worker already closed */ }
     };
 
     const errorHandler = (event: ErrorEvent) => {
@@ -261,6 +268,7 @@ function analyzePositionWithStockfish(
         startAnalysis();
       }
     };
+    signal?.addEventListener('abort', abortHandler, { once: true });
     worker.addEventListener('error', errorHandler);
     worker.addEventListener('message', syncHandler);
     worker.postMessage('stop');
@@ -605,20 +613,21 @@ export function getTopMoves(
   timeoutMs: number = 90000
 ): Promise<TopMoveResult[]> {
   return getTopMovesFromCloud(fen, numMoves).then((cloudResults) => {
-    if (cloudResults) return cloudResults;
+    if (cloudResults && cloudResults.length >= numMoves && cloudResults.every(result => result.depth >= depth)) return cloudResults;
     return getTopMovesWithStockfish(worker, fen, depth, numMoves, timeoutMs);
   });
 }
 
-function getTopMovesWithStockfish(
+export function getTopMovesWithStockfish(
   worker: Worker,
   fen: string,
   depth: number,
   numMoves: number = 3,
-  timeoutMs: number = 90000
+  timeoutMs: number = 90000,
+  signal?: AbortSignal
 ): Promise<TopMoveResult[]> {
   if (numMoves <= 1) {
-    return analyzePositionWithStockfish(worker, fen, depth).then((result) => ([{
+    return analyzePositionWithStockfish(worker, fen, depth, signal).then((result) => ([{
       uci: result.bestMoveUci,
       eval: result.score / 100,
       depth: result.depth,
@@ -626,11 +635,13 @@ function getTopMovesWithStockfish(
   }
 
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException('Generation stopped', 'AbortError')); return; }
     let settled = false;
     let bestMoveUci = '';
 
     const cleanup = () => {
       clearTimeout(timeout);
+      signal?.removeEventListener('abort', abortHandler);
       worker.removeEventListener('message', syncHandler);
       worker.removeEventListener('message', optionReadyHandler);
       worker.removeEventListener('message', handler);
@@ -649,6 +660,11 @@ function getTopMovesWithStockfish(
       settled = true;
       cleanup();
       reject(error);
+    };
+
+    const abortHandler = () => {
+      rejectOnce(new DOMException('Generation stopped', 'AbortError'));
+      try { worker.postMessage('stop'); } catch { /* worker already closed */ }
     };
 
     const errorHandler = (event: ErrorEvent) => {
@@ -755,318 +771,10 @@ function getTopMovesWithStockfish(
       }
     };
 
+    signal?.addEventListener('abort', abortHandler, { once: true });
     worker.addEventListener('error', errorHandler);
     worker.addEventListener('message', syncHandler);
     worker.postMessage('stop');
     worker.postMessage('isready');
   });
-}
-
-/**
- * Check if an eval fails the threshold for a given side.
- * Eval is from White's perspective.
- */
-export function failsEvalThreshold(evalScore: number | null, color: string, threshold: number): boolean {
-  if (evalScore === null || evalScore === undefined) return false;
-  if (color === 'white') {
-    return evalScore < threshold;
-  } else {
-    return evalScore > -threshold;
-  }
-}
-
-/**
- * Check if an opponent response is dangerous.
- * Eval is from White's perspective.
- */
-export function isDangerousResponse(evalScore: number | null, color: string): boolean {
-  if (evalScore === null || evalScore === undefined) return false;
-  if (color === 'white') {
-    return evalScore < -0.8;
-  } else {
-    return evalScore > 0.8;
-  }
-}
-
-/**
- * Configurable thresholds for smart filtering of opponent responses.
- * All values are in pawns.
- */
-export const SMART_FILTER_THRESHOLDS = {
-  /** Eval gap between #1 and #2 to treat position as "only move" */
-  onlyMoveGap: 1.5,
-  /** Eval gap between #N and #N+1 to cut off remaining weaker moves */
-  significantGap: 1.0,
-};
-
-/**
- * Filter opponent move candidates by eval gap significance.
- *
- * When one move is vastly superior to the rest, there's no point including
- * weak alternatives in the repertoire tree. This function trims the list:
- *
- * - If #1 is a forced mate and #2 is not → only move
- * - If gap(#1, #2) >= onlyMoveGap → return only #1
- * - If gap(#2, #3) >= significantGap → return #1 and #2
- * - Otherwise return up to maxCount
- *
- * Candidates must include _sfEval (White's perspective) for filtering to work.
- * If evals are missing, returns candidates unfiltered up to maxCount.
- *
- * @param candidates - Array of move candidates (should be pre-sorted best-first
- *                     from getTopMoves / gatherCandidates)
- * @param maxCount   - User's requested max opponent responses
- * @param opponentIsBlack - True when opponent is Black (we play White)
- * @returns Filtered candidate array (length ≤ maxCount)
- */
-export function selectSignificantMoves(
-  candidates: MoveCandidate[],
-  maxCount: number,
-  opponentIsBlack: boolean
-): { filtered: MoveCandidate[]; reason: string | null } {
-  if (candidates.length <= 1 || maxCount <= 1) {
-    return { filtered: candidates.slice(0, maxCount), reason: null };
-  }
-
-  // Separate candidates with and without SF evals
-  const withEval = candidates.filter((c) => c._sfEval != null);
-  const withoutEval = candidates.filter((c) => c._sfEval == null);
-
-  if (withEval.length <= 1) {
-    // Can't compute gaps without at least 2 evals
-    return { filtered: candidates.slice(0, maxCount), reason: null };
-  }
-
-  // Sort by eval quality for the opponent.
-  // Opponent's best move = lowest eval (White's perspective) if Black,
-  //                        highest eval if White.
-  const sorted = [...withEval].sort((a, b) => {
-    const ea = a._sfEval!;
-    const eb = b._sfEval!;
-    return opponentIsBlack ? ea - eb : eb - ea;
-  });
-
-  // Helper: detect mate-level scores (±99 from getTopMoves encoding)
-  const isMateScore = (e: number) => Math.abs(e) >= 90;
-
-  // Check: mate vs non-mate → only move
-  if (isMateScore(sorted[0]._sfEval!) && !isMateScore(sorted[1]._sfEval!)) {
-    return { filtered: [sorted[0]], reason: 'only move (mate)' };
-  }
-
-  // Check gap between #1 and #2
-  const gap12 = Math.abs(sorted[0]._sfEval! - sorted[1]._sfEval!);
-  if (gap12 >= SMART_FILTER_THRESHOLDS.onlyMoveGap) {
-    return {
-      filtered: [sorted[0]],
-      reason: `only move (gap ${gap12.toFixed(1)} pawns)`,
-    };
-  }
-
-  // Check gap between #2 and #3 (if 3+ candidates available and user wants 3+)
-  if (sorted.length >= 3 && maxCount >= 3) {
-    const gap23 = Math.abs(sorted[1]._sfEval! - sorted[2]._sfEval!);
-    if (gap23 >= SMART_FILTER_THRESHOLDS.significantGap) {
-      return {
-        filtered: sorted.slice(0, 2),
-        reason: `2 of ${sorted.length} kept (gap ${gap23.toFixed(1)} pawns after #2)`,
-      };
-    }
-  }
-
-  // No significant gaps — return all candidates up to maxCount
-  const merged = [...sorted, ...withoutEval];
-  return { filtered: merged.slice(0, maxCount), reason: null };
-}
-
-// ============================================================
-// Repertoire Style: scoring and re-ranking
-// ============================================================
-
-/**
- * Configurable weights for style-based candidate scoring.
- * Tweak these to adjust how strongly each style biases move selection.
- */
-export const STYLE_WEIGHTS = {
-  aggressive: {
-    /** Eval threshold relaxed by this many pawns (more permissive).
-     *  Must be POSITIVE: styleValue is negative for aggressive, so the product
-     *  (styleValue/2 × adjust) is negative, correctly lowering the threshold. */
-    evalThresholdAdjust: 0.3,
-    /** Bonus per 1 % point of win rate (our perspective). */
-    winRateBonus: 0.01,
-    /** Penalty per 1 % point of draw rate. */
-    drawRatePenalty: 0.006,
-  },
-  solid: {
-    /** Eval threshold tightened by this many pawns (more strict). */
-    evalThresholdAdjust: 0.15,
-    /** Penalty per 1 % point of loss rate. */
-    lossRatePenalty: 0.015,
-    /** Bonus per 1 % point of (winRate + drawRate) — safe outcomes. */
-    safeOutcomeBonus: 0.003,
-  },
-} as const;
-
-/**
- * Return the effective eval threshold after adjusting for repertoire style.
- *
- * styleValue is a continuous integer on −2 … +2:
- *   negative = aggressive (relaxes threshold, lets more speculative moves through)
- *   zero     = balanced   (no adjustment)
- *   positive = solid      (tightens threshold, rejects dubious moves)
- *
- * The adjustment scales linearly:
- *   ±1 maps to the original single-step aggressive/solid adjustments
- *   ±2 doubles the effect.
- */
-export function getStyleEvalThreshold(
-  baseThreshold: number,
-  styleValue: number
-): number {
-  if (styleValue < 0) {
-    // Aggressive: scale from 0 to full aggressive adjustment at −2
-    return baseThreshold + (styleValue / 2) * STYLE_WEIGHTS.aggressive.evalThresholdAdjust;
-  }
-  if (styleValue > 0) {
-    // Solid: scale from 0 to full solid adjustment at +2
-    return baseThreshold + (styleValue / 2) * STYLE_WEIGHTS.solid.evalThresholdAdjust;
-  }
-  return baseThreshold;
-}
-
-/**
- * Compute a composite score that blends engine eval with style preferences.
- * Used to re-rank **our** move candidates so the top pick matches the style.
- *
- * styleValue is a continuous integer on −2 … +2.
- * The Lichess-based bonus/penalty weights scale linearly with |styleValue|/2
- * so that ±2 applies the full original weight and ±1 applies half of it.
- *
- * Lichess rates are already from our color's perspective (see lichessApi.ts).
- */
-export function styleScore(
-  candidate: MoveCandidate,
-  styleValue: number,
-  color: 'white' | 'black'
-): number {
-  // Base: engine eval, normalised so positive = good for us
-  let score = candidate._sfEval ?? 0;
-  if (color === 'black') score = -score;
-
-  const stats = candidate._lichess;
-  if (!stats || styleValue === 0) return score;
-
-  const { winRate, drawRate, lossRate } = stats;
-
-  if (styleValue < 0) {
-    // Aggressive side: blend weight 0→1 as styleValue goes 0→−2
-    const t = Math.abs(styleValue) / 2;
-    const w = STYLE_WEIGHTS.aggressive;
-    score += winRate  * t * w.winRateBonus;
-    score -= drawRate * t * w.drawRatePenalty;
-  } else {
-    // Solid side: blend weight 0→1 as styleValue goes 0→+2
-    const t = styleValue / 2;
-    const w = STYLE_WEIGHTS.solid;
-    score -= lossRate            * t * w.lossRatePenalty;
-    score += (winRate + drawRate) * t * w.safeOutcomeBonus;
-  }
-
-  return score;
-}
-
-/**
- * Re-rank move candidates by style preference.
- * Returns a new array sorted best-first according to the style score.
- * No-op when styleValue is 0 (balanced) or only one candidate.
- */
-export function reRankByStyle(
-  candidates: MoveCandidate[],
-  styleValue: number,
-  color: 'white' | 'black'
-): MoveCandidate[] {
-  if (styleValue === 0 || candidates.length <= 1) return candidates;
-  return [...candidates].sort(
-    (a, b) => styleScore(b, styleValue, color) - styleScore(a, styleValue, color)
-  );
-}
-
-// ============================================================
-// Trickyness: opponent error rate
-// ============================================================
-
-/**
- * Compute the opponent error rate for a position — the fraction of
- * practical play where the opponent makes a significant inaccuracy.
- *
- * For each candidate opponent move, we compare its eval to the best
- * available response. Moves that are ≥ errorThreshold pawns worse than
- * the best are counted as errors.
- *
- * Weighting: if _lichess.totalGames is available on candidates, uses
- * actual game frequency; otherwise falls back to uniform weighting.
- *
- * @param candidates      Opponent move candidates with _sfEval set
- *                        (White's perspective). May include _lichess stats.
- * @param opponentIsBlack True when the opponent plays Black.
- * @param errorThreshold  Pawn drop vs best that counts as an error (default 0.5).
- * @returns 0–1 fraction, or null if not enough data.
- */
-export function computeOpponentErrorRate(
-  candidates: MoveCandidate[],
-  opponentIsBlack: boolean,
-  errorThreshold: number = 0.5
-): number | null {
-  const valid = candidates.filter((c) => c._sfEval != null);
-  if (valid.length < 2) return null;
-
-  // Best eval for the opponent:
-  //   opponentIsBlack → wants lowest eval (White's perspective)
-  //   opponentIsWhite → wants highest eval
-  const bestEval = opponentIsBlack
-    ? Math.min(...valid.map((c) => c._sfEval!))
-    : Math.max(...valid.map((c) => c._sfEval!));
-
-  let totalWeight = 0;
-  let errorWeight = 0;
-
-  for (const c of valid) {
-    // Use game frequency if available, otherwise uniform weight of 1
-    const w = (c._lichess?.totalGames ?? 0) > 0 ? c._lichess!.totalGames : 1;
-    // How much worse than the best move is this response?
-    // opponentIsBlack: eval going up   = worse for Black
-    // opponentIsWhite: eval going down = worse for White
-    const drop = opponentIsBlack
-      ? c._sfEval! - bestEval
-      : bestEval - c._sfEval!;
-
-    totalWeight += w;
-    if (drop >= errorThreshold) errorWeight += w;
-  }
-
-  return totalWeight > 0 ? errorWeight / totalWeight : null;
-}
-
-/**
- * Apply a trickyness bonus to a composite move score.
- *
- * The bonus scales linearly with both the opponent error rate (0–1) and
- * the trickyness weight (0–5). At weight=5, a position where the opponent
- * errs in 100% of games earns a full +1.0 pawn bonus; at weight=1 it caps
- * at +0.2 pawns. This keeps the bonus meaningful but never overwhelming
- * compared to the base engine evaluation.
- *
- * @param baseScore        Current composite score (pawns, good-for-us positive).
- * @param errorRate        Opponent error rate 0–1, or null if unavailable.
- * @param trickynessWeight User setting 0–5 (0 = disabled).
- */
-export function applyTrickynessBonus(
-  baseScore: number,
-  errorRate: number | null,
-  trickynessWeight: number
-): number {
-  if (!trickynessWeight || errorRate == null) return baseScore;
-  // +1.0 pawn max at weight=5 and errorRate=1.0
-  return baseScore + errorRate * (trickynessWeight / 5);
 }

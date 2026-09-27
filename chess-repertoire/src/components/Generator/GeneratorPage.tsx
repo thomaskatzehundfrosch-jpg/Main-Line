@@ -21,10 +21,9 @@ import { Chessboard } from 'react-chessboard';
 import type { Square, Piece } from 'react-chessboard/dist/chessboard/types';
 import { Chess } from 'chess.js';
 import type { TreeNode } from '../../types';
+import { END_REASON_LABELS } from '../../types/generator';
 import type { GeneratorNode, GeneratorSettings } from '../../types/generator';
 import type { UseGeneratorReturn } from '../../hooks/useGenerator';
-import { useEngine } from '../../hooks/useEngine';
-import { createAnalysisWorker } from '../../engine/analyzer';
 import { GeneratorSettingsPanel } from './GeneratorSettings';
 import { GeneratorProgressBar } from './GeneratorProgress';
 import { GeneratorMoveTree } from './GeneratorMoveTree';
@@ -35,9 +34,7 @@ import { useSettings } from '../../context/SettingsContext';
 import { BOARD_THEME_COLORS } from '../Board/theme';
 import { getStoredToken } from '../../utils/lichessAuth';
 import {
-  getCachedGeneratorSeeds,
   getCachedGeneratorSettings,
-  setCachedGeneratorSeeds,
   setCachedGeneratorSettings,
 } from '../../utils/generatorSettingsCache';
 
@@ -46,33 +43,23 @@ interface GeneratorPageProps {
   onImportTree: (tree: TreeNode) => void;
   gen: UseGeneratorReturn;
   initialSeeds?: string[][] | null;
+  isActive?: boolean;
 }
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
-function terminateWorker(worker: Worker | null): void {
-  if (!worker) return;
-  try {
-    worker.postMessage('quit');
-  } catch {
-    // Ignore workers that are already gone.
-  }
-  try {
-    worker.terminate();
-  } catch {
-    // Ignore workers that are already gone.
-  }
-}
-
-export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, gen, initialSeeds }) => {
-  const engine = useEngine();
+export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportTree, gen, initialSeeds, isActive = true }) => {
   const isMobile = useIsMobile();
   const { settings: appSettings } = useSettings();
-  const generationWorkerRef = useRef<Worker | null>(null);
-  const ownsGenerationWorkerRef = useRef(false);
+  const [connected, setConnected] = useState(() => !!getStoredToken());
+  useEffect(() => {
+    const sync = () => setConnected(!!getStoredToken());
+    window.addEventListener('lichess-auth-updated', sync);
+    return () => window.removeEventListener('lichess-auth-updated', sync);
+  }, []);
+  const busy = gen.isGenerating;
 
   const [settings, _setSettings] = useState<GeneratorSettings>(() => getCachedGeneratorSettings());
-  const [pgnSeeds, _setPgnSeeds] = useState<string[][]>(() => getCachedGeneratorSeeds());
 
   const setSettings = useCallback((val: GeneratorSettings | ((prev: GeneratorSettings) => GeneratorSettings)) => {
     _setSettings((prev) => {
@@ -82,19 +69,19 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
     });
   }, []);
 
-  const setPgnSeeds = useCallback((val: string[][] | ((prev: string[][]) => string[][])) => {
-    _setPgnSeeds((prev) => {
-      const next = typeof val === 'function' ? val(prev) : val;
-      setCachedGeneratorSeeds(next);
-      return next;
-    });
-  }, []);
+  const lastInitialSeeds = useRef<string[][] | null>(null);
+  useEffect(() => {
+    if (!busy && initialSeeds?.length && initialSeeds !== lastInitialSeeds.current) {
+      gen.loadSeeds(initialSeeds, settings.color);
+      lastInitialSeeds.current = initialSeeds;
+    }
+  }, [initialSeeds, gen.loadSeeds, settings.color, busy]);
 
   useEffect(() => {
-    if (initialSeeds && initialSeeds.length > 0) {
-      setPgnSeeds(initialSeeds);
+    if (!busy && gen.tree?.repertoireColor && gen.tree.repertoireColor !== settings.color) {
+      gen.loadSeeds(gen.getSeeds(), settings.color);
     }
-  }, [initialSeeds, setPgnSeeds]);
+  }, [settings.color, gen.tree, gen.loadSeeds, gen.getSeeds, busy]);
 
   /* ---------------------------------------------------------------- */
   /*  Interactive board state (click-to-move)                         */
@@ -146,7 +133,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
   /** Attempt to play a move and add it to the generator tree. */
   const tryMove = useCallback(
     (from: string, to: string, promotion?: string): boolean => {
-      if (gen.isGenerating) return false;
+      if (busy) return false;
       try {
         const chess = new Chess(displayFen);
         const result = chess.move({ from, to, promotion: promotion as any });
@@ -157,7 +144,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
         return false;
       }
     },
-    [displayFen, gen, settings.color]
+    [displayFen, gen, settings.color, busy]
   );
 
   /* ---------------------------------------------------------------- */
@@ -166,7 +153,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
   const handleSquareClick = useCallback(
     (square: Square) => {
-      if (gen.isGenerating) return;
+      if (busy) return;
 
       // If a piece is selected and clicked square is a legal target → try move
       if (selectedSquare && legalMoves.includes(square)) {
@@ -196,7 +183,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
       setSelectedSquare(null);
       setLegalMoves([]);
     },
-    [selectedSquare, legalMoves, displayFen, isOwnPiece, getLegalMovesForSquare, tryMove, gen.isGenerating]
+    [selectedSquare, legalMoves, displayFen, isOwnPiece, getLegalMovesForSquare, tryMove, busy]
   );
 
   const handlePieceClick = useCallback(
@@ -255,7 +242,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (gen.isGenerating) return;
+      if (busy || !isActive || (e.target instanceof HTMLElement && (e.target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)))) return;
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
         gen.goToParent();
@@ -266,128 +253,20 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gen]);
+  }, [gen, busy, isActive]);
 
   /* ---------------------------------------------------------------- */
   /*  Generation / actions                                             */
   /* ---------------------------------------------------------------- */
 
-  const canGenerate = (() => {
-    if (gen.isGenerating) return false;
-    if ((settings.analysisMode || 'stockfish') === 'lichess+stockfish' && !getStoredToken()) {
-      return false;
-    }
-    return true;
-  })();
+  const canGenerate = !busy && (settings.analysisMode === 'stockfish' || connected);
 
-  const runGeneration = useCallback(async (generationMode: 'generate' | 'finish') => {
-    const analysisMode = settings.analysisMode || 'stockfish';
-    if (analysisMode === 'lichess+stockfish' && !getStoredToken()) {
-      gen.addLogEntry({
-        id: `log_lichess_auth_${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-        level: 'error',
-        message: 'Connect your Lichess account before using Lichess + SF generation.',
-        context: null,
-      });
-      return;
-    }
-
-    // Merge seeds from manually-built tree with any PGN seeds
-    const treeSeeds = gen.getSeeds();
-    const allSeeds = [...pgnSeeds, ...treeSeeds];
-
-    if (generationMode === 'finish' && allSeeds.length === 0) {
-      gen.addLogEntry({
-        id: `log_finish_empty_${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-        level: 'warning',
-        message: 'Add moves in the generator or load PGN seeds before finishing a repertoire.',
-        context: null,
-      });
-      return;
-    }
-
-    if (generationMode === 'finish') {
-      gen.addLogEntry({
-        id: `log_finish_${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-        level: 'info',
-        message: `Finishing ${allSeeds.length} repertoire line${allSeeds.length !== 1 ? 's' : ''} to move ${settings.maxMoveNumber}.`,
-        context: null,
-      });
-    }
-
-    terminateWorker(generationWorkerRef.current);
-    generationWorkerRef.current = null;
-    ownsGenerationWorkerRef.current = false;
-
-    let sfWorker: Worker | null = null;
-    try {
-      sfWorker = await createAnalysisWorker(1);
-      generationWorkerRef.current = sfWorker;
-      ownsGenerationWorkerRef.current = true;
-    } catch (error) {
-      const sharedWorker = engine.workerReady ? engine.workerRef.current : null;
-      if (sharedWorker) {
-        engine.stopAnalysis();
-        sfWorker = sharedWorker;
-        generationWorkerRef.current = sharedWorker;
-        ownsGenerationWorkerRef.current = false;
-        gen.addLogEntry({
-          id: `log_engine_fallback_${Date.now()}`,
-          timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-          level: 'warning',
-          message: 'Dedicated Stockfish worker failed; using the active analysis engine for generation.',
-          context: error instanceof Error ? error.message : String(error),
-        });
-      } else {
-      gen.addLogEntry({
-        id: `log_engine_start_${Date.now()}`,
-        timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
-        level: 'error',
-        message: 'Could not start Stockfish for generation.',
-        context: error instanceof Error ? error.message : String(error),
-      });
-      return;
-      }
-    }
-
-    gen.startGeneration(
-      settings,
-      allSeeds.length > 0 ? allSeeds : null,
-      sfWorker,
-      () => {
-        if (ownsGenerationWorkerRef.current) terminateWorker(generationWorkerRef.current);
-        generationWorkerRef.current = null;
-        ownsGenerationWorkerRef.current = false;
-      },
-      () => {
-        if (ownsGenerationWorkerRef.current) terminateWorker(generationWorkerRef.current);
-        generationWorkerRef.current = null;
-        ownsGenerationWorkerRef.current = false;
-      }
-    );
-  }, [settings, pgnSeeds, engine, gen]);
-
-  const handleGenerate = useCallback(() => runGeneration('generate'), [runGeneration]);
-  const handleFinishRepertoire = useCallback(() => runGeneration('finish'), [runGeneration]);
-
-  const handleStop = useCallback(() => {
-    gen.stopGeneration();
-    if (ownsGenerationWorkerRef.current) terminateWorker(generationWorkerRef.current);
-    generationWorkerRef.current = null;
-    ownsGenerationWorkerRef.current = false;
-  }, [gen]);
-  const handleClear = useCallback(() => gen.clearTree(), [gen]);
-
-  useEffect(() => {
-    return () => {
-      if (ownsGenerationWorkerRef.current) terminateWorker(generationWorkerRef.current);
-      generationWorkerRef.current = null;
-      ownsGenerationWorkerRef.current = false;
-    };
-  }, []);
+  const handleGenerate = useCallback(() => {
+    if (gen.isGenerating || (settings.analysisMode !== 'stockfish' && !getStoredToken())) return;
+    gen.startGeneration(settings, gen.getSeeds(), null);
+  }, [settings, gen]);
+  const handleStop = gen.stopGeneration;
+  const handleClear = useCallback(() => { if (!busy) gen.clearTree(); }, [busy, gen.clearTree]);
 
   const handleNodeSelect = useCallback(
     (node: GeneratorNode) => gen.setSelectedNode(node),
@@ -413,9 +292,8 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
     URL.revokeObjectURL(url);
   }, [gen.tree, settings]);
 
-  const node = gen.selectedNode;
+  const node = displayNode;
   const generatorBoardWidth = isMobile ? 320 : (boardExpanded ? 480 : 360);
-  const canFinishRepertoire = pgnSeeds.length > 0 || gen.getSeeds().length > 0;
 
   /* ---------------------------------------------------------------- */
   /*  Render                                                           */
@@ -430,13 +308,13 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
         </button>
         <Cpu className="w-4 h-4 text-accent-teal" />
         <h2 className="font-mono text-sm uppercase tracking-wider text-text-secondary">
-          Auto Rep Gen
+          Repertoire generator
         </h2>
         <span className="hidden text-xs text-text-muted sm:inline">
-          Play moves to build a starting tree, then generate analysis
+          Choose your starting moves, then generate continuations
         </span>
 
-        {gen.tree && !gen.isGenerating && (
+        {gen.tree && !busy && (
           <div className="ml-auto flex items-center gap-2">
             <button
               onClick={handleImport}
@@ -460,29 +338,25 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
       </div>
 
       {/* 3-column layout */}
-      <div className="flex flex-1 min-h-0 flex-col overflow-hidden md:flex-row">
+      <div className="flex flex-1 min-h-0 flex-col overflow-y-auto md:overflow-hidden md:flex-row">
         {/* Left: Settings */}
         <div
-          className="border-b border-border-subtle bg-bg-surface overflow-hidden flex flex-col md:border-b-0 md:border-r"
+          className="shrink-0 border-b border-border-subtle bg-bg-surface overflow-hidden flex flex-col md:border-b-0 md:border-r"
           style={isMobile ? undefined : { width: '280px', minWidth: '260px' }}
         >
           <GeneratorSettingsPanel
             settings={settings}
             setSettings={setSettings}
             onGenerate={handleGenerate}
-            onFinishRepertoire={handleFinishRepertoire}
             onStop={handleStop}
-            isGenerating={gen.isGenerating}
-            sfReady={engine.enabled && engine.workerReady}
+            isGenerating={busy}
             canGenerate={canGenerate}
-            canFinishRepertoire={canFinishRepertoire}
-            pgnSeeds={pgnSeeds}
-            setPgnSeeds={setPgnSeeds}
+            onLoadSeeds={(seeds) => gen.loadSeeds(seeds, settings.color)}
           />
         </div>
 
         {/* Center: Board + Nav + Details + Progress */}
-        <div className="flex-1 flex flex-col overflow-auto p-4 gap-4">
+        <div className="flex-none flex flex-col overflow-visible p-4 gap-4 md:flex-1 md:overflow-auto">
           {/* Chessboard — interactive when not generating */}
           <div className="flex justify-center">
             <div style={{ width: isMobile ? 'min(100%, 320px)' : `${generatorBoardWidth}px`, maxWidth: '100%' }}>
@@ -490,7 +364,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
                 position={displayFen}
                 boardOrientation={settings.color === 'black' ? 'black' : 'white'}
                 boardWidth={generatorBoardWidth}
-                isDraggablePiece={() => !gen.isGenerating}
+                isDraggablePiece={() => !busy}
                 onPieceDrop={handlePieceDrop}
                 onSquareClick={handleSquareClick}
                 onPieceClick={handlePieceClick}
@@ -513,7 +387,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
           <div className="flex items-center justify-center gap-1">
             <button
               onClick={gen.goToRoot}
-              disabled={!gen.selectedNode || gen.selectedNode.isRoot}
+              disabled={busy || !gen.selectedNode || gen.selectedNode.isRoot}
               className="btn-icon p-1.5 disabled:opacity-30"
               title="Go to start"
             >
@@ -521,7 +395,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
             </button>
             <button
               onClick={gen.goToParent}
-              disabled={!gen.selectedNode || gen.selectedNode.isRoot}
+              disabled={busy || !gen.selectedNode || gen.selectedNode.isRoot}
               className="btn-icon p-1.5 disabled:opacity-30"
               title="Previous move (Left arrow)"
             >
@@ -529,7 +403,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
             </button>
             <button
               onClick={() => gen.goToChild(0)}
-              disabled={!gen.selectedNode || gen.selectedNode.children.length === 0}
+              disabled={busy || !gen.selectedNode || gen.selectedNode.children.length === 0}
               className="btn-icon p-1.5 disabled:opacity-30"
               title="Next move (Right arrow)"
             >
@@ -540,7 +414,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
             <button
               onClick={gen.deleteSelected}
-              disabled={!gen.selectedNode || gen.selectedNode.isRoot || gen.isGenerating}
+              disabled={busy || !gen.selectedNode || gen.selectedNode.isRoot}
               className="btn-icon p-1.5 disabled:opacity-30 hover:text-accent-red"
               title="Delete this move and its sub-tree"
             >
@@ -563,7 +437,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
             {/* Current position hint */}
             {node && !node.isRoot && node.san && (
               <span className="ml-3 font-mono text-xs text-text-muted">
-                {node.fullMoveNumber}{node.isOurMove ? '.' : '...'} {node.san}
+                {node.isRoot ? 'Starting position' : `${node.fullMoveNumber}${node.fen.split(' ')[1] === 'b' ? '.' : '...'} ${node.san}`}
               </span>
             )}
             {(!node || node.isRoot) && (
@@ -572,12 +446,12 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
           </div>
 
           {/* Node Detail */}
-          {node && !node.isRoot && (
+          {node && (
             <div className="panel">
               <div className="p-3">
                 <div className="flex items-center gap-3 mb-2">
                   <span className="font-mono text-sm font-semibold text-text-primary">
-                    {node.fullMoveNumber}{node.isOurMove ? '.' : '...'} {node.san}
+                    {node.isRoot ? 'Starting position' : `${node.fullMoveNumber}${node.fen.split(' ')[1] === 'b' ? '.' : '...'} ${node.san}`}
                   </span>
                   {node.isMainLine && (
                     <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-accent-teal/10 text-accent-teal">
@@ -595,6 +469,10 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
                     </span>
                   )}
                 </div>
+                {node.reason && <p className="text-xs text-text-secondary mb-2">{node.reason}</p>}
+                {node.warning && <p className="text-xs text-accent-amber mb-2">{node.warning}</p>}
+                {node.endReason && <p className="text-xs text-text-muted mb-2">{END_REASON_LABELS[node.endReason]}</p>}
+                {node.responseCoverage !== undefined && <p className="text-xs text-text-muted mb-2">Replies shown cover {(node.responseCoverage * 100).toFixed(0)}% of database games at this position.</p>}
                 <div className="flex gap-4 text-[11px] text-text-muted">
                   {node.stockfish && node.stockfish.eval !== null && (
                     <span>
@@ -617,9 +495,10 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
           {/* Progress + Log */}
           <GeneratorProgressBar
             progress={gen.progress}
-            isGenerating={gen.isGenerating}
+            isGenerating={busy}
             errorLog={gen.errorLog}
           />
+          {isMobile && <div className="panel min-h-48"><GeneratorMoveTree tree={gen.tree} selectedNode={gen.selectedNode} onSelect={handleNodeSelect} color={settings.color} onClear={handleClear} disabled={busy} /></div>}
 
         </div>
 
@@ -635,6 +514,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
               onSelect={handleNodeSelect}
               color={settings.color}
               onClear={handleClear}
+              disabled={busy}
             />
           </div>
         )}

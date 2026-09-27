@@ -114,3 +114,15 @@ After setup, `public/stockfish/` should contain at least a `.js` and `.wasm` fil
 ## Tech Stack
 
 React 18, TypeScript, Vite, Tailwind CSS, chess.js, react-chessboard, D3.js, Stockfish WASM
+
+### Repertoire generator
+
+Choose your side, opponent profile, study size and target move number. Play starting moves on the board or load a PGN into the same editable move tree, then choose **Generate continuations**. Existing moves (including alternatives) are preserved; questionable starting moves receive warnings. Generation adds one recommendation for your side at each leaf, and common opponent replies plus the strongest engine defense. Common mistakes are retained so their punishment can be studied.
+
+Compact / Standard / Broad aim for 70% / 85% / 95% local database reply coverage, with budgets of 150 / 500 / 1200 moves and at most 3 / 5 / 8 replies per opponent position. Coverage uses the full database position count; it is not an estimate of whole-repertoire coverage. Limited samples, reply limits and database failures are reported. The engine-only profile has no human coverage estimate.
+
+Advanced preferences control one local Stockfish depth, allowed loss against the best verified candidate, bounded tactical extensions and optional avoidance of immediate queen exchanges. Historical style and trickiness scores are no longer used to select moves. Starting moves are never removed for failing an evaluation threshold. PGNs with nonstandard starting FENs are rejected explicitly.
+
+The preview, PGN export and repertoire import retain the same branches. Stop cancels engine searches and database requests; a subsequent run has independent state. Results distinguish completed targets, stopped runs, budget limits, coverage gaps and failed analysis. The main repertoire's **Extend Continuation** action preserves existing branches and applies the result when generation finishes.
+
+Run generator regression checks with `npm test`, type checking with `npx tsc --noEmit`, and the production build with `npm run build`.
