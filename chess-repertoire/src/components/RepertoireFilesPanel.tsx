@@ -202,7 +202,7 @@ export const RepertoireFilesPanel: React.FC<RepertoireFilesPanelProps> = ({
 
       {/* File list */}
       {files.length > 0 ? (
-        <div className="flex flex-col gap-1">
+        <div className="flex max-h-[40vh] flex-col gap-1 overflow-y-auto overscroll-contain pr-1 custom-scrollbar">
           {files.map((file) => {
             const isActive = file.id === activeFileId;
             const isEditing = editingId === file.id;
