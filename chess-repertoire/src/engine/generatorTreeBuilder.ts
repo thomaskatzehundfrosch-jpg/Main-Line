@@ -23,6 +23,9 @@ import { getMostPlayedMoves, getMostLikelyMoves } from '../utils/lichessApi';
 
 const DEFAULT_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const MAX_OUR_MOVE_DROP_FROM_BEST = 0.75;
+// Popular opponent moves remain useful repertoire coverage, but moves this far
+// below the opponent's best response are noise rather than serious branches.
+const MAX_OPPONENT_MOVE_DROP_FROM_BEST = 1.5;
 const OPPONENT_RESPONSE_CHECK_DEPTH = 25;
 
 let _nodeIdCounter = 0;
@@ -383,6 +386,58 @@ function getOurMoveBranchPriority(
   if (candidateIndex === 0) return parentPriority;
   if (candidateIndex === 1) return parentPriority === 'rare' ? 'rare' : 'possible';
   return 'rare';
+}
+
+/**
+ * Build a practical opponent set: engine-sound first, human frequency second.
+ * The strongest response is always represented; remaining slots retain the
+ * original Lichess-frequency order.
+ */
+function selectPracticalOpponentMoves(
+  candidates: MoveCandidate[],
+  opponentIsBlack: boolean,
+  targetCount: number
+): {
+  selected: MoveCandidate[];
+  rejected: { candidate: MoveCandidate; drop: number }[];
+  best: MoveCandidate | null;
+} {
+  if (candidates.length === 0 || targetCount <= 0) {
+    return { selected: [], rejected: [], best: null };
+  }
+
+  const evaluated = candidates.filter(
+    (candidate): candidate is MoveCandidate & { _sfEval: number } => candidate._sfEval != null
+  );
+  if (evaluated.length === 0) {
+    return { selected: candidates.slice(0, targetCount), rejected: [], best: null };
+  }
+
+  const best = evaluated.reduce((currentBest, candidate) => {
+    if (opponentIsBlack) return candidate._sfEval < currentBest._sfEval ? candidate : currentBest;
+    return candidate._sfEval > currentBest._sfEval ? candidate : currentBest;
+  });
+
+  const rejected: { candidate: MoveCandidate; drop: number }[] = [];
+  const sound = candidates.filter((candidate) => {
+    if (candidate._sfEval == null) return false;
+    const drop = opponentIsBlack
+      ? candidate._sfEval - best._sfEval
+      : best._sfEval - candidate._sfEval;
+    if (drop > MAX_OPPONENT_MOVE_DROP_FROM_BEST) {
+      rejected.push({ candidate, drop });
+      return false;
+    }
+    return true;
+  });
+
+  const selected = sound.slice(0, targetCount);
+  if (!selected.some((candidate) => candidate.san === best.san)) {
+    if (selected.length >= targetCount) selected[selected.length - 1] = best;
+    else selected.push(best);
+  }
+
+  return { selected, rejected, best };
 }
 
 /**
@@ -1098,7 +1153,28 @@ export async function buildTree(
       }
     }
 
-    candidates = candidates.slice(0, targetPV);
+    if (!isOurTurn && gatherUseLichess && candidates.length > 0) {
+      const opponentIsBlack = color === 'white';
+      const { selected, rejected, best } = selectPracticalOpponentMoves(
+        candidates,
+        opponentIsBlack,
+        targetPV
+      );
+
+      if (rejected.length > 0) {
+        logError(
+          'info',
+          `Opponent quality gate: rejected ${rejected.map(({ candidate, drop }) => `${candidate.san} (-${drop.toFixed(2)})`).join(', ')}; max allowed drop ${MAX_OPPONENT_MOVE_DROP_FROM_BEST.toFixed(2)}.`
+        );
+      }
+      if (best && !candidates.slice(0, targetPV).some((candidate) => candidate.san === best.san)) {
+        logError('info', `Opponent quality gate: reserved a branch for strongest response ${best.san}.`);
+      }
+
+      candidates = selected;
+    } else {
+      candidates = candidates.slice(0, targetPV);
+    }
     return candidates;
   }
 
