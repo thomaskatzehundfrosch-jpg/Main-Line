@@ -153,8 +153,19 @@ export async function buildTree(
       }
       const current = scoreFor((await evaluate(fen)).score, settings.color);
       const maximumLoss = tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss;
-      const permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
+      let permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
       if (!permitted.length) throw new Error(`No verified candidate stays within the ${maximumLoss.toFixed(2)} pawn loss limit from the current evaluation (${current.toFixed(2)} from your side).`);
+      if (settings.evaluationFloorEnabled) {
+        if (current < settings.evaluationFloor - 1e-8) {
+          // Already below the floor: no practical or popularity bonus, only the best defense.
+          const chosen = permitted.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
+          chosen.reason = `Current evaluation ${current.toFixed(2)} is below your ${settings.evaluationFloor.toFixed(2)} floor; strongest verified continuation selected without deliberate sacrifice`;
+          choiceCache.set(key, [chosen]);
+          return [chosen];
+        }
+        permitted = permitted.filter(move => scoreFor(move.score, settings.color) + 1e-8 >= settings.evaluationFloor);
+        if (!permitted.length) throw new Error(`No verified candidate meets your evaluation floor (${settings.evaluationFloor.toFixed(2)} from your side) within the per-move loss limit.`);
+      }
       const best = Math.max(...permitted.map(move => scoreFor(move.score, settings.color)));
       if (tricky) {
         // A fallback may be below the minimum sacrifice, but never exceeds the maximum.

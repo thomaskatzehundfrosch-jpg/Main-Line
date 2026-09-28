@@ -114,6 +114,15 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
           <p className="text-[11px] text-text-muted">Search this loss interval relative to the position evaluation before your move, from your side’s perspective. Reversed bounds are sorted. Replaces the normal allowed-loss setting while enabled. If no candidate offers a supported practical improvement, keep the best move within the maximum loss. If none meets that limit, leave the continuation unfinished. Uses your opponent profile; small samples count less. Examining replies makes generation slower.</p>
         </>}
       </div>}
+      <div className="space-y-2">
+        <label className="flex gap-2 text-xs text-text-secondary"><input type="checkbox" checked={settings.evaluationFloorEnabled}
+          onChange={e => update('evaluationFloorEnabled', e.target.checked)} />Use an overall evaluation floor</label>
+        {settings.evaluationFloorEnabled && <label className={labelClass}>Minimum acceptable evaluation (your side)
+          <input className={inputClass} type="number" min="-10" max="10" step="0.1" value={settings.evaluationFloor}
+            onChange={e => update('evaluationFloor', e.target.valueAsNumber)} />
+        </label>}
+        <p className="text-[11px] text-text-muted">Prevents repeated sacrifices from crossing this evaluation. Applies with or without trickiness. If already below it, choose the strongest verified continuation without a practical bonus. The per-move loss limit still applies; if no candidate qualifies, the branch remains unfinished.</p>
+      </div>
       <label className={labelClass}>Target move number
         <input className={inputClass} type="number" min="1" max="40" value={settings.maxMoveNumber} onChange={e => update('maxMoveNumber', e.target.valueAsNumber)} />
       </label>

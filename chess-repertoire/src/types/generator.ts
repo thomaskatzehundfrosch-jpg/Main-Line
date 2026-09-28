@@ -11,6 +11,8 @@ export interface GeneratorSettings {
   sfDepth: number;
   /** Maximum loss in pawns relative to the position evaluation before your move, from your side’s perspective. */
   maxEvalLoss: number;
+  evaluationFloorEnabled: boolean;
+  evaluationFloor: number;
   trickiness: 'off' | 'balanced' | 'high';
   trickinessMinLoss: number;
   trickinessMaxLoss: number;
@@ -38,6 +40,7 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   tacticalExtension: 2, avoidQueenTrades: false,
   useMasters: true, ratingMin: 1600, ratingMax: 2500,
   speeds: ['blitz', 'rapid', 'classical'], minGames: 10,
+  evaluationFloorEnabled: true, evaluationFloor: -1,
   trickiness: 'off', trickinessMinLoss: 0, trickinessMaxLoss: 0.6,
   opponentMinPlayRate: 5, adaptiveOpponentDepth: true,
 };
@@ -56,6 +59,8 @@ export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorS
     maxMoveNumber: Math.round(number(input.maxMoveNumber, 15, 1, 40)),
     sfDepth: Math.round(number(input.sfDepth, 16, 8, 25)),
     maxEvalLoss: number(input.maxEvalLoss, 0.3, 0, 1),
+    evaluationFloorEnabled: input.evaluationFloorEnabled ?? true,
+    evaluationFloor: number(input.evaluationFloor, -1, -10, 10),
     trickiness: input.trickiness === 'balanced' || input.trickiness === 'high' ? input.trickiness : 'off',
     trickinessMinLoss: Math.min(number(input.trickinessMinLoss, 0, 0, 5), number(input.trickinessMaxLoss, 0.6, 0, 5)),
     trickinessMaxLoss: Math.max(number(input.trickinessMinLoss, 0, 0, 5), number(input.trickinessMaxLoss, 0.6, 0, 5)),

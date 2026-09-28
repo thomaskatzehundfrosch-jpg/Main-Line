@@ -325,3 +325,40 @@ test('current-position loss limit holds for both colors and all trickiness modes
     }
   }
 });
+
+test('evaluation floor normalizes defaults and bounds', () => {
+  const s = normalizeGeneratorSettings({ ...defaults, evaluationFloor: undefined, evaluationFloorEnabled: undefined });
+  assert.equal(s.evaluationFloor, -1); assert.equal(s.evaluationFloorEnabled, true);
+  assert.equal(normalizeGeneratorSettings({ ...defaults, evaluationFloor: -99 }).evaluationFloor, -10);
+  assert.equal(normalizeGeneratorSettings({ ...defaults, evaluationFloor: 99, evaluationFloorEnabled: false }).evaluationFloorEnabled, false);
+});
+test('overall floor prevents cumulative sacrifices and below-floor positions use strongest moves', async () => {
+  for (const color of ['white', 'black']) for (const mode of ['off', 'high']) {
+    for (const scenario of [
+      { current: -80, safe: -90, tempting: -120, enabled: true, expected: 0 },
+      { current: -80, safe: -90, tempting: -100, enabled: true, expected: 1 },
+      { current: -80, safe: -90, tempting: -120, enabled: false, expected: 1 },
+      { current: -120, safe: -120, tempting: -140, enabled: true, expected: 0 },
+      { current: -80, safe: -110, tempting: -120, enabled: true, expected: null },
+    ]) {
+      const start = new Chess(); if (color === 'black') start.move('e4');
+      const moves = start.moves({ verbose: true }).slice(0, 2);
+      const positions = moves.map(m => { const c = new Chess(start.fen()); c.move(m); return c.fen(); });
+      let progress;
+      const root = await buildTree(color === 'black' ? [['e4']] : null,
+        { ...defaults, color, analysisMode: 'lichess+stockfish', maxEvalLoss: .5, trickiness: mode, trickinessMaxLoss: .5, evaluationFloor: -1, evaluationFloorEnabled: scenario.enabled },
+        { onProgress: p => progress = p }, { current: false }, dummyWorker, services({
+          topMoves: async (_w, fen, depth, count) => (fen === start.fen() ? moves : new Chess(fen).moves({ verbose: true })).slice(0, count).map(m => ({ uci: uci(m), eval: 0, depth })),
+          analyze: async (_w, fen, depth) => ({ score: (fen === start.fen() ? scenario.current : fen === positions[0] ? scenario.safe : fen === positions[1] ? scenario.tempting : 100) * (color === 'white' ? 1 : -1), depth }),
+          replies: async fen => {
+            const m = fen === start.fen() ? moves[1] : fen === positions[1] ? new Chess(fen).moves({ verbose: true })[0] : null;
+            return m ? [{ san: m.san, uci: uci(m), totalGames: 10000, playRate: 100, winRate: 90, lossRate: 5, drawRate: 5, averageRating: null }] : [];
+          },
+        }));
+      const parent = color === 'black' ? root.children[0] : root;
+      if (scenario.expected === null) {
+        assert.equal(parent.children.length, 0); assert.match(parent.warning, /evaluation floor/); assert.equal(progress.outcome, 'partial');
+      } else assert.equal(parent.children[0].uci, uci(moves[scenario.expected]), `${color} ${mode} ${JSON.stringify(scenario)}`);
+    }
+  }
+});
