@@ -12,7 +12,7 @@ const { convertToTreeNode } = require('../src/utils/generatorConverter.ts');
 const { buildTree, selectOpponentReplies, allowsImmediateQueenTrade } = require('../src/engine/generatorTreeBuilder.ts');
 const { DEFAULT_GENERATOR_SETTINGS, normalizeGeneratorSettings } = require('../src/types/generator.ts');
 const { analyzePositionWithStockfish, getTopMovesWithStockfish } = require('../src/engine/analyzer.ts');
-const defaults = { ...DEFAULT_GENERATOR_SETTINGS, trickiness: 'off', evaluationFloor: -1, analysisMode: 'stockfish', maxMoveNumber: 1, tacticalExtension: 0, sfDepth: 12, studySize: 'compact' };
+const defaults = { ...DEFAULT_GENERATOR_SETTINGS, branchDecay: 'off', trickiness: 'off', evaluationFloor: -1, analysisMode: 'stockfish', maxMoveNumber: 1, tacticalExtension: 0, sfDepth: 12, studySize: 'compact' };
 const dummyWorker = {};
 const uci = move => move.from + move.to + (move.promotion ?? '');
 function services(overrides = {}) {
@@ -361,4 +361,30 @@ test('overall floor prevents cumulative sacrifices and below-floor positions use
       } else assert.equal(parent.children[0].uci, uci(moves[scenario.expected]), `${color} ${mode} ${JSON.stringify(scenario)}`);
     }
   }
+});
+
+test('decay thresholds protect early turns and unknown probabilities', () => {
+  const { decayReplyLimit } = require('../src/engine/generatorTreeBuilder.ts');
+  assert.equal(decayReplyLimit('balanced', 1, .001), Infinity);
+  assert.equal(decayReplyLimit('balanced', 2, null), Infinity);
+  assert.equal(decayReplyLimit('balanced', 2, .15), Infinity);
+  assert.equal(decayReplyLimit('balanced', 2, .04), 2);
+  assert.equal(decayReplyLimit('balanced', 2, .01), 1);
+  assert.equal(decayReplyLimit('gentle', 2, .01), 2);
+  assert.equal(decayReplyLimit('off', 9, .001), Infinity);
+});
+test('decay reserves enough budget to finish generated branches at target depth', async () => {
+  const root = await buildTree(null, { ...defaults, branchDecay: 'balanced', maxMoveNumber: 15, evaluationFloorEnabled: false }, {}, { current: false }, dummyWorker, services({
+    topMoves: async (_w, fen, depth, count) => {
+      const chess = new Chess(fen);
+      // Prefer pawn moves to avoid artificial repetition in this synthetic tree.
+      const moves = chess.moves({ verbose: true }).sort((a, b) => Number(b.piece === 'p') - Number(a.piece === 'p'));
+      return moves.slice(0, count).map(m => ({ uci: uci(m), eval: 0, depth }));
+    },
+  }));
+  assert.ok(walk(root).some(n => n.depth === 30));
+  assert.ok(walk(root).length - 1 <= 150);
+  assert.ok(!walk(root).some(n => n.endReason === 'budget'));
+  assert.ok(!walk(root).some(n => n.endReason === 'adaptive-depth'));
+  assert.ok(walk(root).some(n => n.warning?.includes('reserved continuation budget')));
 });

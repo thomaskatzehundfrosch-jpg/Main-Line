@@ -13,6 +13,14 @@ type Candidate = { san: string; uci: string; fen: string; score: number; depth: 
 const positionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
 const scoreFor = (score: number, color: 'white' | 'black') => color === 'white' ? score : -score;
 
+/** Unknown frequencies do not imply a rare path. First two generated opponent turns stay wide. */
+export function decayReplyLimit(mode: GeneratorSettings['branchDecay'], turns: number, probability: number | null): number {
+  if (mode === 'off' || turns < 2 || probability === null) return Infinity;
+  const narrow = mode === 'balanced' ? 0.02 : 0.005;
+  const medium = mode === 'balanced' ? 0.10 : 0.05;
+  return probability < narrow ? 1 : probability <= medium ? 2 : Infinity;
+}
+
 export function isTactical(fen: string): boolean {
   const chess = new Chess(fen);
   return chess.isCheck() || chess.moves({ verbose: true }).some(move => Boolean(move.captured));
@@ -129,7 +137,7 @@ export async function buildTree(
     return { san: move.san, uci, fen: chess.fen(), ...evaluation, stats, reason: '' };
   }
 
-  async function choose(fen: string, ourTurn: boolean, node: GeneratorNode): Promise<Candidate[]> {
+  async function choose(fen: string, ourTurn: boolean, node: GeneratorNode, replyLimit = Infinity): Promise<Candidate[]> {
     const key = positionKey(fen);
     // Same position, same recommendation; preserve explicit alternatives in seeds.
     if (ourTurn && choiceCache.has(key)) return choiceCache.get(key)!.map(c => {
@@ -243,6 +251,22 @@ export async function buildTree(
         node.warning = 'Insufficient human data; replies selected by the engine. Human coverage is unknown.';
       }
     }
+    if (replyLimit < selected.length) {
+      const strongestReply = selected.find(move => move.uci === strongest.uci)!;
+      const likelyReply = popular[0];
+      if (replyLimit === 1 && likelyReply && likelyReply.uci !== strongest.uci) {
+        const defense = await candidate(fen, strongest.uci);
+        const likely = await candidate(fen, likelyReply.uci);
+        // Retain the engine defense if it worsens our position by at least half a pawn.
+        selected = [scoreFor(likely.score - defense.score, settings.color) >= 0.5 ? strongestReply : likelyReply];
+      } else if (replyLimit <= 2) {
+        selected = [strongestReply];
+        if (replyLimit >= 2 && likelyReply && likelyReply.uci !== strongest.uci) selected.push(likelyReply);
+        if (!likelyReply) selected = top.slice(0, replyLimit).map(move => ({ uci: move.uci, playRate: 0 }));
+      }
+      else selected = selected.slice(0, replyLimit);
+      node.warning = [node.warning, 'Branching reduced by decay or reserved continuation budget.'].filter(Boolean).join(' ');
+    }
     const result: Candidate[] = [];
     for (const move of selected) {
       const checked = await candidate(fen, move.uci, popular.find(reply => reply.uci === move.uci));
@@ -254,12 +278,12 @@ export async function buildTree(
     return result;
   }
 
-  type Pending = { node: GeneratorNode; likelihood: number; targetDepth: number; ancestors: Set<string> };
+  type Pending = { node: GeneratorNode; likelihood: number; pathProbability: number | null; opponentTurns: number; targetDepth: number; ancestors: Set<string> };
   const queue: Pending[] = [];
   const seedNodes: Array<{ node: GeneratorNode; parent: GeneratorNode }> = [];
   function collect(node: GeneratorNode, ancestors = new Set<string>()) {
     const next = new Set(ancestors).add(positionKey(node.fen));
-    if (!node.children.length) queue.push({ node, likelihood: 1, targetDepth: settings.maxMoveNumber * 2, ancestors });
+    if (!node.children.length) queue.push({ node, likelihood: 1, pathProbability: 1, opponentTurns: 0, targetDepth: settings.maxMoveNumber * 2, ancestors });
     for (const child of node.children) { seedNodes.push({ node: child, parent: node }); collect(child, next); }
   }
   collect(root);
@@ -313,7 +337,15 @@ export async function buildTree(
       progress(`Choosing a continuation at move ${chess.fen().split(' ')[5]}…`);
       try {
         const ourTurn = chess.turn() === (settings.color === 'white' ? 'w' : 'b');
-        const moves = await choose(active.fen, ourTurn, active);
+        let replyLimit = Infinity;
+        if (!ourTurn && settings.branchDecay !== 'off') {
+          replyLimit = decayReplyLimit(settings.branchDecay, item.opponentTurns, item.pathProbability);
+          const reserved = queue.reduce((sum, pending) => sum + Math.max(0, pending.targetDepth + settings.tacticalExtension * 2 - pending.node.depth), 0);
+          const costPerBranch = Math.max(1, hardDepth - active.depth);
+          const affordable = Math.max(1, Math.floor((maxNodes - totalNodes - reserved) / costPerBranch));
+          replyLimit = Math.min(replyLimit, affordable);
+        }
+        const moves = await choose(active.fen, ourTurn, active, replyLimit);
         check();
         const added: Candidate[] = [];
         for (const move of moves) {
@@ -327,15 +359,15 @@ export async function buildTree(
             lichess: move.stats ? { ...move.stats } : null, reason: move.reason,
           };
           active.children.push(node); added.push(move); totalNodes++;
-          const probability = move.stats ? move.stats.playRate / 100 : 1 / Math.max(1, moves.length);
-          const rareReply = !ourTurn && settings.adaptiveOpponentDepth && !move.strongestDefense
+          const probability = move.stats ? move.stats.playRate / 100 : null;
+          const rareReply = !ourTurn && settings.branchDecay === 'off' && settings.adaptiveOpponentDepth && !move.strongestDefense
             && move.stats !== undefined && move.stats.playRate < settings.opponentMinPlayRate;
           // Reduce the overall horizon once, not once per rare move. Always leave
           // room for our answer; tactical extensions still apply at the shorter horizon.
           const targetDepth = rareReply
             ? Math.min(item.targetDepth, Math.max(node.depth + 1, settings.maxMoveNumber * 2 - 4))
             : item.targetDepth;
-          queue.push({ node, targetDepth, likelihood: item.likelihood * (ourTurn ? 1 : probability), ancestors: new Set(item.ancestors).add(positionKey(active.fen)) });
+          queue.push({ node, targetDepth, likelihood: item.likelihood * (ourTurn ? 1 : probability ?? 1), pathProbability: ourTurn ? item.pathProbability : item.pathProbability === null || probability === null ? null : item.pathProbability * probability, opponentTurns: item.opponentTurns + (ourTurn ? 0 : 1), ancestors: new Set(item.ancestors).add(positionKey(active.fen)) });
           callbacks.onNewNode?.({ ...node, children: [] });
         }
         if (active.responseCoverage !== undefined) {

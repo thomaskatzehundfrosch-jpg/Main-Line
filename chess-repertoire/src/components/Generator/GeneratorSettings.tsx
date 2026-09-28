@@ -84,14 +84,14 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
       </label>
       <p className="text-[11px] text-text-muted">{settings.analysisMode === 'stockfish'
         ? `Up to ${preset.maxReplies} engine replies per position.`
-        : `Aim to cover ${Math.round(preset.coverage * 100)}% of recorded replies at each position, including the strongest defense; normally up to ${preset.maxReplies} replies. Moves meeting your frequency threshold are included beyond this limit.`}
+        : `Aim to cover ${Math.round(preset.coverage * 100)}% of recorded replies at each position, including the strongest defense; normally up to ${preset.maxReplies} replies. Moves meeting your frequency threshold are included beyond this limit unless branch decay or its budget reservation narrows the position.`}
         {' '}Budget: {preset.maxNodes} moves. Limited data or budget can leave gaps.</p>
       {settings.analysisMode !== 'stockfish' && <div className="space-y-2">
         <label className={labelClass}>Include opponent moves played at least (%)
           <input className={inputClass} type="number" min="1" max="100" step="1" value={settings.opponentMinPlayRate}
             onChange={e => update('opponentMinPlayRate', e.target.valueAsNumber)} />
         </label>
-        <p className="text-[11px] text-text-muted">At each position, include all available replies meeting this frequency and the minimum game count, regardless of evaluation. The strongest defense is always selected. The total move budget and analysis failures can still leave gaps.</p>
+        <p className="text-[11px] text-text-muted">At each position, include all available replies meeting this frequency and the minimum game count, regardless of evaluation. The strongest defense is selected except on single-reply decay branches, which prefer the most likely reply unless the defense is at least 0.5 pawns worse for you. The total move budget and analysis failures can still leave gaps.</p>
         <label className="flex gap-2 text-xs text-text-secondary"><input type="checkbox" checked={settings.adaptiveOpponentDepth}
           onChange={e => update('adaptiveOpponentDepth', e.target.checked)} />Shorten rare opponent branches</label>
         <p className="text-[11px] text-text-muted">Additional replies below this frequency end up to two moves earlier, including your next answer when the current depth limit allows. Common replies and the strongest defense keep the current branch depth. Missing human data does not shorten lines.</p>
@@ -123,6 +123,12 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
         </label>}
         <p className="text-[11px] text-text-muted">Prevents repeated sacrifices from crossing this evaluation. Applies with or without trickiness. If already below it, choose the strongest verified continuation without a practical bonus. The per-move loss limit still applies; if no candidate qualifies, the branch remains unfinished.</p>
       </div>
+      <label className={labelClass}>Branch decay
+        <select className={inputClass} value={settings.branchDecay} onChange={e => update('branchDecay', e.target.value as GeneratorSettings['branchDecay'])}>
+          <option value="off">Off</option><option value="gentle">Gentle</option><option value="balanced">Balanced</option>
+        </select>
+      </label>
+      <p className="text-[11px] text-text-muted">Keeps the first two generated opponent turns wide, then narrows unlikely paths. Reserves budget to continue existing lines. Overrides frequency and coverage targets when necessary. With decay enabled, rare lines keep the full target depth instead of ending two moves earlier. Missing frequencies do not make a path rare.</p>
       <label className={labelClass}>Target move number
         <input className={inputClass} type="number" min="1" max="40" value={settings.maxMoveNumber} onChange={e => update('maxMoveNumber', e.target.valueAsNumber)} />
       </label>
