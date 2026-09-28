@@ -12,7 +12,7 @@ const { convertToTreeNode } = require('../src/utils/generatorConverter.ts');
 const { buildTree, selectOpponentReplies, allowsImmediateQueenTrade } = require('../src/engine/generatorTreeBuilder.ts');
 const { DEFAULT_GENERATOR_SETTINGS, normalizeGeneratorSettings } = require('../src/types/generator.ts');
 const { analyzePositionWithStockfish, getTopMovesWithStockfish } = require('../src/engine/analyzer.ts');
-const defaults = { ...DEFAULT_GENERATOR_SETTINGS, analysisMode: 'stockfish', maxMoveNumber: 1, tacticalExtension: 0, sfDepth: 12, studySize: 'compact' };
+const defaults = { ...DEFAULT_GENERATOR_SETTINGS, trickiness: 'off', evaluationFloor: -1, analysisMode: 'stockfish', maxMoveNumber: 1, tacticalExtension: 0, sfDepth: 12, studySize: 'compact' };
 const dummyWorker = {};
 const uci = move => move.from + move.to + (move.promotion ?? '');
 function services(overrides = {}) {
@@ -251,14 +251,14 @@ test('adaptive depth shortens only rare additional replies and can be disabled',
   }
 });
 
-test('trickiness settings default off and normalize the sacrifice interval', () => {
+test('trickiness settings default high and normalize the sacrifice interval', () => {
   const settings = normalizeGeneratorSettings({ ...defaults, trickiness: undefined, trickinessMinLoss: 1.2, trickinessMaxLoss: .2 });
-  assert.equal(settings.trickiness, 'off');
+  assert.equal(settings.trickiness, 'high');
   assert.equal(settings.trickinessMinLoss, .2);
   assert.equal(settings.trickinessMaxLoss, 1.2);
   const repaired = normalizeGeneratorSettings({ ...defaults, trickinessMinLoss: -1, trickinessMaxLoss: Infinity });
   assert.equal(repaired.trickinessMinLoss, 0);
-  assert.equal(repaired.trickinessMaxLoss, .6);
+  assert.equal(repaired.trickinessMaxLoss, .5);
 });
 
 test('trickiness respects color, interval, evidence, and strength setting', async () => {
@@ -328,7 +328,7 @@ test('current-position loss limit holds for both colors and all trickiness modes
 
 test('evaluation floor normalizes defaults and bounds', () => {
   const s = normalizeGeneratorSettings({ ...defaults, evaluationFloor: undefined, evaluationFloorEnabled: undefined });
-  assert.equal(s.evaluationFloor, -1); assert.equal(s.evaluationFloorEnabled, true);
+  assert.equal(s.evaluationFloor, -.4); assert.equal(s.evaluationFloorEnabled, true);
   assert.equal(normalizeGeneratorSettings({ ...defaults, evaluationFloor: -99 }).evaluationFloor, -10);
   assert.equal(normalizeGeneratorSettings({ ...defaults, evaluationFloor: 99, evaluationFloorEnabled: false }).evaluationFloorEnabled, false);
 });
