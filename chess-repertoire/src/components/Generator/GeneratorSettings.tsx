@@ -96,6 +96,24 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
           onChange={e => update('adaptiveOpponentDepth', e.target.checked)} />Shorten rare opponent branches</label>
         <p className="text-[11px] text-text-muted">Additional replies below this frequency end up to two moves earlier, including your next answer when the current depth limit allows. Common replies and the strongest defense keep the current branch depth. Missing human data does not shorten lines.</p>
       </div>}
+      {settings.analysisMode !== 'stockfish' && <div className="space-y-2">
+        <label className={labelClass}>Trickiness for your moves
+          <select className={inputClass} value={settings.trickiness} onChange={e => update('trickiness', e.target.value as GeneratorSettings['trickiness'])}>
+            <option value="off">Off</option><option value="balanced">Balanced</option><option value="high">High</option>
+          </select>
+        </label>
+        {settings.trickiness !== 'off' && <>
+          <div className="grid grid-cols-2 gap-2">
+            <label className={labelClass}>Minimum sacrifice (pawns)
+              <input className={inputClass} type="number" min="0" max="5" step="0.1" value={settings.trickinessMinLoss} onChange={e => update('trickinessMinLoss', e.target.valueAsNumber)} />
+            </label>
+            <label className={labelClass}>Maximum sacrifice (pawns)
+              <input className={inputClass} type="number" min="0" max="5" step="0.1" value={settings.trickinessMaxLoss} onChange={e => update('trickinessMaxLoss', e.target.valueAsNumber)} />
+            </label>
+          </div>
+          <p className="text-[11px] text-text-muted">Search this loss interval relative to the best verified candidate. Reversed bounds are sorted. Replaces the normal allowed-loss setting while enabled. If no candidate offers a supported practical improvement, keep the best move. Uses your opponent profile; small samples count less. Examining replies makes generation slower.</p>
+        </>}
+      </div>}
       <label className={labelClass}>Target move number
         <input className={inputClass} type="number" min="1" max="40" value={settings.maxMoveNumber} onChange={e => update('maxMoveNumber', e.target.valueAsNumber)} />
       </label>

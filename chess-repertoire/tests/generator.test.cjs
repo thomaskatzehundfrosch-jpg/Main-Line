@@ -250,3 +250,57 @@ test('adaptive depth shortens only rare additional replies and can be disabled',
     }
   }
 });
+
+test('trickiness settings default off and normalize the sacrifice interval', () => {
+  const settings = normalizeGeneratorSettings({ ...defaults, trickiness: undefined, trickinessMinLoss: 1.2, trickinessMaxLoss: .2 });
+  assert.equal(settings.trickiness, 'off');
+  assert.equal(settings.trickinessMinLoss, .2);
+  assert.equal(settings.trickinessMaxLoss, 1.2);
+  const repaired = normalizeGeneratorSettings({ ...defaults, trickinessMinLoss: -1, trickinessMaxLoss: Infinity });
+  assert.equal(repaired.trickinessMinLoss, 0);
+  assert.equal(repaired.trickinessMaxLoss, .6);
+});
+
+test('trickiness respects color, interval, evidence, and strength setting', async () => {
+  for (const color of ['white', 'black']) {
+    const start = new Chess(); if (color === 'black') start.move('e4');
+    const legal = start.moves({ verbose: true });
+    const safe = legal[0], tricky = legal[1];
+    const afterTricky = new Chess(start.fen()); afterTricky.move(tricky);
+    const humanReply = afterTricky.moves({ verbose: true })[0];
+    const afterMistake = new Chess(afterTricky.fen()); afterMistake.move(humanReply);
+    for (const scenario of [
+      { mode: 'high', min: .4, max: .4, games: 10000, expected: tricky },
+      { mode: 'balanced', min: 0, max: .6, games: 10000, expected: safe },
+      { mode: 'off', min: 0, max: .6, games: 10000, expected: safe },
+      { mode: 'high', min: 0, max: .3, games: 10000, expected: safe },
+      { mode: 'high', min: .5, max: 1, games: 10000, expected: safe },
+      { mode: 'high', min: 0, max: .6, games: 10, expected: safe },
+      { mode: 'high', min: 0, max: .6, games: 0, expected: safe },
+    ]) {
+      const root = await buildTree(color === 'black' ? [['e4']] : null,
+        { ...defaults, color, analysisMode: 'lichess+stockfish', maxEvalLoss: 0, trickiness: scenario.mode, trickinessMinLoss: scenario.min, trickinessMaxLoss: scenario.max }, {}, { current: false }, dummyWorker, services({
+          topMoves: async (_w, fen, depth, count) => (fen === start.fen() ? [safe, tricky] : new Chess(fen).moves({ verbose: true })).slice(0, count).map(m => ({ uci: uci(m), eval: 0, depth })),
+          analyze: async (_w, fen, depth) => ({ score: (fen === afterTricky.fen() ? -40 : fen === afterMistake.fen() ? 20 : 0) * (color === 'white' ? 1 : -1), depth }),
+          replies: async fen => fen === afterTricky.fen() && scenario.games ? [{ san: humanReply.san, uci: uci(humanReply), totalGames: scenario.games, playRate: 100, winRate: 90, lossRate: 5, drawRate: 5, averageRating: null }] : [],
+        }));
+      const parent = color === 'black' ? root.children[0] : root;
+      assert.equal(parent.children[0].uci, uci(scenario.expected), `${color} ${JSON.stringify(scenario)}`);
+      if (scenario.expected === tricky) assert.match(parent.children[0].reason, /Trickiness: 0.40 pawn sacrifice/);
+    }
+  }
+});
+
+test('trickiness cancellation during reply analysis adds no late candidate', async () => {
+  const stop = { current: false };
+  const initial = new Chess().fen();
+  let progress;
+  const root = await buildTree(null, { ...defaults, analysisMode: 'lichess+stockfish', trickiness: 'high' }, { onProgress: p => progress = p }, stop, dummyWorker, services({
+    replies: async fen => {
+      if (fen !== initial) stop.current = true;
+      return [];
+    },
+  }));
+  assert.equal(root.children.length, 0);
+  assert.equal(progress.outcome, 'stopped');
+});

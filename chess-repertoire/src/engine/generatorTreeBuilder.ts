@@ -136,7 +136,8 @@ export async function buildTree(
       const chess = new Chess(fen); chess.move(c.san); return { ...c, fen: chess.fen() };
     });
     const popular = await popularReplies(fen);
-    const count = ourTurn ? (settings.avoidQueenTrades ? 4 : 1) : maxReplies;
+    const tricky = settings.trickiness !== 'off' && settings.analysisMode !== 'stockfish';
+    const count = ourTurn ? (tricky ? 5 : settings.avoidQueenTrades ? 4 : 1) : maxReplies;
     const top = await services.topMoves(worker!, fen, settings.sfDepth, count, 90000, signal);
     check();
     if (!top.length || top.some(move => move.depth < settings.sfDepth || move.eval == null)) {
@@ -151,6 +152,51 @@ export async function buildTree(
         catch (error) { check(); if (uci === strongest.uci) throw error; }
       }
       const best = Math.max(...checked.map(move => scoreFor(move.score, settings.color)));
+      if (tricky) {
+        // Keep the strongest verified option as a fallback even outside the requested interval.
+        const baseline = checked.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
+        let eligible = checked.filter(move => {
+          const loss = best - scoreFor(move.score, settings.color);
+          return loss + 1e-8 >= settings.trickinessMinLoss && loss <= settings.trickinessMaxLoss + 1e-8;
+        });
+        if (settings.avoidQueenTrades) {
+          const keepQueens = eligible.filter(move => !allowsImmediateQueenTrade(fen, move.san));
+          if (keepQueens.length) eligible = keepQueens;
+        }
+        let chosen = baseline;
+        let chosenScore = best;
+        let explanation = 'No supported practical improvement in your sacrifice interval; best verified candidate retained';
+        for (const move of eligible) {
+          check();
+          try {
+            // Full position frequencies: unexamined replies contribute zero benefit.
+            const replies = (await popularReplies(move.fen)).slice(0, 8);
+            let benefit = 0;
+            let mistakeFrequency = 0;
+            const objective = scoreFor(move.score, settings.color);
+            for (const reply of replies) {
+              const after = await candidate(move.fen, reply.uci);
+              const gain = Math.max(0, Math.min(3, scoreFor(after.score, settings.color) - objective));
+              const probability = Math.max(0, Math.min(1, reply.playRate / 100));
+              // Shrink each reply's contribution until it has substantial evidence.
+              const confidence = reply.totalGames / (reply.totalGames + 100);
+              benefit += probability * gain * confidence;
+              if (gain >= 0.3) mistakeFrequency += probability;
+            }
+            const practicalScore = objective + (settings.trickiness === 'high' ? 1 : 0.5) * benefit;
+            if (practicalScore > chosenScore + 1e-8) {
+              chosen = move; chosenScore = practicalScore;
+              explanation = `Trickiness: ${(best - objective).toFixed(2)} pawn sacrifice; inferior replies in ${(mistakeFrequency * 100).toFixed(0)}% of database games; confidence-adjusted benefit ${benefit.toFixed(2)} pawns (up to 8 replies examined)`;
+            }
+          } catch (error) {
+            check();
+            log('warning', `Could not assess trickiness for ${move.san}; no practical bonus used.`);
+          }
+        }
+        chosen.reason = explanation;
+        choiceCache.set(key, [chosen]);
+        return [chosen];
+      }
       let sound = checked.filter(move => best - scoreFor(move.score, settings.color) <= settings.maxEvalLoss + 1e-8);
       if (settings.avoidQueenTrades) {
         const keepQueens = sound.filter(move => !allowsImmediateQueenTrade(fen, move.san));
