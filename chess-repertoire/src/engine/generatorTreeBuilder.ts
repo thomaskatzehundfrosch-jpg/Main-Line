@@ -45,7 +45,7 @@ export function allowsImmediateQueenTrade(fen: string, san: string): boolean {
 
 /** Common mistakes remain useful preparation; reserve a place for the best defense. */
 export function selectOpponentReplies<T extends { uci: string; playRate: number }>(
-  popular: T[], best: T, coverageTarget: number, maxReplies: number, minPlayRate: number = 5
+  popular: T[], best: T, coverageTarget: number, maxReplies: number, minPlayRate: number = 10
 ): T[] {
   const selected: T[] = [popular.find(move => move.uci === best.uci) ?? best];
   const ranked = [...popular].sort((a, b) => b.playRate - a.playRate);

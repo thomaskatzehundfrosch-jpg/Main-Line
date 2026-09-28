@@ -43,7 +43,7 @@ export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   speeds: ['blitz', 'rapid', 'classical'], minGames: 10,
   evaluationFloorEnabled: true, evaluationFloor: -0.4,
   trickiness: 'high', trickinessMinLoss: 0, trickinessMaxLoss: 0.5,
-  opponentMinPlayRate: 5, adaptiveOpponentDepth: true, branchDecay: 'balanced',
+  opponentMinPlayRate: 10, adaptiveOpponentDepth: true, branchDecay: 'balanced',
 };
 
 export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorSettings {
@@ -66,7 +66,7 @@ export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorS
     trickinessMinLoss: Math.min(number(input.trickinessMinLoss, 0, 0, 5), number(input.trickinessMaxLoss, 0.5, 0, 5)),
     trickinessMaxLoss: Math.max(number(input.trickinessMinLoss, 0, 0, 5), number(input.trickinessMaxLoss, 0.5, 0, 5)),
     tacticalExtension: Math.round(number(input.tacticalExtension, 2, 0, 4)),
-    opponentMinPlayRate: number(input.opponentMinPlayRate, 5, 1, 100),
+    opponentMinPlayRate: number(input.opponentMinPlayRate, 10, 1, 100),
     adaptiveOpponentDepth: input.adaptiveOpponentDepth ?? true,
     branchDecay: input.branchDecay === 'off' || input.branchDecay === 'gentle' ? input.branchDecay : 'balanced',
     minGames: Math.round(number(input.minGames, 10, 1, 10000)),

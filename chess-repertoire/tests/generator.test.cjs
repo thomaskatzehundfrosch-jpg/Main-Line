@@ -12,7 +12,7 @@ const { convertToTreeNode } = require('../src/utils/generatorConverter.ts');
 const { buildTree, selectOpponentReplies, allowsImmediateQueenTrade } = require('../src/engine/generatorTreeBuilder.ts');
 const { DEFAULT_GENERATOR_SETTINGS, normalizeGeneratorSettings } = require('../src/types/generator.ts');
 const { analyzePositionWithStockfish, getTopMovesWithStockfish } = require('../src/engine/analyzer.ts');
-const defaults = { ...DEFAULT_GENERATOR_SETTINGS, branchDecay: 'off', trickiness: 'off', evaluationFloor: -1, analysisMode: 'stockfish', maxMoveNumber: 1, tacticalExtension: 0, sfDepth: 12, studySize: 'compact' };
+const defaults = { ...DEFAULT_GENERATOR_SETTINGS, opponentMinPlayRate: 5, branchDecay: 'off', trickiness: 'off', evaluationFloor: -1, analysisMode: 'stockfish', maxMoveNumber: 1, tacticalExtension: 0, sfDepth: 12, studySize: 'compact' };
 const dummyWorker = {};
 const uci = move => move.from + move.to + (move.promotion ?? '');
 function services(overrides = {}) {
@@ -208,7 +208,7 @@ test('frequency threshold overrides both coverage and reply caps, including equa
   assert.equal(selectOpponentReplies(many, many[0], .7, 3, 5).length, 10);
 });
 test('opponent frequency settings normalize missing and out-of-range values', () => {
-  assert.equal(normalizeGeneratorSettings({ ...defaults, opponentMinPlayRate: undefined }).opponentMinPlayRate, 5);
+  assert.equal(normalizeGeneratorSettings({ ...defaults, opponentMinPlayRate: undefined }).opponentMinPlayRate, 10);
   assert.equal(normalizeGeneratorSettings({ ...defaults, opponentMinPlayRate: 0 }).opponentMinPlayRate, 1);
   assert.equal(normalizeGeneratorSettings({ ...defaults, opponentMinPlayRate: 101 }).opponentMinPlayRate, 100);
 });
