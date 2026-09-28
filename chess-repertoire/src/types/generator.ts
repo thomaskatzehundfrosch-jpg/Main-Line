@@ -9,7 +9,7 @@ export interface GeneratorSettings {
   studySize: StudySize;
   /** One depth for discovery and verification. Generator analysis is local. */
   sfDepth: number;
-  /** Maximum loss in pawns relative to the best verified candidate. */
+  /** Maximum loss in pawns relative to the position evaluation before your move, from your side’s perspective. */
   maxEvalLoss: number;
   trickiness: 'off' | 'balanced' | 'high';
   trickinessMinLoss: number;

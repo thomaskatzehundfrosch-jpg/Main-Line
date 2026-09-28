@@ -151,12 +151,16 @@ export async function buildTree(
         try { checked.push(await candidate(fen, uci, popular.find(move => move.uci === uci))); }
         catch (error) { check(); if (uci === strongest.uci) throw error; }
       }
-      const best = Math.max(...checked.map(move => scoreFor(move.score, settings.color)));
+      const current = scoreFor((await evaluate(fen)).score, settings.color);
+      const maximumLoss = tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss;
+      const permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
+      if (!permitted.length) throw new Error(`No verified candidate stays within the ${maximumLoss.toFixed(2)} pawn loss limit from the current evaluation (${current.toFixed(2)} from your side).`);
+      const best = Math.max(...permitted.map(move => scoreFor(move.score, settings.color)));
       if (tricky) {
-        // Keep the strongest verified option as a fallback even outside the requested interval.
-        const baseline = checked.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
-        let eligible = checked.filter(move => {
-          const loss = best - scoreFor(move.score, settings.color);
+        // A fallback may be below the minimum sacrifice, but never exceeds the maximum.
+        const baseline = permitted.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
+        let eligible = permitted.filter(move => {
+          const loss = Math.max(0, current - scoreFor(move.score, settings.color));
           return loss + 1e-8 >= settings.trickinessMinLoss && loss <= settings.trickinessMaxLoss + 1e-8;
         });
         if (settings.avoidQueenTrades) {
@@ -186,7 +190,7 @@ export async function buildTree(
             const practicalScore = objective + (settings.trickiness === 'high' ? 1 : 0.5) * benefit;
             if (practicalScore > chosenScore + 1e-8) {
               chosen = move; chosenScore = practicalScore;
-              explanation = `Trickiness: ${(best - objective).toFixed(2)} pawn sacrifice; inferior replies in ${(mistakeFrequency * 100).toFixed(0)}% of database games; confidence-adjusted benefit ${benefit.toFixed(2)} pawns (up to 8 replies examined)`;
+              explanation = `Trickiness: ${Math.max(0, current - objective).toFixed(2)} pawn sacrifice from the current evaluation; inferior replies in ${(mistakeFrequency * 100).toFixed(0)}% of database games; confidence-adjusted benefit ${benefit.toFixed(2)} pawns (up to 8 replies examined)`;
             }
           } catch (error) {
             check();
@@ -197,7 +201,7 @@ export async function buildTree(
         choiceCache.set(key, [chosen]);
         return [chosen];
       }
-      let sound = checked.filter(move => best - scoreFor(move.score, settings.color) <= settings.maxEvalLoss + 1e-8);
+      let sound = permitted;
       if (settings.avoidQueenTrades) {
         const keepQueens = sound.filter(move => !allowsImmediateQueenTrade(fen, move.san));
         if (keepQueens.length) sound = keepQueens;
@@ -205,9 +209,9 @@ export async function buildTree(
       sound.sort((a, b) => (b.stats?.totalGames ?? 0) - (a.stats?.totalGames ?? 0) || scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color));
       const chosen = sound[0];
       if (!chosen) throw new Error('No verified continuation available.');
-      const loss = Math.max(0, best - scoreFor(chosen.score, settings.color));
+      const loss = Math.max(0, current - scoreFor(chosen.score, settings.color));
       chosen.reason = chosen.stats
-        ? `Common in your opponent profile; ${loss.toFixed(2)} pawns below the best verified candidate`
+        ? `Common in your opponent profile; ${loss.toFixed(2)} pawns lost from the current evaluation`
         : 'Best verified candidate within your preferences';
       choiceCache.set(key, [chosen]);
       return [chosen];

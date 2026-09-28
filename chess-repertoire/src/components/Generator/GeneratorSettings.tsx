@@ -111,7 +111,7 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
               <input className={inputClass} type="number" min="0" max="5" step="0.1" value={settings.trickinessMaxLoss} onChange={e => update('trickinessMaxLoss', e.target.valueAsNumber)} />
             </label>
           </div>
-          <p className="text-[11px] text-text-muted">Search this loss interval relative to the best verified candidate. Reversed bounds are sorted. Replaces the normal allowed-loss setting while enabled. If no candidate offers a supported practical improvement, keep the best move. Uses your opponent profile; small samples count less. Examining replies makes generation slower.</p>
+          <p className="text-[11px] text-text-muted">Search this loss interval relative to the position evaluation before your move, from your side’s perspective. Reversed bounds are sorted. Replaces the normal allowed-loss setting while enabled. If no candidate offers a supported practical improvement, keep the best move within the maximum loss. If none meets that limit, leave the continuation unfinished. Uses your opponent profile; small samples count less. Examining replies makes generation slower.</p>
         </>}
       </div>}
       <label className={labelClass}>Target move number
@@ -125,7 +125,7 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
               <option value="12">Quick</option><option value="16">Standard</option><option value="20">Thorough</option><option value="25">Deep — slower</option>
             </select>
           </label>
-          <label className={labelClass}>Allowed loss versus best candidate (pawns)
+          <label className={labelClass}>Allowed loss from current evaluation (pawns)
             <input className={inputClass} type="number" min="0" max="1" step="0.1" value={settings.maxEvalLoss} onChange={e => update('maxEvalLoss', e.target.valueAsNumber)} />
           </label>
           <label className={labelClass}>Extra moves for checks and captures

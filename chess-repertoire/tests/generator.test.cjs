@@ -304,3 +304,24 @@ test('trickiness cancellation during reply analysis adds no late candidate', asy
   assert.equal(root.children.length, 0);
   assert.equal(progress.outcome, 'stopped');
 });
+
+test('current-position loss limit holds for both colors and all trickiness modes', async () => {
+  for (const color of ['white', 'black']) for (const mode of ['off', 'balanced', 'high']) {
+    for (const afterScore of [50, 49]) {
+      const start = new Chess(); if (color === 'black') start.move('e4');
+      let progress;
+      const root = await buildTree(color === 'black' ? [['e4']] : null,
+        { ...defaults, color, analysisMode: 'lichess+stockfish', maxEvalLoss: .5, trickiness: mode, trickinessMaxLoss: .5 },
+        { onProgress: p => progress = p }, { current: false }, dummyWorker, services({
+          analyze: async (_w, fen, depth) => ({ score: (fen === start.fen() ? 100 : afterScore) * (color === 'white' ? 1 : -1), depth }),
+        }));
+      const parent = color === 'black' ? root.children[0] : root;
+      if (afterScore === 50) assert.ok(parent.children.length, `${color} ${mode}: exact boundary accepted`);
+      else {
+        assert.equal(parent.children.length, 0, `${color} ${mode}: fallback must not bypass limit`);
+        assert.match(parent.warning, /loss limit from the current evaluation/);
+        assert.equal(progress.outcome, 'partial');
+      }
+    }
+  }
+});
