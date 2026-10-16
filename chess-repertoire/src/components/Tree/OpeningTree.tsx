@@ -28,6 +28,7 @@ interface OpeningTreeProps {
   /** Called whenever tree explore mode is toggled */
   onExploreModeChange?: (enabled: boolean) => void;
   /** Open the generator with this node's line as the seed. */
+  onInvestigateNode?: (node: TreeNode) => void;
   onFinishLineFromNode?: (node: TreeNode) => void;
 }
 
@@ -435,6 +436,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
   onExploreFen,
   exploreModeEnabled,
   onExploreModeChange,
+  onInvestigateNode,
   onFinishLineFromNode,
 }) => {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -651,8 +653,8 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
                  ${(d.source.y + d.target.y) / 2},${d.target.x}
                  ${d.target.y},${d.target.x}`;
       })
-      .attr('stroke-dasharray', (d: any) => d.target.data._isOverlay ? '4,3' : null)
-      .attr('opacity', (d: any) => d.target.data._isOverlay ? 0.45 : null);
+      .attr('stroke-dasharray', (d: any) => d.target.data._isOverlay || d.target.data._labPreview ? '4,3' : null)
+      .attr('opacity', (d: any) => d.target.data._isOverlay || d.target.data._labPreview ? 0.45 : null);
 
     // ─── Repertoire Nodes ─────────────────────────────────────────────
     const nodeGroups = g
@@ -719,6 +721,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       })
       .on('contextmenu', (event: MouseEvent, d: any) => {
         event.preventDefault();
+        if (d.data._labPreview) return;
         if (!d.data._isOverlay && d.data.parentId === null) return; // skip root only
         setTooltip({ node: null, x: 0, y: 0, visible: false });
         setContextMenu({
@@ -1015,7 +1018,7 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
       })
       .attr('opacity', (d: any) => d.data._isOverlay ? 0.85 : 1)
       .attr('pointer-events', 'none')
-      .text((d: any) => d.data.move);
+      .text((d: any) => d.data._labPreview ? `${d.data.move} ◇` : d.data.move);
 
     // Move number labels under nodes
     nodeGroups
@@ -1129,6 +1132,9 @@ export const OpeningTree: React.FC<OpeningTreeProps> = ({
             </div>
           ) : (
             <>
+              {onInvestigateNode && !contextMenu.node.id.startsWith('lab-preview-') && <button
+                className="w-full text-left px-3 py-2 text-sm text-accent-teal hover:bg-bg-hover"
+                onClick={() => { onInvestigateNode(contextMenu.node!); setContextMenu(prev => ({ ...prev, visible: false })); }}>Investigate this position</button>}
               {onFinishLineFromNode && !contextMenu.node.id.startsWith('overlay_') && (
                 <button
                   className="w-full text-left px-3 py-2 text-sm text-text-secondary hover:bg-bg-hover transition-colors flex items-center gap-2"

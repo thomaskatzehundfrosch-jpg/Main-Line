@@ -8,6 +8,8 @@ import BoardControls from './Board/BoardControls';
 import { OpeningTree } from './Tree/OpeningTree';
 import { MoveList } from './Sidebar/MoveList';
 import { EnginePanel } from './Sidebar/EnginePanel';
+import { OpeningLabPanel, type LabMove } from './Sidebar/OpeningLabPanel';
+import { createLabPreview } from '../openingLab/preview';
 import { NotesPanel } from './Sidebar/NotesPanel';
 import { GameImportPanel } from './GameImportPanel';
 import { MistakePanel } from './MistakePanel';
@@ -56,8 +58,8 @@ import { getCachedGeneratorSettings } from '../utils/generatorSettingsCache';
 import { END_REASON_LABELS } from '../types/generator';
 import type { GeneratorNode } from '../types/generator';
 
-type SidebarTab = 'analysis' | 'games';
-type MobileTab = 'tree' | 'analysis' | 'games';
+type SidebarTab = 'analysis' | 'games' | 'lab';
+type MobileTab = 'tree' | 'analysis' | 'games' | 'lab';
 
 interface MostLikelyMoveState {
   fen: string;
@@ -240,6 +242,29 @@ export const App: React.FC = () => {
     filterColor: 'both' as 'white' | 'black' | 'both',
   });
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('analysis');
+  const [labPreview, setLabPreview] = useState<LabMove[]>([]);
+  const [labHover, setLabHover] = useState<string | null>(null);
+  const [labStep, setLabStep] = useState(0);
+  const labPreviewTree = useMemo(() => createLabPreview(tree, currentNode.id, labPreview), [tree, currentNode.id, labPreview]);
+  const previewNode = labStep > 0 ? labPreviewTree.nodes[labStep - 1] : undefined;
+  const labNextArrow = useMemo(() => {
+    if (!previewNode || !labPreview[labStep]) return undefined;
+    try { const move = new Chess(previewNode.fen).move(labPreview[labStep].move); return [move.from + move.to + (move.promotion || '')]; } catch { return undefined; }
+  }, [previewNode, labPreview, labStep]);
+  const previewPath = previewNode ? [...currentPath, ...labPreviewTree.nodes.slice(0, labStep)] : currentPath;
+  useEffect(() => { setLabPreview([]); setLabStep(0); }, [currentNode.id, currentNode.fen]);
+  useEffect(() => { setLabPreview([]); setLabStep(0); setLabHover(null); }, [sidebarTab, mobileTab]);
+  const handleLabPreview = useCallback((line: LabMove[]) => { setLabPreview(line); setLabStep(line.length ? 1 : 0); }, []);
+  const handleLabNodeClick = (node: TreeNode) => {
+    const index = labPreviewTree.nodes.findIndex(n => n.id === node.id);
+    if (index >= 0) setLabStep(index + 1);
+    else { setLabPreview([]); setLabStep(0); navigateToNode(node); }
+  };
+  const openLab = (node: TreeNode) => {
+    navigateToNode(node); setSidebarTab('lab'); setMobileTab('lab');
+    setExploreOverlayFen(null);
+  };
+
   const [repertoireDepth, setRepertoireDepth] = useState(18);
   const [thresholds, setThresholds] = useState({
     inaccuracy: MISTAKE_THRESHOLDS.inaccuracy,
@@ -506,7 +531,7 @@ export const App: React.FC = () => {
   }, [viewingGame, gamePositions.length]);
 
   // The FEN to display on the board - game viewer > explore overlay > current node
-  const displayFen = viewingFen || exploreOverlayFen || currentNode.fen;
+  const displayFen = viewingFen || previewNode?.fen || exploreOverlayFen || currentNode.fen;
 
   // Analyze position when current node or game viewer position changes
   useEffect(() => {
@@ -1693,8 +1718,8 @@ export const App: React.FC = () => {
               <ChessBoard
                 fen={displayFen}
                 orientation={orientation}
-                onMove={viewingGame ? () => false : handleBoardMove}
-                engineBestMove={engine.enabled ? engineArrows : undefined}
+                onMove={viewingGame || previewNode ? () => false : handleBoardMove}
+                engineBestMove={previewNode ? labNextArrow : labHover ? [labHover] : engine.enabled ? engineArrows : undefined}
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
                 mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
                 sizeScale={boardMinimized ? 0.5 : 1}
@@ -1731,7 +1756,7 @@ export const App: React.FC = () => {
 
           {/* Mobile Tab Bar */}
           <div className="flex border-b border-border-subtle flex-shrink-0">
-            {(['tree', 'analysis', 'games'] as MobileTab[]).map((tab) => (
+            {(['tree', 'analysis', 'lab', 'games'] as MobileTab[]).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setMobileTab(tab)}
@@ -1741,7 +1766,7 @@ export const App: React.FC = () => {
                     : 'text-text-muted'
                 }`}
               >
-                {tab === 'tree' ? 'Tree' : tab === 'analysis' ? 'Analysis' : 'Games'}
+                {tab === 'tree' ? 'Tree' : tab === 'analysis' ? 'Analysis' : tab === 'lab' ? 'Lab' : 'Games'}
                 {tab === 'games' && games.totalMistakes > 0 && (
                   <span className="ml-1 inline-flex items-center justify-center px-1 min-w-[16px] h-4 rounded-full bg-accent-amber/20 text-accent-amber text-[9px] font-semibold">
                     {games.totalMistakes}
@@ -1777,10 +1802,10 @@ export const App: React.FC = () => {
                 </div>
                 <div className="flex-1 min-h-0">
                   <OpeningTree
-                    tree={tree}
-                    currentNode={currentNode}
-                    currentPath={currentPath}
-                    onNodeClick={navigateToNode}
+                    tree={labPreviewTree.tree}
+                    currentNode={previewNode || currentNode}
+                    currentPath={previewPath}
+                    onNodeClick={handleLabNodeClick}
                     onDeleteNode={deleteNode}
                     onAddMove={addMoveToNode}
                     onAddLine={addLineToNode}
@@ -1789,12 +1814,17 @@ export const App: React.FC = () => {
                     onExploreFen={setExploreOverlayFen}
                     exploreModeEnabled={treeExploreMode}
                     onExploreModeChange={setTreeExploreMode}
-                    onFinishLineFromNode={handleFinishLineFromNode}
+                    onInvestigateNode={openLab}
+              onFinishLineFromNode={handleFinishLineFromNode}
                   />
                 </div>
               </div>
             )}
 
+            {mobileTab === 'lab' && <OpeningLabPanel key={currentNode.id + currentNode.fen} fen={currentNode.fen}
+                onHover={setLabHover} onPreview={handleLabPreview}
+                onSave={line => { addLineToNode(currentNode.id, line); setLabPreview([]); setLabStep(0); }}
+                onStart={() => { if (engine.enabled) engine.toggleEngine(); }} />}
             {/* Analysis Tab */}
             {mobileTab === 'analysis' && (
               <div className="h-full overflow-y-auto">
@@ -2093,10 +2123,10 @@ export const App: React.FC = () => {
           </div>
           <div className="flex-1 min-h-0">
             <OpeningTree
-              tree={tree}
-              currentNode={currentNode}
-              currentPath={currentPath}
-              onNodeClick={navigateToNode}
+              tree={labPreviewTree.tree}
+              currentNode={previewNode || currentNode}
+              currentPath={previewPath}
+              onNodeClick={handleLabNodeClick}
               onDeleteNode={deleteNode}
               onAddMove={addMoveToNode}
               onAddLine={addLineToNode}
@@ -2105,6 +2135,7 @@ export const App: React.FC = () => {
               onExploreFen={setExploreOverlayFen}
               exploreModeEnabled={treeExploreMode}
               onExploreModeChange={setTreeExploreMode}
+              onInvestigateNode={openLab}
               onFinishLineFromNode={handleFinishLineFromNode}
             />
           </div>
@@ -2141,8 +2172,8 @@ export const App: React.FC = () => {
               <ChessBoard
                 fen={displayFen}
                 orientation={orientation}
-                onMove={viewingGame ? () => false : handleBoardMove}
-                engineBestMove={engine.enabled ? engineArrows : undefined}
+                onMove={viewingGame || previewNode ? () => false : handleBoardMove}
+                engineBestMove={previewNode ? labNextArrow : labHover ? [labHover] : engine.enabled ? engineArrows : undefined}
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
                 mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
                 sizeScale={1}
@@ -2200,6 +2231,8 @@ export const App: React.FC = () => {
             >
               Analysis
             </button>
+            <button onClick={() => { setSidebarTab('lab'); setExploreOverlayFen(null); }}
+              className={`flex-1 px-3 py-1.5 text-xs font-mono uppercase ${sidebarTab === 'lab' ? 'text-accent-teal border-b-2 border-accent-teal' : 'text-text-muted'}`}>Opening Lab</button>
             <button
               onClick={() => setSidebarTab('games')}
               className={`flex-1 px-3 py-1.5 text-xs font-mono uppercase tracking-wider transition-colors relative ${
@@ -2219,7 +2252,10 @@ export const App: React.FC = () => {
 
           {/* Tab Content */}
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-            {sidebarTab === 'analysis' ? (
+            {sidebarTab === 'lab' ? <OpeningLabPanel key={currentNode.id + currentNode.fen} fen={currentNode.fen}
+                onHover={setLabHover} onPreview={handleLabPreview}
+                onSave={line => { addLineToNode(currentNode.id, line); setLabPreview([]); setLabStep(0); }}
+                onStart={() => { if (engine.enabled) engine.toggleEngine(); }} /> : sidebarTab === 'analysis' ? (
               <div className="flex-1 min-h-0 overflow-auto">
                 {/* Engine Panel */}
                 <div className="min-h-[140px] flex flex-col shrink-0">
