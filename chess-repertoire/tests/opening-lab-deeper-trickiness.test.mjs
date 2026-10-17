@@ -49,3 +49,14 @@ test('deeper searches use increased engine depth and selected candidate only',as
  assert.deepEqual(r.deep.targets,['g1f3']);
  assert.equal(r.candidates[1].deep,undefined);
 });
+
+test('expanded variants investigate additional supported first replies',async()=>{
+ const r=fixture();
+ const after=board(r.input);after.move('Nf3');
+ r.candidates[0].replyData={games:1000,moves:after.moves({verbose:true}).slice(0,7).map(m=>({uci:uci(m),games:100}))};
+ const client={settings:{depth:27},started:performance.now(),stats:{calls:0},check(){},async analyse(state,width){this.stats.calls++;return {rows:board(state).moves({verbose:true}).slice(0,width).map(m=>({uci:uci(m),cp:0,mate:null,depth:27,pv:[uci(m)]}))};}};
+ await deepen(r,client,{query:async()=>({games:0,moves:[]})},'tricks',()=>{},{targetUci:'g1f3',firstMaxReplies:6,maxReplies:8,coverage:.95});
+ assert.equal(r.deep.status,'complete');
+ assert.equal(r.candidates[0].deep.branches.length,6);
+ assert.ok(r.candidates[0].deep.branches.every(b=>b.firstChecked));
+});

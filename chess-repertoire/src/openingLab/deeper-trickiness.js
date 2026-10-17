@@ -35,13 +35,14 @@ function scoreOf(a){return a.rows[0]||a.terminal||{};}
 export async function deepen(result,client,db,mode='tricks',update=(_result)=>{},options={}){
  const targets=options.targetUci?result.candidates.filter(c=>c.uci===options.targetUci&&c.sound&&c.repliesComplete).slice(0,1):deepTargets(result,mode),s={...result.settings,depth:client.settings?.depth??result.settings.depth};
  result.deep={status:'running',targets:targets.map(c=>c.uci),mode,phase:'Starting selective two-turn checks',created:new Date().toISOString(),depth:s.depth};
- const emit=phase=>{result.deep.phase=phase;const total=targets.reduce((n,c)=>n+Math.min(3,c.replies.length),0);const done=targets.reduce((n,c)=>n+(c.deep?.branches||[]).filter(b=>b.status!=='running').length,0);result.deep.progress=result.deep.status==='complete'?100:total?Math.min(95,95*done/total):0;result.deep.seconds=(performance.now()-client.started)/1000;result.deep.stats={...client.stats};for(const c of targets)if(c.deep)c.deep.summary=deepSummary(c,s.mistakeThreshold);update(result);};
+ const firstReplies=c=>options.firstMaxReplies>3&&c.replyData?selectDeepReplies(c.replyData,s.minReplyGames,options.firstMaxReplies,options.coverage??.95).map(row=>c.replies.find(r=>r.uci===row.uci)||{uci:row.uci,san:san(advance(result.input,c.uci),row.uci),games:row.games,frequency:row.games/c.replyData.games,supported:true,lossCp:null}):c.replies.slice(0,3);
+ const emit=phase=>{result.deep.phase=phase;const total=targets.reduce((n,c)=>n+firstReplies(c).length,0);const done=targets.reduce((n,c)=>n+(c.deep?.branches||[]).filter(b=>b.status!=='running').length,0);result.deep.progress=result.deep.status==='complete'?100:total?Math.min(95,95*done/total):0;result.deep.seconds=(performance.now()-client.started)/1000;result.deep.stats={...client.stats};for(const c of targets)if(c.deep)c.deep.summary=deepSummary(c,s.mistakeThreshold);update(result);};
  try{
   if(!targets.length)throw Error('Finish supported candidate reply checks before investigating deeper.');
   for(const c of targets){
    c.deep={status:'running',branches:[]};const after=advance(result.input,c.uci);
-   for(const first of c.replies.slice(0,3)){
-    client.check();const branch={reply:first.uci,san:first.san,frequency:first.frequency,replies:[],status:'running'};c.deep.branches.push(branch);
+   for(const first of firstReplies(c)){
+    client.check();if(!c.replies.some(r=>r.uci===first.uci))c.replies.push(first);c.coverage=c.replies.reduce((sum,row)=>sum+(row.frequency||0),0);const branch={reply:first.uci,san:first.san,frequency:first.frequency,replies:[],status:'running'};c.deep.branches.push(branch);
     if(!first.supported){branch.status='insufficient_data';emit('Skipping a reply with too few games');continue;}
     const ownState=advance(after,first.uci);
     if(board(ownState).isGameOver()){branch.status='terminal';emit('Terminal first reply');continue;}

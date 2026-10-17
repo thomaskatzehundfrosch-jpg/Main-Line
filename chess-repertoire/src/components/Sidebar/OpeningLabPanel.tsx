@@ -48,6 +48,14 @@ export function OpeningLabPanel({ fen, onPreview, onSave, onStart, onHover }: Pr
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; candidate: any; line: LabMove[] } | null>(null);
+  useEffect(() => {
+    const dismiss = () => setMenu(null);
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss(); };
+    document.addEventListener('click', dismiss); document.addEventListener('keydown', key);
+    window.addEventListener('resize', dismiss); window.addEventListener('scroll', dismiss, true);
+    return () => { document.removeEventListener('click', dismiss); document.removeEventListener('keydown', key); window.removeEventListener('resize', dismiss); window.removeEventListener('scroll', dismiss, true); };
+  }, []);
   const [saved, setSaved] = useState(false);
   const [selectedPreview, setSelectedPreview] = useState<{ line: LabMove[]; basis: string } | null>(null);
   const [mode, setMode] = useState('tricks');
@@ -63,7 +71,7 @@ export function OpeningLabPanel({ fen, onPreview, onSave, onStart, onHover }: Pr
     generation.current++; run.current?.db.cancel(); run.current?.client.pause();
   }, []);
 
-  async function start(deep = false) {
+  async function start(deep = false, targetUci?: string, moreVariants = false) {
     if (busy) return;
     if (!deep && !validLimits) { setError('Enter valid search settings within the displayed ranges.'); return; }
     const id = ++generation.current;
@@ -90,7 +98,7 @@ export function OpeningLabPanel({ fen, onPreview, onSave, onStart, onHover }: Pr
         if (current()) { setProgress(previous => Math.max(previous, deep ? next.deep?.progress || 0 : next.progress || 0)); setResult(structuredClone(next)); setStats({ ...client.stats }); setPhase(next.deep?.status === 'running' ? next.deep.phase : next.phase); }
       };
       const next = deep
-        ? await deepen(structuredClone(result), client, db, mode, update, { targetUci: selected || undefined, maxReplies: 5, coverage: .8 })
+        ? await deepen(structuredClone(result), client, db, mode, update, { targetUci: targetUci || selected || undefined, maxReplies: moreVariants ? 8 : 5, firstMaxReplies: moreVariants ? 6 : 3, coverage: moreVariants ? .95 : .8 })
         : await investigate({ root: fen, moves: [] }, settings, client, db, update);
       if (current()) { setResult(structuredClone(next)); setError(next.message || next.deep?.message || ''); if (deep) setPhase(`${next.deep.phase} · depth ${deeperDepth}`); }
     } catch (e) {
@@ -112,7 +120,7 @@ export function OpeningLabPanel({ fen, onPreview, onSave, onStart, onHover }: Pr
   const actionClass = 'px-2 py-1 rounded border border-border-subtle hover:text-accent-teal disabled:opacity-40';
   return <div className="p-3 space-y-3 text-xs overflow-y-auto h-full">
     <div className="font-semibold text-accent-teal">Opening Lab · Stockfish</div>
-    <p className="text-text-muted">Investigate the selected tree position using Lichess 2000 rapid games. Click a candidate to preview; save it with Add to line.</p>
+    <p className="text-text-muted">Lichess 2000 rapid · click lines to preview and inspect · right-click for actions.</p>
     <div className="flex gap-2 items-center flex-wrap">
       <label>Depth <select aria-label="Opening Lab depth" disabled={busy} value={depth} onChange={e => setDepth(Number(e.target.value))} className="bg-bg-surface border border-border-subtle rounded p-1">{[12,16,20,25,30,35,40].map(d => <option key={d}>{d}</option>)}</select></label>
       <button className={actionClass} disabled={busy || new Chess(fen).isGameOver()} onClick={() => void start()}>Investigate</button>
@@ -140,24 +148,44 @@ export function OpeningLabPanel({ fen, onPreview, onSave, onStart, onHover }: Pr
       <p className="text-text-muted text-[10px]">Tracks investigation stages; engine search times vary.</p>
     </div>}
     <p role="status" className="text-text-muted">{phase}{busy ? ' · findings provisional' : ''}{result || busy ? ` · ${stats.calls} new engine searches · ${stats.hits} cached searches` : ''}</p>
+    {menu && <div role="menu" aria-label="Opening Lab line actions" className="fixed z-50 w-60 rounded border border-border-subtle bg-bg-surface shadow-xl p-1" style={{ left: menu.x, top: menu.y }} onClick={event => event.stopPropagation()} onContextMenu={event => event.preventDefault()}>
+      <button role="menuitem" className="block w-full text-left p-2 hover:text-accent-teal" onClick={() => { onSave(menu.line); setMenu(null); }}>Add to line</button>
+      <button role="menuitem" disabled={busy || !menu.candidate.sound || !menu.candidate.repliesComplete} className="block w-full text-left p-2 hover:text-accent-teal disabled:opacity-40" onClick={() => { const target = menu.candidate.uci; setMenu(null); choose(menu.candidate); void start(true, target, true); }}>Investigate deeper · more variants</button>
+      <button role="menuitem" className="block w-full text-left p-2 text-text-muted" onClick={() => setMenu(null)}>Close</button>
+    </div>}
     {error && <p role="alert" className="text-accent-amber">{error}</p>}
     {result && <>
       <label className="flex gap-2 items-center">Rank by <select className="bg-bg-surface p-1" value={mode} onChange={e => setMode(e.target.value)}><option value="tricks">Human difficulty / rare moves</option><option value="wins">Supported win rate</option></select></label>
-      <p className="text-text-muted">Scores are from the side to move’s perspective. Soundness allows up to {(result.settings.tolerance / 100).toFixed(2)} pawn loss and a {(result.settings.floor / 100).toFixed(2)} floor. Baseline: {result.baseline == null ? 'pending' : (result.baseline / 100).toFixed(2)} ({result.settings.baselineCp == null ? 'strongest searched' : 'fixed'}). Human difficulty needs supported data; it is not a win probability.</p>
-      {candidates.map((c: any) => <button key={c.uci} onMouseEnter={() => onHover(c.uci)} onMouseLeave={() => onHover(null)} onFocus={() => onHover(c.uci)} onBlur={() => onHover(null)} onClick={() => choose(c)} className={`block w-full text-left rounded border p-2 space-y-1 ${selected === c.uci ? 'border-accent-teal bg-accent-teal/10' : 'border-border-subtle'}`}>
-        <span className="flex justify-between"><strong>{c.san}</strong><span>{c.mate != null ? `Mate ${c.mate}` : c.cp != null ? `${(c.cp / 100).toFixed(2)}` : 'Checking…'}</span></span>
-        {recommendations.find((choice: any) => choice.candidate.uci === c.uci) && <span className="block text-accent-teal">{recommendations.find((choice: any) => choice.candidate.uci === c.uci)?.basis}{result.status === 'complete' ? '' : ' · provisional'}</span>}
-        <span className="block text-text-muted">{c.sound == null ? 'Pending soundness' : c.sound ? 'Within soundness limits' : 'Outside soundness limits'} · depth {c.depth || '—'}{c.sacrifice != null ? ` · ${(c.sacrifice / 100).toFixed(2)} pawn loss vs baseline` : ''}</span>
-        <span className="block">{c.outcomes?.games ? `${c.outcomes.games} games · ${(c.outcomes.winRate * 100).toFixed(0)}% wins · ${(c.outcomes.draws / c.outcomes.games * 100).toFixed(0)}% draws` : 'No recorded sample'}</span>
-        {c.defenceEvidence && <span className="block text-text-muted">Estimated adequate defences: {c.defenceEvidence.adequateCount ?? '—'} · frequency upper bound {((c.defenceEvidence.adequateUpper || 0) * 100).toFixed(0)}%</span>}
-        <span className="block text-text-muted">Reply coverage {((c.coverage || 0) * 100).toFixed(0)}% · {c.outcomes?.games >= result.settings.minGames && c.replyData?.games >= result.settings.minGames ? `mistake opportunity ${((c.weightedLoss || 0) / 100).toFixed(2)} pawns` : 'Limited human evidence'}</span>
-      </button>)}
+      <p className="text-text-muted">Click a line for details. Right-click for line actions.</p>
+      {candidates.map((c: any) => {
+        let moves: LabMove[] = [];
+        try { moves = labLine(fen, suggestionLine(c).moves); } catch { /* Live PV may be incomplete. */ }
+        return <button key={c.uci} aria-expanded={selected === c.uci}
+          onMouseEnter={() => onHover(c.uci)} onMouseLeave={() => onHover(null)} onFocus={() => onHover(c.uci)} onBlur={() => onHover(null)}
+          onClick={() => { if (selected === c.uci) { setSelected(null); onPreview([]); } else choose(c); }}
+          onContextMenu={event => { event.preventDefault(); if (moves.length) setMenu({ x: Math.max(8, Math.min(event.clientX, window.innerWidth - 260)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 150)), candidate: c, line: moves }); }}
+          className={`block w-full text-left rounded border px-2 py-2 font-mono leading-relaxed ${selected === c.uci ? 'border-accent-teal bg-accent-teal/10' : 'border-border-subtle'}`}>
+          {moves.length ? moves.map(m => m.move).join(' ') : c.san}
+        </button>;
+      })}
       {candidate && <div className="border border-accent-teal/40 rounded p-2 space-y-2">
-        <strong>Preview line</strong>
+        <strong>{candidate.san} · line details</strong>
+        <p>{candidate.mate != null ? `Mate ${candidate.mate}` : candidate.cp != null ? `Evaluation ${(candidate.cp / 100).toFixed(2)}` : 'Evaluation pending'} · depth {candidate.depth || '—'} · {candidate.sound == null ? 'Soundness pending' : candidate.sound ? 'Within limits' : 'Outside limits'}</p>
+        <p className="text-text-muted">{recommendations.find((choice: any) => choice.candidate.uci === candidate.uci)?.basis || 'Checked alternative'}{result.status !== 'complete' ? ' · provisional' : ''}</p>
+        <p className="text-text-muted">Baseline {result.baseline == null ? 'pending' : (result.baseline / 100).toFixed(2)} · sacrifice {candidate.sacrifice == null ? 'unknown' : (candidate.sacrifice / 100).toFixed(2)} / {(result.settings.tolerance / 100).toFixed(2)} allowed · floor {(result.settings.floor / 100).toFixed(2)}. Scores favour the side to move at the investigation root.</p>
+        <p>{candidate.outcomes?.games ? `${candidate.outcomes.games} games · ${(candidate.outcomes.winRate * 100).toFixed(0)}% wins · ${(candidate.outcomes.draws / candidate.outcomes.games * 100).toFixed(0)}% draws` : 'No recorded sample'}</p>
+        <p className="text-text-muted">Reply coverage {((candidate.coverage || 0) * 100).toFixed(0)}% · {candidate.outcomes?.games >= result.settings.minGames && candidate.replyData?.games >= result.settings.minGames ? `mistake opportunity ${((candidate.weightedLoss || 0) / 100).toFixed(2)} pawns` : 'Limited human evidence'}. This is not a win probability.</p>
+        {candidate.defenceEvidence && <p className="text-text-muted">Estimated adequate defences: {candidate.defenceEvidence.adequateCount ?? 'unknown'} · frequency upper bound {(candidate.defenceEvidence.adequateUpper * 100).toFixed(0)}%</p>}
         <div className="flex gap-1 flex-wrap">{line.map((m, i) => <button key={i} className={actionClass} onClick={() => onPreview(line.slice(0, i + 1))}>{m.move}</button>)}</div>
         <p className="text-text-muted">{selectedPreview?.basis}. Click preview nodes in the tree to step through the line.</p>
         <div className="flex gap-2"><button className={actionClass} disabled={!line.length} onClick={() => choose(candidate)}>Refresh preview</button><button className={actionClass} disabled={!line.length || saved} onClick={() => { onSave(line); setSaved(true); }}>{saved ? 'Added' : 'Add to line'}</button><button className={actionClass} onClick={() => { onPreview([]); setSelected(null); }}>Clear preview</button></div>
         {(candidate.replies || []).map((r: any) => <div key={r.uci} className="text-text-muted">{r.san} · {(r.frequency * 100).toFixed(1)}% · {r.games} games · {r.lossCp == null ? 'mate / unknown loss' : `${(r.lossCp / 100).toFixed(2)} pawn loss`}{r.supported ? '' : ' · sparse sample'}</div>)}
+        {(candidate.deep?.branches || []).flatMap((branch: any) => (branch.replies || []).map((reply: any) => {
+          if (!branch.ownMove || !reply.punishment?.length) return null;
+          let variant: LabMove[];
+          try { variant = labLine(fen, [candidate.uci, branch.reply, branch.ownMove, reply.uci, ...reply.punishment]); } catch { return null; }
+          return <button key={`${branch.reply}-${reply.uci}`} className="block w-full text-left font-mono p-2 rounded border border-border-subtle hover:text-accent-teal" onClick={() => { onPreview(variant); setSelectedPreview({ line: variant, basis: 'Recorded replies with engine continuation' }); setSaved(false); }} onContextMenu={event => { event.preventDefault(); setMenu({ x: Math.max(8, Math.min(event.clientX, window.innerWidth - 260)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 150)), candidate, line: variant }); }}>{variant.map(m => m.move).join(' ')}</button>;
+        }))}
         {candidate.deep?.summary && <p>Deeper evidence: {(candidate.deep.summary.lower * 100).toFixed(0)}–{(candidate.deep.summary.upper * 100).toFixed(0)}% mistake coverage bound. Unchecked replies remain unknown.</p>}
       </div>}
       <button className={actionClass} disabled={busy || (result.deep?.depth >= 40) || !(selected ? candidates.some((c: any) => c.uci === selected && c.sound && c.repliesComplete) : deepTargets(result, mode).length)} onClick={() => void start(true)}>Investigate deeper · {selected ? 'selected move' : 'top 2'} · depth {Math.min(40, Math.max(depth, result.settings.depth, result.deep?.depth || 0) + 2)}</button>
