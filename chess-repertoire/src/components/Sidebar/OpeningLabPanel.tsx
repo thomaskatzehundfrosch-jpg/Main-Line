@@ -25,6 +25,7 @@ interface Props {
 }
 
 export function OpeningLabPanel({ fen, onPreview, onSave, onStart, onHover }: Props) {
+  const [rating, setRating] = useState(2000);
   const [depth, setDepth] = useState(25);
   const [limits, setLimits] = useState({ tolerance: .7, floor: -.5, baseline: 0, candidateLimit: 6, minGames: 100, minReplyGames: 20, mistakeThreshold: .4, rareThreshold: 5 });
   const [baselineMode, setBaselineMode] = useState('automatic');
@@ -77,10 +78,10 @@ export function OpeningLabPanel({ fen, onPreview, onSave, onStart, onHover }: Pr
     const id = ++generation.current;
     const current = () => generation.current === id;
     const client = new LabEngine((message: string) => { if (current()) setPhase(message); });
-    const db = new HumanDatabase(getStoredToken());
+    const db = new HumanDatabase(getStoredToken(), undefined, deep ? result.settings.rating ?? 2000 : rating);
     const deeperDepth = Math.min(40, Math.max(depth, result?.settings.depth || 0, result?.deep?.depth || 0) + 2);
     const settings = deep ? { ...result.settings, depth: deeperDepth, bypassCache } : {
-      side: new Chess(fen).turn(), depth, manual, bypassCache, engineVariant: 'single',
+      side: new Chess(fen).turn(), rating, depth, manual, bypassCache, engineVariant: 'single',
       candidateLimit: limits.candidateLimit, minGames: limits.minGames, minReplyGames: limits.minReplyGames,
       floor: Math.round(limits.floor * 100), tolerance: Math.round(limits.tolerance * 100), mistakeThreshold: Math.round(limits.mistakeThreshold * 100), rareThreshold: limits.rareThreshold / 100,
       baselineCp: baselineMode === 'fixed' ? Math.round(limits.baseline * 100) : null,
@@ -120,7 +121,7 @@ export function OpeningLabPanel({ fen, onPreview, onSave, onStart, onHover }: Pr
   const actionClass = 'px-2 py-1 rounded border border-border-subtle hover:text-accent-teal disabled:opacity-40';
   return <div className="p-3 space-y-3 text-xs overflow-y-auto h-full">
     <div className="font-semibold text-accent-teal">Opening Lab · Stockfish</div>
-    <p className="text-text-muted">Lichess 2000 rapid · click lines to preview and inspect · right-click for actions.</p>
+    <p className="text-text-muted">Lichess {result?.settings.rating ?? rating} rapid · click lines to preview and inspect · right-click for actions.</p>
     <div className="flex gap-2 items-center flex-wrap">
       <label>Depth <select aria-label="Opening Lab depth" disabled={busy} value={depth} onChange={e => setDepth(Number(e.target.value))} className="bg-bg-surface border border-border-subtle rounded p-1">{[12,16,20,25,30,35,40].map(d => <option key={d}>{d}</option>)}</select></label>
       <button className={actionClass} disabled={busy || new Chess(fen).isGameOver()} onClick={() => void start()}>Investigate</button>
@@ -129,6 +130,8 @@ export function OpeningLabPanel({ fen, onPreview, onSave, onStart, onHover }: Pr
     </div>
     <details className="border border-border-subtle rounded p-2 space-y-2">
       <summary className="cursor-pointer font-semibold">Search settings · evaluation & evidence</summary>
+      <label className="block pt-2">Lichess rating group<select aria-label="Lichess rating group" disabled={busy} value={rating} onChange={e => setRating(Number(e.target.value))} className="w-full bg-bg-surface border border-border-subtle rounded p-1">{[400,1000,1200,1400,1600,1800,2000,2200,2500].map(elo => <option key={elo} value={elo}>{elo}</option>)}</select></label>
+      <p className="text-text-muted">Uses Lichess explorer rating groups, based on both players’ average rating. Click Investigate to apply; deeper searches keep the original group.</p>
       <div className="grid grid-cols-2 gap-2 pt-2">
         {fields.map(field => <label key={field.key} className="space-y-1">{field.label}<input type="number" aria-label={field.label} min={field.min} max={field.max} step={field.step} disabled={busy} value={limits[field.key]} onChange={e => setLimits(previous => ({ ...previous, [field.key]: Number(e.target.value) }))} className="w-full bg-bg-surface border border-border-subtle rounded p-1" /></label>)}
       </div>

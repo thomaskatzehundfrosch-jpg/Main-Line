@@ -20,7 +20,7 @@ export function leaders(result){
  return {wins,tricks,rare,win:wins[0]||null,trick:tricks[0]||null};
 }
 export async function investigate(input,s,client,db,update=(_result)=>{}){
- const r={schema:'human-trickiness-v1',input,settings:s,status:'running',phase:'Loading Lichess 2000 rapid games',candidates:[],created:new Date().toISOString(),engines:{analysis:client.identity}};
+ const r={schema:'human-trickiness-v1',input,settings:s,status:'running',phase:'Loading Lichess '+(s.rating??2000)+' rapid games',candidates:[],created:new Date().toISOString(),engines:{analysis:client.identity}};
  const emit=phase=>{r.phase=phase;const total=r.candidateCount||s.candidateLimit;const checked=r.candidates.filter(c=>c.depth!=null).length;const finished=r.candidates.filter(c=>c.repliesComplete||c.sound===false).length;r.progress=r.status==='complete'?100:r.baseline!=null?55+40*finished/total:r.candidates.length?20+35*checked/total:r.rareScreen?20:r.rootDepth?15:r.database?5:0;r.elapsedSeconds=(performance.now()-client.started)/1000;r.stats={...client.stats};update(r);};
  try{
   r.database=await db.query(input);emit('Finding a small candidate set');

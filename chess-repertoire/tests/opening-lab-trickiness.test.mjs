@@ -78,3 +78,14 @@ test('fixed sacrifice baseline applies independently of the evaluation floor',as
  assert.equal(fixed.baseline,0);assert.equal(fixed.candidates[0].sacrifice,0);assert.equal(fixed.candidates[0].sound,true);
  assert.equal((await run(0,30)).candidates[0].sound,false,'floor remains independent');
 });
+
+test('rating groups filter requests and isolate cached human evidence',async()=>{
+ const state=position('1. a4 h5 2. Ra3 *');let calls=0;
+ const fetcher=async url=>{calls++;assert.equal(new URL(url).searchParams.get('ratings'),calls===1?'1600':'2200');return {ok:true,json:async()=>({white:30,draws:10,black:20,moves:[]})};};
+ const first=await new HumanDatabase('test',fetcher,1600).query(state);
+ const second=await new HumanDatabase('test',fetcher,2200).query(state);
+ assert.deepEqual(first.ratings,[1600]);assert.deepEqual(second.ratings,[2200]);
+ const cached=await new HumanDatabase('test',()=>{throw Error('should reuse matching group');},1600).query(state);
+ assert.equal(cached.cached,true);assert.equal(calls,2);
+ assert.throws(()=>new HumanDatabase('test',fetcher,1750),/Unsupported/);
+});
