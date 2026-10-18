@@ -258,7 +258,7 @@ test('trickiness settings default high and normalize the sacrifice interval', ()
   assert.equal(settings.trickinessMaxLoss, 1.2);
   const repaired = normalizeGeneratorSettings({ ...defaults, trickinessMinLoss: -1, trickinessMaxLoss: Infinity });
   assert.equal(repaired.trickinessMinLoss, 0);
-  assert.equal(repaired.trickinessMaxLoss, .5);
+  assert.equal(repaired.trickinessMaxLoss, .7);
 });
 
 test('trickiness respects color, interval, evidence, and strength setting', async () => {
@@ -328,7 +328,7 @@ test('current-position loss limit holds for both colors and all trickiness modes
 
 test('evaluation floor normalizes defaults and bounds', () => {
   const s = normalizeGeneratorSettings({ ...defaults, evaluationFloor: undefined, evaluationFloorEnabled: undefined });
-  assert.equal(s.evaluationFloor, -.4); assert.equal(s.evaluationFloorEnabled, true);
+  assert.equal(s.evaluationFloor, -.5); assert.equal(s.evaluationFloorEnabled, true);
   assert.equal(normalizeGeneratorSettings({ ...defaults, evaluationFloor: -99 }).evaluationFloor, -10);
   assert.equal(normalizeGeneratorSettings({ ...defaults, evaluationFloor: 99, evaluationFloorEnabled: false }).evaluationFloorEnabled, false);
 });

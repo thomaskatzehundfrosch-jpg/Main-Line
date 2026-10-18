@@ -39,20 +39,20 @@ export const STUDY_SIZES = {
 export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   generatorMode: 'opening-lab',
   color: 'white', analysisMode: 'lichess+stockfish', maxMoveNumber: 15,
-  studySize: 'standard', sfDepth: 16, maxEvalLoss: 0.5,
+  studySize: 'standard', sfDepth: 16, maxEvalLoss: 0.7,
   tacticalExtension: 2, avoidQueenTrades: false,
-  useMasters: false, ratingMin: 2200, ratingMax: 2500,
-  speeds: ['blitz', 'rapid', 'classical'], minGames: 10,
-  evaluationFloorEnabled: true, evaluationFloor: -0.4,
-  trickiness: 'high', trickinessMinLoss: 0, trickinessMaxLoss: 0.5,
+  useMasters: false, ratingMin: 2000, ratingMax: 2200,
+  speeds: ['rapid', 'classical'], minGames: 10,
+  evaluationFloorEnabled: true, evaluationFloor: -0.5,
+  trickiness: 'high', trickinessMinLoss: 0, trickinessMaxLoss: 0.7,
   opponentMinPlayRate: 10, adaptiveOpponentDepth: true, branchDecay: 'balanced',
 };
 
 export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorSettings {
   const number = (value: number, fallback: number, min: number, max: number) =>
     Math.min(max, Math.max(min, Number.isFinite(value) ? value : fallback));
-  const min = number(input.ratingMin, 2200, 1000, 2500);
-  const max = number(input.ratingMax, 2500, 1000, 2500);
+  const min = number(input.ratingMin, 2000, 1000, 2500);
+  const max = number(input.ratingMax, 2200, 1000, 2500);
   const speeds = [...new Set(input.speeds.filter(s => ['bullet', 'blitz', 'rapid', 'classical'].includes(s)))];
   return {
     ...input,
@@ -62,12 +62,12 @@ export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorS
     studySize: input.studySize in STUDY_SIZES ? input.studySize : 'standard',
     maxMoveNumber: Math.round(number(input.maxMoveNumber, 15, 1, 40)),
     sfDepth: Math.round(number(input.sfDepth, 16, 8, 25)),
-    maxEvalLoss: number(input.maxEvalLoss, 0.5, 0, 1),
+    maxEvalLoss: number(input.maxEvalLoss, 0.7, 0, 1),
     evaluationFloorEnabled: input.evaluationFloorEnabled ?? true,
-    evaluationFloor: number(input.evaluationFloor, -0.4, -10, 10),
+    evaluationFloor: number(input.evaluationFloor, -0.5, -10, 10),
     trickiness: input.trickiness === 'balanced' || input.trickiness === 'off' ? input.trickiness : 'high',
-    trickinessMinLoss: Math.min(number(input.trickinessMinLoss, 0, 0, 5), number(input.trickinessMaxLoss, 0.5, 0, 5)),
-    trickinessMaxLoss: Math.max(number(input.trickinessMinLoss, 0, 0, 5), number(input.trickinessMaxLoss, 0.5, 0, 5)),
+    trickinessMinLoss: Math.min(number(input.trickinessMinLoss, 0, 0, 5), number(input.trickinessMaxLoss, 0.7, 0, 5)),
+    trickinessMaxLoss: Math.max(number(input.trickinessMinLoss, 0, 0, 5), number(input.trickinessMaxLoss, 0.7, 0, 5)),
     tacticalExtension: Math.round(number(input.tacticalExtension, 2, 0, 4)),
     opponentMinPlayRate: number(input.opponentMinPlayRate, 10, 1, 100),
     adaptiveOpponentDepth: input.adaptiveOpponentDepth ?? true,
