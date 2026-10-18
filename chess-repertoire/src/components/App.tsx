@@ -2165,7 +2165,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* Right Panel: Board + Tabbed Content */}
-        <div className={`${boardExpanded ? 'w-[640px] min-w-[540px]' : 'w-[520px] min-w-[460px]'} shrink-0 flex flex-col overflow-hidden transition-[width] duration-200`}>
+        <div className={`${boardExpanded ? 'w-1/2 min-w-0' : 'w-[520px] min-w-[460px]'} shrink-0 flex flex-col overflow-hidden transition-[width] duration-200`}>
           {/* Chessboard */}
           <div className="flex flex-col items-center p-3 gap-1">
             {/* Game viewer banner */}
@@ -2189,7 +2189,7 @@ export const App: React.FC = () => {
             )}
             <div className={`w-full transition-all ${
               boardExpanded
-                ? 'max-w-[520px]'
+                ? 'max-w-[770px]'
                 : 'max-w-[440px]'
             }`}>
               <ChessBoard
