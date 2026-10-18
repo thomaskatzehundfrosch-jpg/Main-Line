@@ -157,7 +157,7 @@ export async function buildTree(
     });
     const popular = await popularReplies(fen);
     const tricky = settings.trickiness !== 'off' && settings.analysisMode !== 'stockfish';
-    const count = ourTurn ? (tricky ? 2 : settings.avoidQueenTrades ? 4 : 1) : maxReplies;
+    const count = ourTurn ? (tricky ? 6 : settings.avoidQueenTrades ? 4 : 1) : maxReplies;
     const top = await topMoves(fen, settings.sfDepth, count);
     check();
     if (!top.length || top.some(move => move.depth < settings.sfDepth || move.eval == null)) {
@@ -176,7 +176,7 @@ export async function buildTree(
           .slice(0, 2).map(m => m.uci);
       }
       const supportedWins = [...popular].sort((a, b) => winLowerBound(b.winRate / 100 * b.totalGames, b.totalGames) - winLowerBound(a.winRate / 100 * a.totalGames, a.totalGames));
-      const pool = [...new Set([...top.map(m => m.uci), ...rare, ...popular.slice(0, tricky ? 1 : settings.analysisMode === 'stockfish' ? 0 : 3).map(m => m.uci), ...(tricky ? supportedWins.slice(0, 1).map(m => m.uci) : [])])].slice(0, tricky ? 6 : 7);
+      const pool = [...new Set([...top.map(m => m.uci), ...rare, ...popular.slice(0, tricky ? 1 : settings.analysisMode === 'stockfish' ? 0 : 3).map(m => m.uci), ...(tricky ? supportedWins.slice(0, 1).map(m => m.uci) : [])])].slice(0, tricky ? 10 : 7);
       const checked: Candidate[] = [];
       for (const uci of pool) {
         try { checked.push(await candidate(fen, uci, popular.find(move => move.uci === uci))); }
@@ -213,9 +213,9 @@ export async function buildTree(
         let chosenScore = best;
         let chosenAdequate = Infinity;
         let explanation = 'No supported practical improvement in your sacrifice interval; best verified candidate retained';
-        // Bound detailed investigation to three contenders, strongest first.
+        // Bound detailed investigation to six contenders, strongest first.
         eligible.sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color));
-        for (const move of eligible.slice(0, 3)) {
+        for (const move of eligible.slice(0, 6)) {
           check();
           try {
             const recorded = await popularReplies(move.fen);

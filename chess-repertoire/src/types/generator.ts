@@ -39,7 +39,7 @@ export const STUDY_SIZES = {
 export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   generatorMode: 'opening-lab',
   color: 'white', analysisMode: 'lichess+stockfish', maxMoveNumber: 15,
-  studySize: 'standard', sfDepth: 16, maxEvalLoss: 0.7,
+  studySize: 'standard', sfDepth: 25, maxEvalLoss: 0.7,
   tacticalExtension: 2, avoidQueenTrades: false,
   useMasters: false, ratingMin: 2000, ratingMax: 2200,
   speeds: ['rapid', 'classical'], minGames: 10,
@@ -61,7 +61,7 @@ export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorS
     analysisMode: input.analysisMode === 'stockfish' ? 'stockfish' : 'lichess+stockfish',
     studySize: input.studySize in STUDY_SIZES ? input.studySize : 'standard',
     maxMoveNumber: Math.round(number(input.maxMoveNumber, 15, 1, 40)),
-    sfDepth: Math.round(number(input.sfDepth, 16, 8, 25)),
+    sfDepth: Math.round(number(input.sfDepth, 25, 8, 25)),
     maxEvalLoss: number(input.maxEvalLoss, 0.7, 0, 1),
     evaluationFloorEnabled: input.evaluationFloorEnabled ?? true,
     evaluationFloor: number(input.evaluationFloor, -0.5, -10, 10),
