@@ -80,7 +80,7 @@ function initEngine() {
 
   // No engine found — fall back to simulation
   self.postMessage('info string WARNING: Stockfish engine not found! Running in SIMULATION mode.');
-  self.postMessage('info string Run ./setup-stockfish.sh to install Stockfish 17.1 WASM.');
+  self.postMessage('info string Run ./setup-stockfish.sh to install Stockfish 19 WASM.');
 }
 
 // Handle messages from main thread (UCI commands)

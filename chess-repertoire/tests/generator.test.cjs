@@ -407,3 +407,38 @@ test('Opening Lab Gen bounds detailed work and reuses evaluated replies', async 
   assert.ok(root.children.length);
   assert.ok([...calls.values()].every(n => n === 1), 'reply expansion reuses practical evaluations');
 });
+
+test('Opening Lab Gen compares at 18, prioritizes supported wins and verifies at 25', async () => {
+  for (const rejected of [false, true]) {
+    const start = new Chess();
+    const moves = start.moves({ verbose: true });
+    const safe = moves[0], winner = moves[1];
+    const afterWinner = new Chess(); afterWinner.move(winner);
+    const analyses = [], searches = [];
+    const root = await buildTree(null, { ...defaults, sfDepth: 25, analysisMode: 'lichess+stockfish', trickiness: 'high', maxEvalLoss: .7, trickinessMaxLoss: .7, evaluationFloor: -.5 }, {}, { current: false }, dummyWorker, services({
+      analyze: async (_w, fen, depth) => {
+        analyses.push({ fen, depth });
+        return { score: rejected && fen === afterWinner.fen() && depth === 25 ? -100 : 0, depth };
+      },
+      topMoves: async (_w, fen, depth, count) => {
+        searches.push({ fen, depth, count });
+        return new Chess(fen).moves({ verbose: true }).slice(0, count).map(m => ({ uci: uci(m), eval: 0, depth }));
+      },
+      replies: async fen => fen === start.fen() ? [safe, winner].map((m, i) => ({ uci: uci(m), san: m.san, totalGames: 1000, playRate: 50, winRate: i ? 70 : 40, lossRate: i ? 20 : 50, drawRate: 10, averageRating: null })) : [],
+    }));
+    assert.equal(root.children[0].uci, uci(rejected ? safe : winner));
+    assert.equal(root.children[0].stockfish.depth, 25);
+    assert.ok(searches.some(call => call.fen === start.fen() && call.depth === 18 && call.count === 6));
+    assert.ok(analyses.some(call => call.fen === afterWinner.fen() && call.depth === 18));
+    assert.ok(analyses.some(call => call.fen === afterWinner.fen() && call.depth === 25));
+    if (!rejected) assert.match(root.children[0].reason, /70.0% recorded wins in 1000 games/);
+  }
+});
+
+test('win-rate preference ignores spectacular results from tiny samples', async () => {
+  const start = new Chess(), moves = start.moves({ verbose: true });
+  const root = await buildTree(null, { ...defaults, analysisMode: 'lichess+stockfish', trickiness: 'high' }, {}, { current: false }, dummyWorker, services({
+    replies: async fen => fen === start.fen() ? [moves[0], moves[1]].map((m, i) => ({ uci: uci(m), san: m.san, totalGames: i ? 10 : 1000, playRate: i ? 1 : 99, winRate: i ? 100 : 60, lossRate: i ? 0 : 30, drawRate: i ? 0 : 10, averageRating: null })) : [],
+  }));
+  assert.equal(root.children[0].uci, uci(moves[0]));
+});

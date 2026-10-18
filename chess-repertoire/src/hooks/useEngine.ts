@@ -7,12 +7,12 @@ import { getCloudEval } from '../utils/lichessApi';
 
 /**
  * Create a Stockfish worker.
- * First tries loading the real Stockfish WASM engine from /stockfish/stockfish.js
+ * First tries loading the real Stockfish WASM engine from /stockfish/stockfish-19-lite-single.js
  * (classic worker). If that file doesn't exist, falls back to the simulation
  * module worker.
  */
 async function createStockfishWorker(): Promise<Worker> {
-  return new Worker('/stockfish/stockfish.js#/stockfish/stockfish.wasm');
+  return new Worker('/stockfish/stockfish-19-lite-single.js?v=19.0.1');
 }
 
 /**

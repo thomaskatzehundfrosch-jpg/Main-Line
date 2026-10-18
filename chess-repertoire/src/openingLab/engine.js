@@ -4,8 +4,8 @@ class Interrupted extends Error {}
 export class LabEngine {
  constructor(update=(_message)=>{}){this.update=update;this.stats={calls:0,nodes:0,hits:0};this.cancelled=false;}
  async init(){
-  this.sf=new Worker('/stockfish/stockfish.js#/stockfish/stockfish.wasm');
-  this.identity={engine:'Stockfish',sha256:'mainline-stockfish-17.1-lab-v1'};
+  this.sf=new Worker('/stockfish/stockfish-19-lite-single.js?v=19.0.1');
+  this.identity={engine:'Stockfish 19 Lite',sha256:'ee4f115bdb2d32cadf96cada104a05b5ec257d7ad6f57582190b49bc71f096de'};
   this.sf.onmessage=e=>{for(const line of String(e.data).split('\n'))this.onLine?.(line);};
   this.sf.onerror=()=>{this.sfError=Error('Stockfish could not load. Reload and try again.');this.onLine?.('__ERROR__');};
   await this.until('uciok','uci',30000);this.check();

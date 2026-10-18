@@ -8,7 +8,7 @@ export interface GeneratorSettings {
   analysisMode: AnalysisMode;
   maxMoveNumber: number;
   studySize: StudySize;
-  /** One depth for discovery and verification. Generator analysis is local. */
+  /** Final verification depth. Opening Lab Gen compares candidates at min(18, sfDepth). */
   sfDepth: number;
   /** Maximum loss in pawns relative to the position evaluation before your move, from your side’s perspective. */
   maxEvalLoss: number;

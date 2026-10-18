@@ -83,21 +83,11 @@ chmod +x setup-stockfish.sh
 ./setup-stockfish.sh
 ```
 
-This installs the `stockfish` npm package (Stockfish 17.1 WASM) and copies the lite single-threaded engine files to `public/stockfish/`.
+This installs the pinned `stockfish@19.0.1` package and copies its Stockfish 19 lite single-threaded JavaScript/WASM pair and GPL license into `public/stockfish/`. This small browser build works without cross-origin isolation. It uses a reduced neural network; it is not the full-network Stockfish build.
 
-### Manual Setup
+The application loads `/stockfish/stockfish-19-lite-single.js?v=19.0.1`; the matching `.wasm` file sits alongside it. Opening Lab engine caches include the WASM SHA-256 so previous engine results are not reused after this upgrade.
 
-1. Install the npm package: `npm install stockfish@17.1.0`
-2. Find the lite single-threaded files in `node_modules/stockfish/src/` (names include a hash suffix like `stockfish-nnue-17.1-lite-single-XXXX.js`)
-3. Copy the `.js` file to `public/stockfish/stockfish.js`
-4. Copy all matching `.wasm` files to `public/stockfish/` (keep their original names)
-
-### Alternative: Direct download
-
-1. Download Stockfish WASM files from [stockfish.js on npm](https://www.npmjs.com/package/stockfish) or [GitHub](https://github.com/nmrugg/stockfish.js)
-2. Place the `.js` file as `public/stockfish/stockfish.js` along with its `.wasm` companion files
-
-### Verify it works
+Upstream source and build instructions: [Stockfish.js v19.0.1](https://github.com/nmrugg/stockfish.js/tree/v19.0.1). The distributed package includes the engine source.
 
 After setup, `public/stockfish/` should contain at least a `.js` and `.wasm` file. Run `npm run dev` and the engine panel should show real evaluations (not "Simulated").
 

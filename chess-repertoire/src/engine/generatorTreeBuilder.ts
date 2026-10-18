@@ -76,6 +76,7 @@ export async function buildTree(
   if (input.generatorMode === 'legacy') return buildLegacyTree(seeds, input, callbacks, stop, worker, services);
   if (!worker) throw new Error('Stockfish is required to verify continuations.');
   const settings = normalizeGeneratorSettings(input);
+  const searchDepth = Math.min(18, settings.sfDepth);
   const { maxNodes, maxReplies, coverage } = STUDY_SIZES[settings.studySize];
   const root = buildSeedTree(seeds ?? [], settings.color);
   const signal = stop.signal;
@@ -103,18 +104,19 @@ export async function buildTree(
   const coverages: number[] = [];
   let explorerFailures = 0;
 
-  async function evaluate(fen: string): Promise<{ score: number; depth: number }> {
+  async function evaluate(fen: string, depth = searchDepth): Promise<{ score: number; depth: number }> {
     check();
     const chess = new Chess(fen);
-    if (chess.isCheckmate()) return { score: chess.turn() === 'w' ? -100 : 100, depth: settings.sfDepth };
-    if (chess.isGameOver()) return { score: 0, depth: settings.sfDepth };
-    if (!evalCache.has(fen)) {
-      evalCache.set(fen, services.analyze(worker!, fen, settings.sfDepth, signal).then(result => {
-        if (result.depth < settings.sfDepth || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
+    if (chess.isCheckmate()) return { score: chess.turn() === 'w' ? -100 : 100, depth };
+    if (chess.isGameOver()) return { score: 0, depth };
+    const key = JSON.stringify([fen, depth]);
+    if (!evalCache.has(key)) {
+      evalCache.set(key, services.analyze(worker!, fen, depth, signal).then(result => {
+        if (result.depth < depth || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
         return { score: result.score / 100, depth: result.depth };
       }));
     }
-    const result = await evalCache.get(fen)!;
+    const result = await evalCache.get(key)!;
     check();
     return result;
   }
@@ -158,9 +160,9 @@ export async function buildTree(
     const popular = await popularReplies(fen);
     const tricky = settings.trickiness !== 'off' && settings.analysisMode !== 'stockfish';
     const count = ourTurn ? (tricky ? 6 : settings.avoidQueenTrades ? 4 : 1) : maxReplies;
-    const top = await topMoves(fen, settings.sfDepth, count);
+    const top = await topMoves(fen, searchDepth, count);
     check();
-    if (!top.length || top.some(move => move.depth < settings.sfDepth || move.eval == null)) {
+    if (!top.length || top.some(move => move.depth < searchDepth || move.eval == null)) {
       throw new Error('Engine did not return a verified best move.');
     }
     const strongest = top[0];
@@ -182,6 +184,37 @@ export async function buildTree(
         try { checked.push(await candidate(fen, uci, popular.find(move => move.uci === uci))); }
         catch (error) { check(); if (uci === strongest.uci) throw error; }
       }
+      const winEvidence = (move: Candidate) => move.stats && move.stats.totalGames >= Math.max(100, settings.minGames)
+        ? winLowerBound(move.stats.winRate / 100 * move.stats.totalGames, move.stats.totalGames) : 0;
+      async function verifyWinner(ranked: Candidate[]): Promise<Candidate[]> {
+        const reference = scoreFor((await evaluate(fen, settings.sfDepth)).score, settings.color);
+        const maximum = tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss;
+        const belowFloor = settings.evaluationFloorEnabled && reference < settings.evaluationFloor - 1e-8;
+        const order = belowFloor ? [...ranked].sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color)) : ranked;
+        for (const move of order) {
+          check();
+          try {
+            progress(`Verifying ${move.san} at depth ${settings.sfDepth}…`);
+            const verified = await evaluate(move.fen, settings.sfDepth);
+            const objective = scoreFor(verified.score, settings.color);
+            if (reference - objective > maximum + 1e-8 ||
+                (settings.evaluationFloorEnabled && !belowFloor && objective < settings.evaluationFloor - 1e-8)) {
+              log('info', `${move.san} failed depth-${settings.sfDepth} safety limits; checking the next candidate.`);
+              continue;
+            }
+            const evidence = winEvidence(move);
+            const reason = belowFloor ? 'Below evaluation floor; objective continuation selected without a practical bonus'
+              : move.reason || 'Next ranked candidate after deeper verification';
+            const chosen = { ...move, ...verified, reason: `${reason}; verified at depth ${verified.depth}${evidence > 0 ? `; ${move.stats!.winRate.toFixed(1)}% recorded wins in ${move.stats!.totalGames} games (95% lower bound ${(evidence * 100).toFixed(1)}%)` : ''}` };
+            choiceCache.set(key, [chosen]);
+            return [chosen];
+          } catch (error) {
+            check();
+            log('warning', `Could not verify ${move.san} at depth ${settings.sfDepth}; checking the next candidate.`);
+          }
+        }
+        throw new Error(`No candidate passed depth-${settings.sfDepth} verification within the sacrifice and evaluation-floor limits.`);
+      }
       const current = scoreFor((await evaluate(fen)).score, settings.color);
       const maximumLoss = tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss;
       let permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
@@ -191,13 +224,11 @@ export async function buildTree(
           // Already below the floor: no practical or popularity bonus, only the best defense.
           const chosen = permitted.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
           chosen.reason = `Current evaluation ${current.toFixed(2)} is below your ${settings.evaluationFloor.toFixed(2)} floor; strongest verified continuation selected without deliberate sacrifice`;
-          choiceCache.set(key, [chosen]);
-          return [chosen];
+          return verifyWinner([chosen, ...permitted.filter(move => move !== chosen)]);
         }
         permitted = permitted.filter(move => scoreFor(move.score, settings.color) + 1e-8 >= settings.evaluationFloor);
         if (!permitted.length) throw new Error(`No verified candidate meets your evaluation floor (${settings.evaluationFloor.toFixed(2)} from your side) within the per-move loss limit.`);
       }
-      const best = Math.max(...permitted.map(move => scoreFor(move.score, settings.color)));
       if (tricky) {
         // A fallback may be below the minimum sacrifice, but never exceeds the maximum.
         const baseline = permitted.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
@@ -209,10 +240,12 @@ export async function buildTree(
           const keepQueens = eligible.filter(move => !allowsImmediateQueenTrade(fen, move.san));
           if (keepQueens.length) eligible = keepQueens;
         }
-        let chosen = baseline;
-        let chosenScore = best;
+        const practicalScores = new Map(permitted.map(move => [move.uci, scoreFor(move.score, settings.color)]));
+        const winLeader = [...eligible].filter(move => winEvidence(move) > 0).sort((a, b) => winEvidence(b) - winEvidence(a) || scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color))[0];
+        let chosen = winLeader ?? baseline;
+        let chosenScore = scoreFor(chosen.score, settings.color);
         let chosenAdequate = Infinity;
-        let explanation = 'No supported practical improvement in your sacrifice interval; best verified candidate retained';
+        let explanation = winEvidence(chosen) > 0 ? 'Supported win-rate preference within safety limits' : 'No supported practical improvement in your sacrifice interval; best verified candidate retained';
         // Bound detailed investigation to six contenders, strongest first.
         eligible.sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color));
         for (const move of eligible.slice(0, 6)) {
@@ -223,8 +256,8 @@ export async function buildTree(
             const objective = scoreFor(move.score, settings.color);
             // Bounded version of the Lab's defensive-width check. It establishes
             // checked options only; unsearched legal moves are never called refuted.
-            const defences = await topMoves(move.fen, settings.sfDepth, 3);
-            if (!defences.length || defences.some(row => row.eval == null || row.depth < settings.sfDepth)) continue;
+            const defences = await topMoves(move.fen, searchDepth, 3);
+            if (!defences.length || defences.some(row => row.eval == null || row.depth < searchDepth)) continue;
             const defenceScore = Math.min(objective, ...defences.map(row => scoreFor(row.eval!, settings.color)));
             const adequateChecked = defences.filter(row => scoreFor(row.eval!, settings.color) - defenceScore < 0.3).length;
             const rows: Array<{ cp: number; frequency: number; supported: boolean; games: number }> = [];
@@ -246,7 +279,9 @@ export async function buildTree(
               return sum + (gain >= 30 ? row.frequency * gain / 100 * row.games / (row.games + 100) : 0);
             }, 0);
             const practicalScore = defended + (settings.trickiness === 'high' ? 1 : 0.5) * benefit;
-            if (practicalScore > chosenScore + 1e-8 || (benefit > 0 && Math.abs(practicalScore - chosenScore) <= 1e-8 && adequateChecked < chosenAdequate)) {
+            practicalScores.set(move.uci, practicalScore);
+            if (winEvidence(move) > winEvidence(chosen) + 1e-8 || (Math.abs(winEvidence(move) - winEvidence(chosen)) <= 1e-8 &&
+                (practicalScore > chosenScore + 1e-8 || (benefit > 0 && Math.abs(practicalScore - chosenScore) <= 1e-8 && adequateChecked < chosenAdequate)))) {
               chosen = { ...move, score: settings.color === 'white' ? defended : -defended };
               chosenScore = practicalScore;
               chosenAdequate = adequateChecked;
@@ -258,23 +293,22 @@ export async function buildTree(
           }
         }
         chosen.reason = explanation;
-        choiceCache.set(key, [chosen]);
-        return [chosen];
+        const ranked = [...eligible].filter(move => move.uci !== chosen.uci).sort((a, b) => winEvidence(b) - winEvidence(a) || (practicalScores.get(b.uci) ?? -Infinity) - (practicalScores.get(a.uci) ?? -Infinity));
+        return verifyWinner([chosen, ...ranked, ...permitted.filter(move => move.uci !== chosen.uci && !ranked.some(other => other.uci === move.uci))]);
       }
       let sound = permitted;
       if (settings.avoidQueenTrades) {
         const keepQueens = sound.filter(move => !allowsImmediateQueenTrade(fen, move.san));
         if (keepQueens.length) sound = keepQueens;
       }
-      sound.sort((a, b) => (b.stats?.totalGames ?? 0) - (a.stats?.totalGames ?? 0) || scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color));
+      sound.sort((a, b) => winEvidence(b) - winEvidence(a) || scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color));
       const chosen = sound[0];
       if (!chosen) throw new Error('No verified continuation available.');
       const loss = Math.max(0, current - scoreFor(chosen.score, settings.color));
       chosen.reason = chosen.stats
         ? `Common in your opponent profile; ${loss.toFixed(2)} pawns lost from the current evaluation`
         : 'Best verified candidate within your preferences';
-      choiceCache.set(key, [chosen]);
-      return [chosen];
+      return verifyWinner(sound);
     }
     let selected: Array<{ uci: string; playRate: number }>;
     if (popular.length) {
@@ -338,8 +372,8 @@ export async function buildTree(
       if (!node.isOurMove) continue;
       progress(`Checking your move ${node.fullMoveNumber}${settings.color === 'white' ? '.' : '...'} ${node.san} (preserved)`);
       try {
-        const reference = await evaluate(parent.fen);
-        const actual = await evaluate(node.fen);
+        const reference = await evaluate(parent.fen, settings.sfDepth);
+        const actual = await evaluate(node.fen, settings.sfDepth);
         node.stockfish = { eval: actual.score, depth: actual.depth };
         const drop = scoreFor(reference.score - actual.score, settings.color);
         if (drop > settings.maxEvalLoss) {

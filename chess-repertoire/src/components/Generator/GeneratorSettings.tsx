@@ -50,7 +50,7 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
           <option value="legacy">Original Generator</option>
         </select>
       </label>
-      <p className="text-[11px] text-text-muted">{settings.generatorMode === 'legacy' ? 'Original move selection and trickiness search.' : 'Opening Lab Gen discovers rare candidates and checks supported human mistakes with a bounded search budget.'}</p>
+      <p className="text-[11px] text-text-muted">{settings.generatorMode === 'legacy' ? 'Original move selection and trickiness search.' : 'Opening Lab Gen compares candidates at depth up to 18, then verifies the winner at your selected depth. Supported win rates rank first with at least 100 games; practical evidence breaks ties.'}</p>
       <label className={labelClass}>Your side
         <select className={inputClass} value={settings.color} onChange={e => update('color', e.target.value as 'white' | 'black')}>
           <option value="white">White</option><option value="black">Black</option>
@@ -142,7 +142,7 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
       <details className="text-xs text-text-secondary">
         <summary className="cursor-pointer py-1">Advanced preferences</summary>
         <div className="space-y-3 pt-3">
-          <label className={labelClass}>Analysis quality
+          <label className={labelClass}>{settings.generatorMode === 'opening-lab' ? 'Final verification depth' : 'Analysis quality'}
             <select className={inputClass} value={settings.sfDepth} onChange={e => update('sfDepth', Number(e.target.value))}>
               <option value="12">Quick</option><option value="16">Standard</option><option value="20">Thorough</option><option value="25">Deep — slower</option>
             </select>

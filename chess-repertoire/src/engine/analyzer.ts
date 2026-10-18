@@ -460,7 +460,7 @@ function terminateWorkerSafely(worker: Worker): void {
 }
 
 async function createRawAnalysisWorker(): Promise<Worker> {
-  return new Worker('/stockfish/stockfish.js#/stockfish/stockfish.wasm');
+  return new Worker('/stockfish/stockfish-19-lite-single.js?v=19.0.1');
 }
 
 function initializeAnalysisWorker(worker: Worker, numThreads: number): Promise<Worker> {
@@ -539,7 +539,7 @@ export async function createAnalysisWorker(threads?: number): Promise<Worker> {
       err instanceof Error ? err.message : String(err)
     );
 
-    const fallbackWorker = new Worker('/stockfish/stockfish.js#/stockfish/stockfish.wasm');
+    const fallbackWorker = new Worker('/stockfish/stockfish-19-lite-single.js?v=19.0.1');
     return initializeAnalysisWorker(fallbackWorker, numThreads);
   }
 }
