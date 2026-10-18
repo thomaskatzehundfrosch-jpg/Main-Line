@@ -1,7 +1,8 @@
+import {winLowerBound,replyEvidence,sacrificeCp} from './evidence.js';
 import {rarityOf,rareScreenMoves,examineDefences,defenceEvidence,rareLeaders} from './rarity.js';
 import {board,advance,san,uci} from './core.js';
 export function outcomes(row,side){const games=row.games??row.white+row.draws+row.black,wins=side==='w'?row.white:row.black,losses=side==='w'?row.black:row.white;return {games,wins,draws:row.draws,losses,winRate:games?wins/games:null,scoreRate:games?(wins+row.draws/2)/games:null};}
-export function winLowerBound(wins,n){if(!n)return 0;const z=1.96,p=wins/n;return (p+z*z/(2*n)-z*Math.sqrt(p*(1-p)/n+z*z/(4*n*n)))/(1+z*z/n);}
+export {winLowerBound} from './evidence.js';
 export function selectCandidates(state,root,analysis,s){
  const legal=board(state).moves({verbose:true}).map(uci),stats=root.moves.filter(m=>m.games>=s.minGames);
  const bestStats=[...stats].sort((a,b)=>winLowerBound(outcomes(b,s.side).wins,b.games)-winLowerBound(outcomes(a,s.side).wins,a.games));
@@ -41,13 +42,13 @@ export async function investigate(input,s,client,db,update=(_result)=>{}){
   }
   const scores=r.candidates.map(c=>c.cp).filter(Number.isFinite);const baseline=Number.isFinite(s.baselineCp)?s.baselineCp:Math.max(...scores,...root.rows.map(row=>row.cp).filter(Number.isFinite));r.baseline=Number.isFinite(baseline)?baseline:null;
   const winningMate=r.candidates.some(c=>c.mate>0)||root.rows.some(row=>row.mate>0);
-  for(const c of r.candidates){c.sacrifice=c.cp===null||r.baseline===null?null:Math.max(0,r.baseline-c.cp);c.sound=c.mate!==null?c.mate>0:!winningMate&&c.cp!==null&&c.cp>=s.floor&&c.sacrifice!==null&&c.sacrifice<=s.tolerance;}
+  for(const c of r.candidates){c.sacrifice=c.cp===null||r.baseline===null?null:sacrificeCp(r.baseline,c.cp);c.sound=c.mate!==null?c.mate>0:!winningMate&&c.cp!==null&&c.cp>=s.floor&&c.sacrifice!==null&&c.sacrifice<=s.tolerance;}
   emit('Soundness checks complete');
   for(const c of r.candidates.filter(c=>c.sound)){
    client.check();emit('Loading recorded replies to '+c.san);const after=advance(input,c.uci),data=await db.query(after);c.replyData=data;c.replyOutcomes=outcomes(data,s.side);
    if(s.engineVariant==='single'){
     c.defensiveOptions=await examineDefences(after,client,s,emit);const best=c.defensiveOptions.rows[0];
-    if(best?.mate!=null){c.mate=best.mate;c.cp=null;c.defence=best.uci;c.defencePv=best.pv;c.sacrifice=null;c.sound=best.mate>0;}else if(Number.isFinite(best?.cp)&&(c.cp===null||best.cp<c.cp)){c.cp=best.cp;c.mate=null;c.defence=best.uci;c.defencePv=best.pv;c.sacrifice=r.baseline===null?null:Math.max(0,r.baseline-c.cp);c.sound=!winningMate&&c.cp>=s.floor&&c.sacrifice!==null&&c.sacrifice<=s.tolerance;}
+    if(best?.mate!=null){c.mate=best.mate;c.cp=null;c.defence=best.uci;c.defencePv=best.pv;c.sacrifice=null;c.sound=best.mate>0;}else if(Number.isFinite(best?.cp)&&(c.cp===null||best.cp<c.cp)){c.cp=best.cp;c.mate=null;c.defence=best.uci;c.defencePv=best.pv;c.sacrifice=r.baseline===null?null:sacrificeCp(r.baseline,c.cp);c.sound=!winningMate&&c.cp>=s.floor&&c.sacrifice!==null&&c.sacrifice<=s.tolerance;}
     c.defenceEvidence=defenceEvidence(c,data,s);if(!c.sound){emit('Broader defence check rejected '+c.san);continue;}
    }
    const replies=[...data.moves].sort((a,b)=>b.games-a.games).slice(0,3);c.coverage=0;c.weightedLoss=0;
@@ -61,12 +62,13 @@ export async function investigate(input,s,client,db,update=(_result)=>{}){
     // A recorded reply can reveal a stronger defence than the earlier search.
     if(Number.isFinite(row.cp)&&Number.isFinite(c.cp)&&row.cp<c.cp){c.cp=row.cp;c.defence=reply.uci;c.defencePv=[reply.uci,...row.punishment];}
     if(row.mate!==null&&row.mate<0){c.mate=row.mate;c.cp=null;c.defence=reply.uci;c.defencePv=[reply.uci,...row.punishment];}
-    c.sacrifice=c.cp!==null&&r.baseline!==null?Math.max(0,r.baseline-c.cp):null;
+    c.sacrifice=c.cp!==null&&r.baseline!==null?sacrificeCp(r.baseline,c.cp):null;
     c.sound=c.mate!==null?c.mate>0:!winningMate&&c.cp!==null&&c.cp>=s.floor&&c.sacrifice!==null&&c.sacrifice<=s.tolerance;
     c.weightedLoss=0;for(const checked of c.replies){checked.lossCp=Number.isFinite(c.cp)&&Number.isFinite(checked.cp)?Math.max(0,checked.cp-c.cp):null;if(checked.supported&&checked.lossCp!==null&&checked.lossCp>=s.mistakeThreshold)c.weightedLoss+=checked.frequency*checked.lossCp;}
     if(s.engineVariant==='single')c.defenceEvidence=defenceEvidence(c,data,s);
     emit('Reply checked');
    }
+   c.weightedLoss=replyEvidence(c.replies,c.cp,s.mistakeThreshold).weightedLoss;
    c.repliesComplete=true;emit('Finished '+c.san);
   }
   r.status='complete';emit('Investigation complete');

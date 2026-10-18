@@ -44,6 +44,13 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
   return <div className="flex flex-col h-full overflow-y-auto custom-scrollbar">
     <fieldset disabled={isGenerating} className="p-4 space-y-4 disabled:opacity-60">
       <p className="text-xs text-text-muted">Your existing moves are preserved. Generate adds continuations at the ends of your lines.</p>
+      <label className={labelClass}>Generator
+        <select aria-label="Generator version" className={inputClass} value={settings.generatorMode} onChange={e => update('generatorMode', e.target.value as GeneratorSettings['generatorMode'])}>
+          <option value="opening-lab">Opening Lab Gen</option>
+          <option value="legacy">Original Generator</option>
+        </select>
+      </label>
+      <p className="text-[11px] text-text-muted">{settings.generatorMode === 'legacy' ? 'Original move selection and trickiness search.' : 'Opening Lab Gen discovers rare candidates and checks supported human mistakes with a bounded search budget.'}</p>
       <label className={labelClass}>Your side
         <select className={inputClass} value={settings.color} onChange={e => update('color', e.target.value as 'white' | 'black')}>
           <option value="white">White</option><option value="black">Black</option>
@@ -111,7 +118,7 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
               <input className={inputClass} type="number" min="0" max="5" step="0.1" value={settings.trickinessMaxLoss} onChange={e => update('trickinessMaxLoss', e.target.valueAsNumber)} />
             </label>
           </div>
-          <p className="text-[11px] text-text-muted">Search this loss interval relative to the position evaluation before your move, from your side’s perspective. Reversed bounds are sorted. Replaces the normal allowed-loss setting while enabled. If no candidate offers a supported practical improvement, keep the best move within the maximum loss. If none meets that limit, leave the continuation unfinished. Uses your opponent profile; small samples count less. Examining replies makes generation slower.</p>
+          <p className="text-[11px] text-text-muted">Search this loss interval relative to the position evaluation before your move, from your side’s perspective. Reversed bounds are sorted. Replaces the normal allowed-loss setting while enabled. If no candidate offers a supported practical improvement, keep the best move within the maximum loss. If none meets that limit, leave the continuation unfinished. Uses your opponent profile; small samples count less. Examining replies makes generation slower. Opening Lab Gen checks up to three contenders and three replies each; unchecked replies remain unknown.</p>
         </>}
       </div>}
       <div className="space-y-2">

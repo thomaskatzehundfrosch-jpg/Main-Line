@@ -388,3 +388,22 @@ test('decay reserves enough budget to finish generated branches at target depth'
   assert.ok(!walk(root).some(n => n.endReason === 'adaptive-depth'));
   assert.ok(walk(root).some(n => n.warning?.includes('reserved continuation budget')));
 });
+
+test('Opening Lab Gen is default and original generator remains selectable', async () => {
+  assert.equal(normalizeGeneratorSettings({ ...defaults, generatorMode: undefined }).generatorMode, 'opening-lab');
+  const { buildTree: legacy } = require('../src/engine/legacyGeneratorTreeBuilder.ts');
+  const settings = { ...defaults, generatorMode: 'legacy' };
+  const selected = await buildTree(null, settings, {}, { current: false }, dummyWorker, services());
+  const original = await legacy(null, settings, {}, { current: false }, dummyWorker, services());
+  assert.deepEqual(paths(selected), paths(original));
+});
+
+test('Opening Lab Gen bounds detailed work and reuses evaluated replies', async () => {
+  const calls = new Map();
+  const root = await buildTree(null, { ...defaults, analysisMode: 'lichess+stockfish', trickiness: 'high' }, {}, { current: false }, dummyWorker, services({
+    analyze: async (_w, fen, depth) => { calls.set(fen, (calls.get(fen) || 0) + 1); return { score: 0, depth }; },
+    replies: async fen => new Chess(fen).moves({ verbose: true }).slice(0, 8).map(m => ({ uci: uci(m), san: m.san, totalGames: 1000, playRate: 12.5, winRate: 50, drawRate: 0, lossRate: 50, averageRating: null })),
+  }));
+  assert.ok(root.children.length);
+  assert.ok([...calls.values()].every(n => n === 1), 'reply expansion reuses practical evaluations');
+});

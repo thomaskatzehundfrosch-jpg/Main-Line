@@ -1,3 +1,5 @@
+import { buildTree as buildLegacyTree } from './legacyGeneratorTreeBuilder';
+import { replyEvidence, winLowerBound } from '../openingLab/evidence.js';
 /** Preserve supplied moves, then expand a breadth-first frontier of continuations. */
 import { Chess } from 'chess.js';
 import type { GeneratorCallbacks, GeneratorNode, GeneratorSettings, GeneratorEndReason } from '../types/generator';
@@ -71,6 +73,7 @@ export async function buildTree(
   worker: Worker | null,
   services = dependencies
 ): Promise<GeneratorNode> {
+  if (input.generatorMode === 'legacy') return buildLegacyTree(seeds, input, callbacks, stop, worker, services);
   if (!worker) throw new Error('Stockfish is required to verify continuations.');
   const settings = normalizeGeneratorSettings(input);
   const { maxNodes, maxReplies, coverage } = STUDY_SIZES[settings.studySize];
@@ -87,6 +90,15 @@ export async function buildTree(
   const progress = (status: string) => callbacks.onProgress?.({ nodes: totalNodes, maxNodes, apiCalls, status, outcome: 'running' });
   const evalCache = new Map<string, Promise<{ score: number; depth: number }>>();
   const replyCache = new Map<string, LichessMove[]>();
+  const topCache = new Map<string, ReturnType<typeof services.topMoves>>();
+  async function topMoves(fen: string, depth: number, count: number) {
+    check();
+    const key = JSON.stringify([fen, depth, count]);
+    if (!topCache.has(key)) topCache.set(key, services.topMoves(worker!, fen, depth, count, 90000, signal));
+    const result = await topCache.get(key)!;
+    check();
+    return result;
+  }
   const choiceCache = new Map<string, Candidate[]>();
   const coverages: number[] = [];
   let explorerFailures = 0;
@@ -145,15 +157,26 @@ export async function buildTree(
     });
     const popular = await popularReplies(fen);
     const tricky = settings.trickiness !== 'off' && settings.analysisMode !== 'stockfish';
-    const count = ourTurn ? (tricky ? 5 : settings.avoidQueenTrades ? 4 : 1) : maxReplies;
-    const top = await services.topMoves(worker!, fen, settings.sfDepth, count, 90000, signal);
+    const count = ourTurn ? (tricky ? 2 : settings.avoidQueenTrades ? 4 : 1) : maxReplies;
+    const top = await topMoves(fen, settings.sfDepth, count);
     check();
     if (!top.length || top.some(move => move.depth < settings.sfDepth || move.eval == null)) {
       throw new Error('Engine did not return a verified best move.');
     }
     const strongest = top[0];
     if (ourTurn) {
-      const pool = [...new Set([...top.map(m => m.uci), ...popular.slice(0, 3).map(m => m.uci)])];
+      let rare: string[] = [];
+      if (tricky) {
+        // Cheap discovery only: every shortlisted move is verified below at full depth.
+        const screen = await topMoves(fen, Math.min(10, settings.sfDepth), new Chess(fen).moves().length);
+        const bestScreen = Math.max(...screen.filter(m => m.eval != null).map(m => scoreFor(m.eval!, settings.color)));
+        rare = screen.filter(m => m.eval != null && bestScreen - scoreFor(m.eval!, settings.color) <= settings.trickinessMaxLoss + 0.5)
+          .filter(m => popular.some(p => p.uci === m.uci && p.playRate <= 5))
+          .sort((a, b) => (popular.find(p => p.uci === a.uci)?.playRate ?? 100) - (popular.find(p => p.uci === b.uci)?.playRate ?? 100))
+          .slice(0, 2).map(m => m.uci);
+      }
+      const supportedWins = [...popular].sort((a, b) => winLowerBound(b.winRate / 100 * b.totalGames, b.totalGames) - winLowerBound(a.winRate / 100 * a.totalGames, a.totalGames));
+      const pool = [...new Set([...top.map(m => m.uci), ...rare, ...popular.slice(0, tricky ? 1 : settings.analysisMode === 'stockfish' ? 0 : 3).map(m => m.uci), ...(tricky ? supportedWins.slice(0, 1).map(m => m.uci) : [])])].slice(0, tricky ? 6 : 7);
       const checked: Candidate[] = [];
       for (const uci of pool) {
         try { checked.push(await candidate(fen, uci, popular.find(move => move.uci === uci))); }
@@ -188,28 +211,46 @@ export async function buildTree(
         }
         let chosen = baseline;
         let chosenScore = best;
+        let chosenAdequate = Infinity;
         let explanation = 'No supported practical improvement in your sacrifice interval; best verified candidate retained';
-        for (const move of eligible) {
+        // Bound detailed investigation to three contenders, strongest first.
+        eligible.sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color));
+        for (const move of eligible.slice(0, 3)) {
           check();
           try {
-            // Full position frequencies: unexamined replies contribute zero benefit.
-            const replies = (await popularReplies(move.fen)).slice(0, 8);
-            let benefit = 0;
-            let mistakeFrequency = 0;
+            const recorded = await popularReplies(move.fen);
+            if (!recorded.length) continue;
             const objective = scoreFor(move.score, settings.color);
-            for (const reply of replies) {
+            // Bounded version of the Lab's defensive-width check. It establishes
+            // checked options only; unsearched legal moves are never called refuted.
+            const defences = await topMoves(move.fen, settings.sfDepth, 3);
+            if (!defences.length || defences.some(row => row.eval == null || row.depth < settings.sfDepth)) continue;
+            const defenceScore = Math.min(objective, ...defences.map(row => scoreFor(row.eval!, settings.color)));
+            const adequateChecked = defences.filter(row => scoreFor(row.eval!, settings.color) - defenceScore < 0.3).length;
+            const rows: Array<{ cp: number; frequency: number; supported: boolean; games: number }> = [];
+            let mass = 0;
+            for (const reply of [...recorded].sort((a, b) => b.playRate - a.playRate).slice(0, 3)) {
               const after = await candidate(move.fen, reply.uci);
-              const gain = Math.max(0, Math.min(3, scoreFor(after.score, settings.color) - objective));
-              const probability = Math.max(0, Math.min(1, reply.playRate / 100));
-              // Shrink each reply's contribution until it has substantial evidence.
-              const confidence = reply.totalGames / (reply.totalGames + 100);
-              benefit += probability * gain * confidence;
-              if (gain >= 0.3) mistakeFrequency += probability;
+              rows.push({ cp: scoreFor(after.score, settings.color) * 100, frequency: reply.playRate / 100, supported: reply.totalGames >= settings.minGames, games: reply.totalGames });
+              mass += reply.playRate / 100;
+              if (mass >= 0.8) break;
             }
-            const practicalScore = objective + (settings.trickiness === 'high' ? 1 : 0.5) * benefit;
-            if (practicalScore > chosenScore + 1e-8) {
-              chosen = move; chosenScore = practicalScore;
-              explanation = `Trickiness: ${Math.max(0, current - objective).toFixed(2)} pawn sacrifice from the current evaluation; inferior replies in ${(mistakeFrequency * 100).toFixed(0)}% of database games; confidence-adjusted benefit ${benefit.toFixed(2)} pawns (up to 8 replies examined)`;
+            // Recorded replies can expose a stronger defence; never reward that discrepancy.
+            const defended = Math.min(defenceScore, ...rows.map(row => row.cp / 100));
+            const loss = Math.max(0, current - defended);
+            if (loss > maximumLoss + 1e-8 || loss + 1e-8 < settings.trickinessMinLoss ||
+                (settings.evaluationFloorEnabled && defended < settings.evaluationFloor - 1e-8)) continue;
+            const evidence = replyEvidence(rows, defended * 100, 30);
+            const benefit = rows.reduce((sum, row) => {
+              const gain = Math.max(0, Math.min(300, row.cp - defended * 100));
+              return sum + (gain >= 30 ? row.frequency * gain / 100 * row.games / (row.games + 100) : 0);
+            }, 0);
+            const practicalScore = defended + (settings.trickiness === 'high' ? 1 : 0.5) * benefit;
+            if (practicalScore > chosenScore + 1e-8 || (benefit > 0 && Math.abs(practicalScore - chosenScore) <= 1e-8 && adequateChecked < chosenAdequate)) {
+              chosen = { ...move, score: settings.color === 'white' ? defended : -defended };
+              chosenScore = practicalScore;
+              chosenAdequate = adequateChecked;
+              explanation = `Trickiness: ${loss.toFixed(2)} pawn sacrifice from the current evaluation; supported mistakes in ${(evidence.mistakeMass * 100).toFixed(0)}% of database games; ${(evidence.unknown * 100).toFixed(0)}% unknown; ${adequateChecked} adequate defences among ${defences.length} checked; confidence-adjusted benefit ${benefit.toFixed(2)} pawns (up to 3 replies examined)`;
             }
           } catch (error) {
             check();

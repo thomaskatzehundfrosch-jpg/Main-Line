@@ -3,6 +3,7 @@ export type AnalysisMode = 'stockfish' | 'lichess+stockfish';
 export type StudySize = 'compact' | 'standard' | 'broad';
 
 export interface GeneratorSettings {
+  generatorMode: 'opening-lab' | 'legacy';
   color: 'white' | 'black';
   analysisMode: AnalysisMode;
   maxMoveNumber: number;
@@ -36,6 +37,7 @@ export const STUDY_SIZES = {
 } as const;
 
 export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
+  generatorMode: 'opening-lab',
   color: 'white', analysisMode: 'lichess+stockfish', maxMoveNumber: 15,
   studySize: 'standard', sfDepth: 16, maxEvalLoss: 0.5,
   tacticalExtension: 2, avoidQueenTrades: false,
@@ -54,6 +56,7 @@ export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorS
   const speeds = [...new Set(input.speeds.filter(s => ['bullet', 'blitz', 'rapid', 'classical'].includes(s)))];
   return {
     ...input,
+    generatorMode: input.generatorMode === 'legacy' ? 'legacy' : 'opening-lab',
     color: input.color === 'black' ? 'black' : 'white',
     analysisMode: input.analysisMode === 'stockfish' ? 'stockfish' : 'lichess+stockfish',
     studySize: input.studySize in STUDY_SIZES ? input.studySize : 'standard',
