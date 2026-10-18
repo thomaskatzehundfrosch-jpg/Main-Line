@@ -442,3 +442,59 @@ test('win-rate preference ignores spectacular results from tiny samples', async 
   }));
   assert.equal(root.children[0].uci, uci(moves[0]));
 });
+
+const { createGeneratorCloudAnalysis } = require('../src/engine/generatorCloudAnalysis.ts');
+test('generator cloud hits avoid local work and retain White score perspective', async () => {
+  let requests = 0, localCalls = 0;
+  const local = services({ analyze: async () => { localCalls++; throw Error('Unexpected local search'); } });
+  const gateway = createGeneratorCloudAnalysis(local, async () => {
+    requests++;
+    return new Response(JSON.stringify({ depth: 30, pvs: [{ moves: 'e2e4 e7e5', cp: 31 }] }));
+  });
+  const fen = new Chess().fen();
+  const first = await gateway.analyze(dummyWorker, fen, 25);
+  const second = await gateway.analyze(dummyWorker, fen, 18);
+  assert.equal(first.score, 31); assert.equal(first.depth, 30); assert.equal(first.source, 'lichess-cloud');
+  assert.equal(second.bestMoveSan, 'e4'); assert.equal(requests, 1); assert.equal(localCalls, 0);
+});
+test('cloud cannot replace six-candidate discovery or insufficient-depth verification', async () => {
+  let requests = 0, localCalls = 0;
+  const gateway = createGeneratorCloudAnalysis(services({ analyze: async (_w, fen, depth) => { localCalls++; return { score: 0, depth }; } }), async () => {
+    requests++; return new Response(JSON.stringify({ depth: 18, pvs: [{ moves: 'e2e4', cp: 10 }] }));
+  });
+  const fen = new Chess().fen();
+  assert.equal((await gateway.topMoves(dummyWorker, fen, 18, 6)).length, 6);
+  assert.equal(requests, 0);
+  assert.equal((await gateway.analyze(dummyWorker, fen, 25)).depth, 25);
+  assert.equal(requests, 1); assert.equal(localCalls, 1);
+});
+test('cloud rejects illegal and duplicate moves or insufficient MultiPV width', async () => {
+  for (const pvs of [[{ moves: 'e2e5', cp: 10 }], [{ moves: 'e2e4', cp: 10 }, { moves: 'e2e4', cp: 10 }], [{ moves: 'e2e4', cp: 10 }]]) {
+    let localCalls = 0;
+    const count = pvs[0].moves === 'e2e5' ? 1 : 2;
+    const gateway = createGeneratorCloudAnalysis(services({ topMoves: async () => { localCalls++; return []; } }), async () => new Response(JSON.stringify({ depth: 30, pvs })));
+    await gateway.topMoves(dummyWorker, new Chess().fen(), 18, count);
+    assert.equal(localCalls, 1);
+  }
+});
+test('cloud rate limits fall back immediately and pause further requests', async () => {
+  let requests = 0, localCalls = 0;
+  const gateway = createGeneratorCloudAnalysis(services({ analyze: async (_w, fen, depth) => { localCalls++; return { score: 0, depth }; } }), async () => {
+    requests++; return new Response('', { status: 429, headers: { 'Retry-After': '60' } });
+  });
+  const chess = new Chess();
+  await gateway.analyze(dummyWorker, chess.fen(), 25);
+  chess.move('e4');
+  await gateway.analyze(dummyWorker, chess.fen(), 25);
+  assert.equal(requests, 1); assert.equal(localCalls, 2);
+});
+test('cancelling a pending cloud lookup never starts local fallback', async () => {
+  const controller = new AbortController(); let localCalls = 0;
+  const gateway = createGeneratorCloudAnalysis(services({ analyze: async () => { localCalls++; } }), async (_url, options) => {
+    return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true }));
+  });
+  const pending = gateway.analyze(dummyWorker, new Chess().fen(), 25, controller.signal);
+  controller.abort();
+  await assert.rejects(pending, { name: 'AbortError' });
+  assert.equal(localCalls, 0);
+});

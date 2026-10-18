@@ -50,7 +50,7 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
           <option value="legacy">Original Generator</option>
         </select>
       </label>
-      <p className="text-[11px] text-text-muted">{settings.generatorMode === 'legacy' ? 'Original move selection and trickiness search.' : 'Opening Lab Gen compares candidates at depth up to 18, then verifies the winner at your selected depth. Supported win rates rank first with at least 100 games; practical evidence breaks ties.'}</p>
+      <p className="text-[11px] text-text-muted">{settings.generatorMode === 'legacy' ? 'Original move selection and trickiness search.' : 'Opening Lab Gen compares candidates at depth up to 18, then verifies the winner at your selected depth. Uses saved Lichess cloud evaluations when depth and move count are sufficient, with local Stockfish fallback. Supported win rates rank first with at least 100 games; practical evidence breaks ties.'}</p>
       <label className={labelClass}>Your side
         <select className={inputClass} value={settings.color} onChange={e => update('color', e.target.value as 'white' | 'black')}>
           <option value="white">White</option><option value="black">Black</option>

@@ -1,3 +1,4 @@
+import { createGeneratorCloudAnalysis } from './generatorCloudAnalysis';
 import { buildTree as buildLegacyTree } from './legacyGeneratorTreeBuilder';
 import { replyEvidence, winLowerBound } from '../openingLab/evidence.js';
 /** Preserve supplied moves, then expand a breadth-first frontier of continuations. */
@@ -10,8 +11,9 @@ import type { LichessMove } from '../utils/lichessApi';
 import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils/generatorSeeds';
 import { abortError, abortableDelay } from '../utils/generatorCancellation';
 
-const dependencies = { analyze: analyzePositionWithStockfish, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
-type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; stats?: LichessMove; strongestDefense?: boolean; reason: string };
+const localDependencies = { analyze: analyzePositionWithStockfish, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
+const dependencies = { ...localDependencies, ...createGeneratorCloudAnalysis(localDependencies) };
+type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; source?: 'lichess-cloud' | 'local'; stats?: LichessMove; strongestDefense?: boolean; reason: string };
 const positionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
 const scoreFor = (score: number, color: 'white' | 'black') => color === 'white' ? score : -score;
 
@@ -71,9 +73,10 @@ export async function buildTree(
   callbacks: GeneratorCallbacks,
   stop: { current: boolean; signal?: AbortSignal },
   worker: Worker | null,
-  services = dependencies
+  services?: typeof dependencies
 ): Promise<GeneratorNode> {
-  if (input.generatorMode === 'legacy') return buildLegacyTree(seeds, input, callbacks, stop, worker, services);
+  if (input.generatorMode === 'legacy') return buildLegacyTree(seeds, input, callbacks, stop, worker, services ?? localDependencies);
+  const analysisServices = services ?? dependencies;
   if (!worker) throw new Error('Stockfish is required to verify continuations.');
   const settings = normalizeGeneratorSettings(input);
   const searchDepth = Math.min(18, settings.sfDepth);
@@ -89,13 +92,13 @@ export async function buildTree(
   };
   const publish = () => callbacks.onNodeAdded?.(cloneGeneratorTree(root));
   const progress = (status: string) => callbacks.onProgress?.({ nodes: totalNodes, maxNodes, apiCalls, status, outcome: 'running' });
-  const evalCache = new Map<string, Promise<{ score: number; depth: number }>>();
+  const evalCache = new Map<string, Promise<{ score: number; depth: number; source?: 'lichess-cloud' | 'local' }>>();
   const replyCache = new Map<string, LichessMove[]>();
-  const topCache = new Map<string, ReturnType<typeof services.topMoves>>();
+  const topCache = new Map<string, ReturnType<typeof analysisServices.topMoves>>();
   async function topMoves(fen: string, depth: number, count: number) {
     check();
     const key = JSON.stringify([fen, depth, count]);
-    if (!topCache.has(key)) topCache.set(key, services.topMoves(worker!, fen, depth, count, 90000, signal));
+    if (!topCache.has(key)) topCache.set(key, analysisServices.topMoves(worker!, fen, depth, count, 90000, signal));
     const result = await topCache.get(key)!;
     check();
     return result;
@@ -104,16 +107,16 @@ export async function buildTree(
   const coverages: number[] = [];
   let explorerFailures = 0;
 
-  async function evaluate(fen: string, depth = searchDepth): Promise<{ score: number; depth: number }> {
+  async function evaluate(fen: string, depth = searchDepth): Promise<{ score: number; depth: number; source?: 'lichess-cloud' | 'local' }> {
     check();
     const chess = new Chess(fen);
     if (chess.isCheckmate()) return { score: chess.turn() === 'w' ? -100 : 100, depth };
     if (chess.isGameOver()) return { score: 0, depth };
     const key = JSON.stringify([fen, depth]);
     if (!evalCache.has(key)) {
-      evalCache.set(key, services.analyze(worker!, fen, depth, signal).then(result => {
+      evalCache.set(key, analysisServices.analyze(worker!, fen, depth, signal).then(result => {
         if (result.depth < depth || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
-        return { score: result.score / 100, depth: result.depth };
+        return { score: result.score / 100, depth: result.depth, source: result.source ?? 'local' as const };
       }));
     }
     const result = await evalCache.get(key)!;
@@ -128,7 +131,7 @@ export async function buildTree(
     check();
     try {
       apiCalls++;
-      const replies = await services.replies(fen, settings, (level, message) => { check(); log(level, message); }, 100, signal);
+      const replies = await analysisServices.replies(fen, settings, (level, message) => { check(); log(level, message); }, 100, signal);
       check();
       // Very small samples do not establish human coverage. Fall back explicitly.
       const supported = replies.filter(reply => reply.totalGames >= settings.minGames);
@@ -205,7 +208,7 @@ export async function buildTree(
             const evidence = winEvidence(move);
             const reason = belowFloor ? 'Below evaluation floor; objective continuation selected without a practical bonus'
               : move.reason || 'Next ranked candidate after deeper verification';
-            const chosen = { ...move, ...verified, reason: `${reason}; verified at depth ${verified.depth}${evidence > 0 ? `; ${move.stats!.winRate.toFixed(1)}% recorded wins in ${move.stats!.totalGames} games (95% lower bound ${(evidence * 100).toFixed(1)}%)` : ''}` };
+            const chosen = { ...move, ...verified, reason: `${reason}; verified at depth ${verified.depth} (${verified.source === 'lichess-cloud' ? 'Lichess cloud; engine version unspecified' : 'local Stockfish 19 Lite'})${evidence > 0 ? `; ${move.stats!.winRate.toFixed(1)}% recorded wins in ${move.stats!.totalGames} games (95% lower bound ${(evidence * 100).toFixed(1)}%)` : ''}` };
             choiceCache.set(key, [chosen]);
             return [chosen];
           } catch (error) {
@@ -374,7 +377,7 @@ export async function buildTree(
       try {
         const reference = await evaluate(parent.fen, settings.sfDepth);
         const actual = await evaluate(node.fen, settings.sfDepth);
-        node.stockfish = { eval: actual.score, depth: actual.depth };
+        node.stockfish = { eval: actual.score, depth: actual.depth, source: actual.source };
         const drop = scoreFor(reference.score - actual.score, settings.color);
         if (drop > settings.maxEvalLoss) {
           node.warning = `Your move was preserved; engine estimates a ${drop.toFixed(2)} pawn loss against its best continuation.`;
@@ -430,7 +433,7 @@ export async function buildTree(
             children: [], depth: active.depth + 1, fullMoveNumber: Number(active.fen.split(' ')[5]),
             isOurMove: ourTurn, isMainLine: active.children.length === 0,
             isDangerous: !ourTurn && scoreFor(move.score, settings.color) < -0.5,
-            cappedByMoveLimit: false, stockfish: { eval: move.score, depth: move.depth },
+            cappedByMoveLimit: false, stockfish: { eval: move.score, depth: move.depth, source: move.source },
             lichess: move.stats ? { ...move.stats } : null, reason: move.reason,
           };
           active.children.push(node); added.push(move); totalNodes++;

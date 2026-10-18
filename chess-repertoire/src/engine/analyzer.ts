@@ -31,6 +31,7 @@ function classifyMistakeCustom(evalDrop: number, thresholds: CustomThresholds): 
  * Represents a single position evaluation result from the engine.
  */
 export interface PositionEval {
+  source?: 'lichess-cloud' | 'local';
   fen: string;
   score: number; // centipawns from White's perspective
   isMate: boolean;

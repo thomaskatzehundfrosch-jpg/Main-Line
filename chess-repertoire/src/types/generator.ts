@@ -78,7 +78,7 @@ export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorS
   };
 }
 
-export interface GeneratorSfEval { eval: number | null; depth: number; }
+export interface GeneratorSfEval { source?: 'lichess-cloud' | 'local'; eval: number | null; depth: number; }
 /** Win/loss rates are from the repertoire side's perspective. */
 export interface GeneratorLichessStats {
   totalGames: number;
