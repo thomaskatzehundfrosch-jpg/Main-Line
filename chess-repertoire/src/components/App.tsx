@@ -255,11 +255,23 @@ export const App: React.FC = () => {
   useEffect(() => { setLabPreview([]); setLabStep(0); }, [currentNode.id, currentNode.fen]);
   useEffect(() => { setLabPreview([]); setLabStep(0); setLabHover(null); }, [sidebarTab, mobileTab]);
   const handleLabPreview = useCallback((line: LabMove[]) => { setLabPreview(line); setLabStep(line.length ? 1 : 0); }, []);
-  const handleLabNodeClick = (node: TreeNode) => {
+  // Engine updates rerender App frequently. Keep tree navigation stable so D3
+  // does not replace a pressed SVG node before the click can be delivered.
+  const handleLabNodeClick = useCallback((node: TreeNode) => {
+    setViewingGame(null);
+    setViewingMoveIndex(0);
+    setExploreOverlayFen(null);
     const index = labPreviewTree.nodes.findIndex(n => n.id === node.id);
     if (index >= 0) setLabStep(index + 1);
     else { setLabPreview([]); setLabStep(0); navigateToNode(node); }
-  };
+  }, [labPreviewTree.nodes, navigateToNode]);
+  const handleTreeExploreFen = useCallback((fen: string) => {
+    setViewingGame(null);
+    setViewingMoveIndex(0);
+    setLabPreview([]);
+    setLabStep(0);
+    setExploreOverlayFen(fen);
+  }, []);
   const openLab = (node: TreeNode) => {
     navigateToNode(node); setSidebarTab('lab'); setMobileTab('lab');
     setExploreOverlayFen(null);
@@ -1811,7 +1823,7 @@ export const App: React.FC = () => {
                     onAddLine={addLineToNode}
                     importedGames={games.importedGames}
                     showGameOverlay={games.showGameOverlay}
-                    onExploreFen={setExploreOverlayFen}
+                    onExploreFen={handleTreeExploreFen}
                     exploreModeEnabled={treeExploreMode}
                     onExploreModeChange={setTreeExploreMode}
                     onInvestigateNode={openLab}
@@ -2132,7 +2144,7 @@ export const App: React.FC = () => {
               onAddLine={addLineToNode}
               importedGames={games.importedGames}
               showGameOverlay={games.showGameOverlay}
-              onExploreFen={setExploreOverlayFen}
+              onExploreFen={handleTreeExploreFen}
               exploreModeEnabled={treeExploreMode}
               onExploreModeChange={setTreeExploreMode}
               onInvestigateNode={openLab}
