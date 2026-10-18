@@ -7,6 +7,7 @@ import ChessBoard from './Board/ChessBoard';
 import BoardControls from './Board/BoardControls';
 import { OpeningTree } from './Tree/OpeningTree';
 import { MoveList } from './Sidebar/MoveList';
+import { MoveExplorer } from './Sidebar/MoveExplorer';
 import { EnginePanel } from './Sidebar/EnginePanel';
 import { OpeningLabPanel, type LabMove } from './Sidebar/OpeningLabPanel';
 import { createLabPreview } from '../openingLab/preview';
@@ -1855,8 +1856,18 @@ export const App: React.FC = () => {
                     onThreadsChange={engine.setThreads}
                   />
                 </div>
-                {mostLikelyMoveSection}
-                {recommendationSection}
+                <MoveExplorer
+                  fen={displayFen}
+                  rating={settings.mostLikelyMoveRating}
+                  onRatingChange={rating => updateSetting('mostLikelyMoveRating', rating as PracticalMoveRating)}
+                  onConnect={openLichessSettings}
+                  interactive={!viewingGame && !previewNode}
+                  onMove={move => {
+                    const chess = new Chess(displayFen);
+                    const played = chess.move(move.san);
+                    handleBoardMove(played.from, played.to, `${played.color}${played.piece.toUpperCase()}`);
+                  }}
+                />
                 <div className="min-h-[40vh] flex flex-col border-t border-border-subtle">
                   <MoveList
                     currentPath={currentPath}
@@ -1951,7 +1962,7 @@ export const App: React.FC = () => {
       /* ── Desktop layout ── */
       <div className="flex-1 flex min-h-0">
         {/* Left Panel: Files + Opening Tree */}
-        <div className="flex-1 min-w-[300px] border-r border-border-subtle flex flex-col">
+        <div className="flex-1 min-w-0 border-r border-border-subtle flex flex-col">
           {/* Repertoire Files */}
           <div className="border-b border-border-subtle">
             <div
@@ -2154,7 +2165,7 @@ export const App: React.FC = () => {
         </div>
 
         {/* Right Panel: Board + Tabbed Content */}
-        <div className={`${boardExpanded ? 'w-[580px] min-w-[540px]' : 'w-[420px] min-w-[380px]'} flex flex-col overflow-hidden transition-[width] duration-200`}>
+        <div className={`${boardExpanded ? 'w-[640px] min-w-[540px]' : 'w-[520px] min-w-[460px]'} shrink-0 flex flex-col overflow-hidden transition-[width] duration-200`}>
           {/* Chessboard */}
           <div className="flex flex-col items-center p-3 gap-1">
             {/* Game viewer banner */}
@@ -2178,8 +2189,8 @@ export const App: React.FC = () => {
             )}
             <div className={`w-full transition-all ${
               boardExpanded
-                ? 'max-w-[540px]'
-                : 'max-w-[400px]'
+                ? 'max-w-[520px]'
+                : 'max-w-[440px]'
             }`}>
               <ChessBoard
                 fen={displayFen}
@@ -2285,8 +2296,18 @@ export const App: React.FC = () => {
                     onThreadsChange={engine.setThreads}
                   />
                 </div>
-                {mostLikelyMoveSection}
-                {recommendationSection}
+                <MoveExplorer
+                  fen={displayFen}
+                  rating={settings.mostLikelyMoveRating}
+                  onRatingChange={rating => updateSetting('mostLikelyMoveRating', rating as PracticalMoveRating)}
+                  onConnect={openLichessSettings}
+                  interactive={!viewingGame && !previewNode}
+                  onMove={move => {
+                    const chess = new Chess(displayFen);
+                    const played = chess.move(move.san);
+                    handleBoardMove(played.from, played.to, `${played.color}${played.piece.toUpperCase()}`);
+                  }}
+                />
 
                 {/* Move List */}
                 <div className="flex flex-col border-t border-border-subtle shrink-0">
