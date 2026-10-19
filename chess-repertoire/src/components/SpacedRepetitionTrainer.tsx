@@ -755,8 +755,8 @@ export const SpacedRepetitionTrainer: React.FC<{
   }, [currentLineIndex, currentPromptIndex]);
 
   useEffect(() => {
-    if (engine.enabled && phase !== 'replay' && currentCard) engine.analyze(displayFen);
-  }, [currentCard, displayFen, engine.enabled, phase]);
+    if (engine.enabled && engine.workerReady && phase !== 'replay' && currentCard) engine.analyze(displayFen);
+  }, [currentCard, displayFen, engine.enabled, engine.workerReady, engine.analyze, phase]);
 
   useEffect(() => {
     if (engine.enabled && engine.multiPV < 3) engine.setMultiPV(3);

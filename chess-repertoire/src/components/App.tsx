@@ -538,10 +538,10 @@ export const App: React.FC = () => {
 
   // Analyze position when current node or game viewer position changes
   useEffect(() => {
-    if (engine.enabled && displayFen) {
+    if (engine.enabled && engine.workerReady && !generator.isGenerating && displayFen) {
       engine.analyze(displayFen);
     }
-  }, [displayFen, engine.enabled]);
+  }, [displayFen, engine.enabled, engine.workerReady, engine.analyze, generator.isGenerating]);
 
   // Get opening info for current path
   const openingInfo = getOpeningForPath(currentPath.map((n) => n.fen));

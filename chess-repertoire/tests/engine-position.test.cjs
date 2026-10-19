@@ -30,6 +30,39 @@ function harness(cloud = null, suspended = false) {
 const tick = () => new Promise(setImmediate);
 const info = (pv) => `info depth 15 multipv 1 score cp 20 pv ${pv}`;
 
+test('main view starts analysis on worker readiness and restarts after generation without a position change', () => {
+  const source = fs.readFileSync(require('node:path').join(__dirname, '../src/components/App.tsx'), 'utf8');
+  const marker = source.indexOf('// Analyze position when current node or game viewer position changes');
+  assert.ok(marker >= 0);
+  const effect = source.slice(marker).match(/useEffect\(\(\) => \{[\s\S]*?\}, \[[^\]]*\]\);/)[0];
+  const calls = [], fen = new Chess().fen();
+  let previous;
+  const context = {
+    displayFen: fen,
+    engine: { enabled: true, workerReady: false, analyze: value => calls.push(value) },
+    generator: { isGenerating: false },
+    useEffect: (run, deps) => {
+      if (!previous || deps.some((value, index) => value !== previous[index])) run();
+      previous = deps;
+    },
+  };
+  const render = () => vm.runInNewContext(effect, context);
+  render(); assert.equal(calls.length, 0, 'Wait for asynchronous startup');
+  context.engine.workerReady = true;
+  render(); assert.deepEqual(calls, [fen]);
+  render(); assert.equal(calls.length, 1, 'Ordinary renders do not restart searches');
+  context.generator.isGenerating = true;
+  context.engine.workerReady = false;
+  render(); assert.equal(calls.length, 1);
+  context.generator.isGenerating = false;
+  render(); assert.equal(calls.length, 1, 'Wait for replacement worker');
+  context.engine.workerReady = true;
+  render(); assert.deepEqual(calls, [fen, fen]);
+  context.engine.workerReady = false; render();
+  context.engine.workerReady = true; render();
+  assert.equal(calls.length, 3, 'Crash recovery restarts the same position too');
+});
+
 test('ignores old search output during position changes and rejects illegal moves', async () => {
   const h = harness(); await tick();
   h.worker.onmessage({ data: 'readyok' });
