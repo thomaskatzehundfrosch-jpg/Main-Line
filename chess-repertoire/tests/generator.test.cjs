@@ -509,3 +509,16 @@ test('generation adds no comments to converted trees or PGN exports', () => {
   assert.ok(walk(convertToTreeNode(tree)).every(node => node.comment === ''));
   assert.ok(!exportGeneratorPGN(tree, { color: 'white' }, true).includes('{'));
 });
+
+test('extending an existing repertoire retains every branch and grows each unfinished leaf', async () => {
+  const seeds = [['e4', 'e5'], ['e4', 'c5'], ['d4', 'd5']];
+  const root = await buildTree(seeds, { ...defaults, maxMoveNumber: 2 }, {}, { current: false }, dummyWorker, services());
+  for (const line of seeds) {
+    let node = root;
+    for (const san of line) {
+      node = node.children.find(child => child.san === san);
+      assert.ok(node, `Existing move ${san} was preserved`);
+    }
+    assert.ok(node.children.length > 0, `Extended ${line.join(' ')}`);
+  }
+});

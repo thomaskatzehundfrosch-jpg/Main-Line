@@ -129,15 +129,15 @@ function getFenFullMoveNumber(fen: string, fallbackDepth: number): number {
 
 function convertGeneratedChild(node: GeneratorNode, parentId: string | null, color: 'white' | 'black', original?: TreeNode): TreeNode {
   return {
-    id: node.id,
+    id: original?.id ?? node.id,
     move: node.san || '',
     fen: node.fen,
-    children: node.children.map((child) => convertGeneratedChild(child, node.id, color, original?.children.find(existing => existing.move === child.san))),
+    children: node.children.map((child) => convertGeneratedChild(child, original?.id ?? node.id, color, original?.children.find(existing => existing.move === child.san))),
     parentId,
-    gameCount: node.lichess?.totalGames ?? 0,
-    whiteWins: node.lichess ? Math.round(node.lichess.totalGames * ((color === 'white' ? node.lichess.winRate : node.lichess.lossRate) / 100)) : 0,
-    blackWins: node.lichess ? Math.round(node.lichess.totalGames * ((color === 'white' ? node.lichess.lossRate : node.lichess.winRate) / 100)) : 0,
-    draws: node.lichess ? Math.round(node.lichess.totalGames * (node.lichess.drawRate / 100)) : 0,
+    gameCount: original?.gameCount ?? node.lichess?.totalGames ?? 0,
+    whiteWins: original?.whiteWins ?? (node.lichess ? Math.round(node.lichess.totalGames * ((color === 'white' ? node.lichess.winRate : node.lichess.lossRate) / 100)) : 0),
+    blackWins: original?.blackWins ?? (node.lichess ? Math.round(node.lichess.totalGames * ((color === 'white' ? node.lichess.lossRate : node.lichess.winRate) / 100)) : 0),
+    draws: original?.draws ?? (node.lichess ? Math.round(node.lichess.totalGames * (node.lichess.drawRate / 100)) : 0),
     comment: original?.comment ?? '',
     nags: original?.nags ?? [],
     depth: node.depth,
@@ -403,7 +403,7 @@ export const App: React.FC = () => {
         .map((pathNode) => pathNode.move)
         .filter(Boolean);
 
-      if (seed.length === 0) return;
+      if (seed.length === 0 && node.children.length === 0) return;
       setRegenerationError(null);
       treeRegenerationTargetRef.current = {
         nodeId: node.id,
@@ -414,7 +414,10 @@ export const App: React.FC = () => {
       };
 
       const cachedGeneratorSettings = getCachedGeneratorSettings();
-      const selectedFullMoveNumber = getFenFullMoveNumber(node.fen, seed.length);
+      const leafMoveNumbers = (current: TreeNode): number[] => current.children.length
+        ? current.children.flatMap(leafMoveNumbers)
+        : [getFenFullMoveNumber(current.fen, current.depth)];
+      const selectedFullMoveNumber = Math.max(...leafMoveNumbers(node));
       const generatorSettings = {
         ...cachedGeneratorSettings,
         maxMoveNumber: Math.max(cachedGeneratorSettings.maxMoveNumber, selectedFullMoveNumber + 4),
@@ -430,7 +433,7 @@ export const App: React.FC = () => {
         id: `log_regen_start_${Date.now()}`,
         timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
         level: 'info',
-        message: `Extending continuation after ${node.move} with current generator settings.`,
+        message: `Extending continuation after ${node.move || 'the starting position'} with current generator settings.`,
         context: null,
       });
 
@@ -472,7 +475,7 @@ export const App: React.FC = () => {
             id: `log_regen_done_${Date.now()}`,
             timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
             level: 'info',
-            message: `Prepared ${graftedCount} continuation move${graftedCount !== 1 ? 's' : ''} after ${node.move}.`,
+            message: `Prepared ${graftedCount} continuation move${graftedCount !== 1 ? 's' : ''} after ${node.move || 'the starting position'}.`,
             context: null,
           });
         },
@@ -1056,6 +1059,17 @@ export const App: React.FC = () => {
               {regeneratingNodeId === currentNode.id ? 'Regenerating...' : 'Extend Continuation'}
             </span>
           </button>
+          <button
+            onClick={() => handleFinishLineFromNode(tree)}
+            disabled={tree.children.length === 0 || generator.isGenerating}
+            className="btn-secondary w-full text-[10px] font-mono uppercase tracking-wider disabled:opacity-40"
+            title="Extend every existing line using current generator settings, preserving your moves and notes"
+          >
+            Extend Entire Repertoire
+          </button>
+          <p className="text-[10px] text-text-muted">
+            Preserves existing moves and notes. Uses generator settings and targets at least four moves beyond the longest line.
+          </p>
           {regeneratingNodeId && (
             <div className="rounded-md border border-accent-teal/25 bg-accent-teal/5 px-2.5 py-2">
               <div className="mb-1.5 flex items-center justify-between gap-2 text-[10px] font-mono text-text-muted">
