@@ -14,7 +14,7 @@ export interface GeneratorSettings {
   studySize: StudySize;
   /** Final verification depth. Opening Lab Gen compares candidates at min(18, sfDepth). */
   sfDepth: number;
-  /** Maximum loss in pawns relative to the position evaluation before your move, from your side’s perspective. */
+  /** Maximum loss in pawns relative to the best verified continuation, from your side’s perspective. */
   maxEvalLoss: number;
   evaluationFloorEnabled: boolean;
   evaluationFloor: number;

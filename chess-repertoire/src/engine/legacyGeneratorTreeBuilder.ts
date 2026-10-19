@@ -172,13 +172,14 @@ export async function buildTree(
         try { checked.push(await candidate(fen, uci, popular.find(move => move.uci === uci))); }
         catch (error) { check(); if (uci === strongest.uci) throw error; }
       }
-      const current = scoreFor((await evaluate(fen)).score, settings.color);
+      const rootReference = scoreFor((await evaluate(fen)).score, settings.color);
+      const current = Math.max(...checked.map(move => scoreFor(move.score, settings.color)));
       const { maximum: maximumLoss, minimum: minimumLoss } = sacrificeLimits(current,
         tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss, tricky ? settings.trickinessMinLoss : 0);
       let permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
       if (!permitted.length) throw new Error(`No verified candidate stays within the ${maximumLoss.toFixed(2)} pawn loss limit from the current evaluation (${current.toFixed(2)} from your side).`);
       if (settings.evaluationFloorEnabled) {
-        if (current < settings.evaluationFloor - 1e-8) {
+        if (rootReference < settings.evaluationFloor - 1e-8) {
           // Already below the floor: no practical or popularity bonus, only the best defense.
           const chosen = permitted.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
           chosen.reason = `Current evaluation ${current.toFixed(2)} is below your ${settings.evaluationFloor.toFixed(2)} floor; strongest verified continuation selected without deliberate sacrifice`;

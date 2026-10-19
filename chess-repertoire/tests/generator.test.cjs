@@ -305,7 +305,7 @@ test('trickiness cancellation during reply analysis adds no late candidate', asy
   assert.equal(progress.outcome, 'stopped');
 });
 
-test('current-position loss limit holds for both colors and all trickiness modes', async () => {
+test('independent root score drift does not reject the best verified continuation', async () => {
   for (const color of ['white', 'black']) for (const mode of ['off', 'balanced', 'high']) {
     for (const afterScore of [50, 49]) {
       const start = new Chess(); if (color === 'black') start.move('e4');
@@ -316,12 +316,8 @@ test('current-position loss limit holds for both colors and all trickiness modes
           analyze: async (_w, fen, depth) => ({ score: (fen === start.fen() ? 100 : afterScore) * (color === 'white' ? 1 : -1), depth }),
         }));
       const parent = color === 'black' ? root.children[0] : root;
-      if (afterScore === 50) assert.ok(parent.children.length, `${color} ${mode}: exact boundary accepted`);
-      else {
-        assert.equal(parent.children.length, 0, `${color} ${mode}: fallback must not bypass limit`);
-        assert.match(parent.warning, /loss limit from the current evaluation/);
-        assert.equal(progress.outcome, 'partial');
-      }
+      assert.ok(parent.children.length, `${color} ${mode}: best continuation has zero deliberate sacrifice despite root drift`);
+
     }
   }
 });
@@ -658,7 +654,7 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
     const chosen = walk(root).find(node => node.fen === position.fen()).children[0];
     assert.equal(chosen.san, 'O-O');
     assert.equal(chosen.stockfish.depth, 25);
-    assert.match(chosen.reason, /Protecting an advantage/);
+    assert.match(chosen.reason, /best verified continuation|best verified candidate/);
   });
   test(`${generatorMode}: advantage protection uses Black's perspective`, async () => {
     const position = new Chess(); position.move('e4');
@@ -758,19 +754,19 @@ for (const color of ['white', 'black']) for (const shallowRejects of [false, tru
     assert.equal(parent.children[0].uci, uci(deep));
     assert.equal(parent.children[0].stockfish.depth, 25);
     assert.match(parent.children[0].reason, /depth-25 root analysis/);
-    assert.ok(logs.some(entry => /reference 0.90, candidate 0.20, loss 0.70, allowed 0.10/.test(entry.message)));
+    assert.ok(logs.some(entry => /best continuation 0.89, candidate 0.20, loss 0.69, allowed 0.11/.test(entry.message)));
   });
 }
 
-test('final-depth fallback does not bypass a genuine safety violation', async () => {
+test('a verified best move is not rejected solely because its independent root score was higher', async () => {
   const position = new Chess(), legal = position.moves({ verbose: true });
   const root = await buildTree(null, { ...defaults, sfDepth: 25, maxEvalLoss: .7, evaluationFloorEnabled: false },
     {}, { current: false }, dummyWorker, services({
       analyze: async (_w, fen, depth) => ({ depth, score: fen === position.fen() ? 90 : 20,
         bestMoveUci: fen === position.fen() ? uci(legal.at(-1)) : '' }),
     }));
-  assert.equal(root.children.length, 0);
-  assert.match(root.warning, /Reference 0.90, allowed loss 0.10/);
+  assert.equal(root.children.length, 1);
+  assert.match(root.children[0].reason, /loss 0.00 from best verified continuation/);
 });
 
 for (const generatorMode of ['opening-lab', 'legacy']) {
@@ -811,4 +807,73 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
 test('trusting supplied moves is opt-in and persists through normalization', () => {
   assert.equal(normalizeGeneratorSettings({ ...DEFAULT_GENERATOR_SETTINGS, trustSuppliedMoves: undefined }).trustSuppliedMoves, false);
   assert.equal(normalizeGeneratorSettings({ ...DEFAULT_GENERATOR_SETTINGS, trustSuppliedMoves: true }).trustSuppliedMoves, true);
+});
+
+for (const color of ['white', 'black']) {
+  test(`${color}: +0.95 root and +0.82 best child do not cause a false safety failure`, async () => {
+    const board = new Chess(); if (color === 'black') board.move('e4');
+    const legal = board.moves({ verbose: true }).slice(0, 3), sign = color === 'white' ? 1 : -1;
+    const fens = legal.map(move => { const child = new Chess(board.fen()); child.move(move); return child.fen(); });
+    const finalCalls = [];
+    const root = await buildTree(color === 'black' ? [['e4']] : null,
+      { ...defaults, color, sfDepth: 25, analysisMode: 'lichess+stockfish' }, {}, { current: false }, dummyWorker, {
+        ...services({
+          topMoves: async (_w, fen, depth, count) => (fen === board.fen() ? legal : new Chess(fen).moves({ verbose: true }))
+            .slice(0, count).map(move => ({ uci: uci(move), eval: 0, depth })),
+          analyze: async (_w, fen, depth) => ({ depth, score: sign * (fen === board.fen() ? 95 : [82, 65, 60][fens.indexOf(fen)] ?? 0), source: 'lichess-cloud' }),
+          replies: async fen => fen === board.fen() ? legal.map((move, index) => ({ uci: uci(move), san: move.san,
+            totalGames: 1000, playRate: 33, winRate: [40, 70, 90][index] })) : [],
+        }),
+        verify: async (_w, fen, depth) => {
+          finalCalls.push(fen);
+          return { depth, score: sign * (fen === board.fen() ? 95 : [82, 65, 60][fens.indexOf(fen)] ?? 0),
+            bestMoveUci: fen === board.fen() ? uci(legal[0]) : '', source: 'local' };
+        },
+      });
+    const parent = color === 'white' ? root : root.children[0];
+    assert.ok(parent.children.length, parent.warning);
+    assert.equal(parent.children[0].uci, uci(legal[1]), '0.17 loss fits the 0.18 cap; higher-win-rate 0.22 loss does not');
+    assert.equal(parent.children[0].stockfish.source, 'local');
+    assert.match(parent.children[0].reason, /loss 0.17 from best verified continuation \(0.82\)/);
+    assert.ok(finalCalls.includes(fens[0]) && finalCalls.includes(fens[2]));
+  });
+}
+
+test('final verification bypasses cloud hits and uses the local engine', async () => {
+  let calls = 0;
+  const gateway = createGeneratorCloudAnalysis(services({ analyze: async (_w, fen, depth) => {
+    calls++; return { fen, depth, score: 82, source: 'local' };
+  } }), async () => new Response(JSON.stringify({ depth: 38, pvs: [{ moves: 'e2e4', cp: 95 }] })));
+  assert.equal((await gateway.analyze(dummyWorker, new Chess().fen(), 25)).score, 95);
+  assert.equal((await gateway.verify(dummyWorker, new Chess().fen(), 25)).score, 82);
+  assert.equal(calls, 1);
+});
+
+test('timed-out position search retries once on the same worker and never downgrades depth', async () => {
+  const { analyzePositionWithRetry } = require('../src/engine/analyzer.ts');
+  const previousWindow = global.window, timers = [], handlers = new Set(), commands = [], warnings = [];
+  global.window = { setTimeout: (fn, ms) => { timers.push({ fn, ms }); return 0; } };
+  const worker = {
+    addEventListener: (kind, fn) => { if (kind === 'message') handlers.add(fn); },
+    removeEventListener: (_kind, fn) => handlers.delete(fn),
+    postMessage: command => commands.push(command),
+  };
+  const send = data => [...handlers].forEach(fn => fn({ data }));
+  try {
+    const pending = analyzePositionWithRetry(worker, new Chess().fen(), 25, undefined, message => warnings.push(message));
+    send('readyok'); send('info depth 24 score cp 82 pv e2e4');
+    timers[0].fn();
+    await new Promise(setImmediate);
+    assert.equal(timers[1].ms, 360000);
+    assert.equal(warnings.length, 1);
+    send('readyok'); send('info depth 25 score cp 82 pv e2e4'); send('bestmove e2e4');
+    assert.equal((await pending).depth, 25);
+    assert.equal(commands.filter(command => command === 'go depth 25').length, 2);
+    assert.equal(handlers.size, 0);
+    const failed = analyzePositionWithRetry(worker, new Chess().fen(), 25);
+    const rejection = assert.rejects(failed, /timed out/);
+    timers[2].fn(); await new Promise(setImmediate); timers[3].fn();
+    await rejection;
+    assert.equal(timers.length, 4, 'No unlimited retries');
+  } finally { global.window = previousWindow; }
 });

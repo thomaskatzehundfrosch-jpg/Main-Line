@@ -120,11 +120,26 @@ export function analyzePosition(
   });
 }
 
+/** Retry one timed-out search on the same worker, preserving its search hash. */
+export async function analyzePositionWithRetry(
+  worker: Worker, fen: string, depth: number, signal?: AbortSignal,
+  onRetry?: (message: string) => void,
+): Promise<PositionEval> {
+  try { return await analyzePositionWithStockfish(worker, fen, depth, signal); }
+  catch (error) {
+    if (signal?.aborted || !(error instanceof Error) || !error.message.startsWith('Stockfish position analysis timed out')) throw error;
+    const retryBudget = Math.min(360000, positionAnalysisTimeout(depth) * 2);
+    onRetry?.(`${error.message} Retrying once at the same depth with ${retryBudget / 1000}s, retaining the engine search hash.`);
+    return analyzePositionWithStockfish(worker, fen, depth, signal, retryBudget);
+  }
+}
+
 export function analyzePositionWithStockfish(
   worker: Worker,
   fen: string,
   depth: number,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  timeoutOverrideMs?: number
 ): Promise<PositionEval> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(new DOMException('Generation stopped', 'AbortError')); return; }
@@ -166,7 +181,7 @@ export function analyzePositionWithStockfish(
       rejectOnce(new Error(`Stockfish analysis worker crashed: ${event.message || 'Unknown worker error'}`));
     };
 
-    const timeoutMs = positionAnalysisTimeout(depth);
+    const timeoutMs = timeoutOverrideMs ?? positionAnalysisTimeout(depth);
     const timeoutId = window.setTimeout(() => {
       try {
         worker.postMessage('stop');

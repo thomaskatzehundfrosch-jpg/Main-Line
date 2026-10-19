@@ -70,6 +70,7 @@ export function createGeneratorCloudAnalysis(local: LocalEngine, fetcher: typeof
     }
   }
   return {
+    verify: local.analyze,
     async analyze(worker: Worker, fen: string, depth: number, signal?: AbortSignal): Promise<PositionEval> {
       const cloud = await query(fen, 1, depth, signal);
       if (signal?.aborted) throw abortError();

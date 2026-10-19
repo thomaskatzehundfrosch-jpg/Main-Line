@@ -12,7 +12,7 @@ import type {
 } from '../types/generator';
 import { STUDY_SIZES } from '../types/generator';
 import { buildSeedTree } from '../utils/generatorSeeds';
-import { createAnalysisWorker, analyzePositionWithStockfish, getTopMovesWithStockfish } from '../engine/analyzer';
+import { createAnalysisWorker, analyzePositionWithRetry, getTopMovesWithStockfish } from '../engine/analyzer';
 import { createRecyclingWorkerSession } from '../engine/recyclingWorker';
 import { createGeneratorCloudAnalysis } from '../engine/generatorCloudAnalysis';
 import { getMostLikelyMoves } from '../utils/lichessApi';
@@ -223,7 +223,9 @@ export function useGenerator(): UseGeneratorReturn {
         const search = createRecyclingWorkerSession(worker, () => createAnalysisWorker(1), next => { run.worker = next; }, controller.signal);
         const local = {
           analyze: (_worker: Worker, fen: string, depth: number, signal?: AbortSignal) =>
-            search(current => analyzePositionWithStockfish(current, fen, depth, signal)),
+            search(current => analyzePositionWithRetry(current, fen, depth, signal, message => {
+              if (isCurrent()) addLogEntry({ id: `retry_${Date.now()}`, timestamp: new Date().toLocaleTimeString(), level: 'warning', message, context: null });
+            })),
           topMoves: (_worker: Worker, fen: string, depth: number, count = 3, timeout = 90000, signal?: AbortSignal) =>
             search(current => getTopMovesWithStockfish(current, fen, depth, count, timeout, signal)),
         };

@@ -75,7 +75,7 @@ export async function buildTree(
   callbacks: GeneratorCallbacks,
   stop: { current: boolean; signal?: AbortSignal },
   worker: Worker | null,
-  services?: typeof dependencies,
+  services?: Omit<typeof dependencies, 'verify'> & { verify?: typeof localDependencies.analyze },
   resumeTree?: GeneratorNode,
 ): Promise<GeneratorNode> {
   if (input.generatorMode === 'legacy') return buildLegacyTree(seeds, input, callbacks, stop, worker, services ?? localDependencies, resumeTree);
@@ -116,14 +116,14 @@ export async function buildTree(
   const coverages: number[] = [];
   let explorerFailures = 0;
 
-  async function evaluate(fen: string, depth = searchDepth): Promise<{ score: number; depth: number; source?: 'lichess-cloud' | 'local'; bestMoveUci?: string }> {
+  async function evaluate(fen: string, depth = searchDepth, final = false): Promise<{ score: number; depth: number; source?: 'lichess-cloud' | 'local'; bestMoveUci?: string }> {
     check();
     const chess = new Chess(fen);
     if (chess.isCheckmate()) return { score: chess.turn() === 'w' ? -100 : 100, depth };
     if (chess.isGameOver()) return { score: 0, depth };
-    const key = JSON.stringify([fen, depth]);
+    const key = JSON.stringify([fen, depth, final && 'verify' in analysisServices]);
     if (!evalCache.has(key)) {
-      evalCache.set(key, analysisServices.analyze(worker!, fen, depth, signal).then(result => {
+      evalCache.set(key, (('verify' in analysisServices && final && analysisServices.verify) || analysisServices.analyze)(worker!, fen, depth, signal).then(result => {
         if (result.depth < depth || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
         return { score: result.score / 100, depth: result.depth, source: result.source ?? 'local' as const, bestMoveUci: result.bestMoveUci };
       }).catch(error => { evalCache.delete(key); throw error; }));
@@ -206,16 +206,8 @@ export async function buildTree(
       const winEvidence = (move: Candidate) => move.stats && move.stats.totalGames >= Math.max(100, settings.minGames)
         ? winLowerBound(move.stats.winRate / 100 * move.stats.totalGames, move.stats.totalGames) : 0;
       async function verifyWinner(ranked: Candidate[]): Promise<Candidate[]> {
-        const rootEvaluation = await evaluate(fen, settings.sfDepth);
-        const reference = scoreFor(rootEvaluation.score, settings.color);
-        const { maximum } = sacrificeLimits(reference, tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss);
-        const belowFloor = settings.evaluationFloorEnabled && reference < settings.evaluationFloor - 1e-8;
-        const protectAdvantage = reference >= 1;
-        // Include all discovered candidates: shallow screening and a minimum
-        // sacrifice must not hide the best conversion at full depth.
-        const order = [...(protectAdvantage ? checked : belowFloor ? [...ranked].sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color)) : ranked)];
-        // A best move discovered at final depth may be absent from the shallow
-        // shortlist, or have been removed by shallow safety screening.
+        const rootEvaluation = await evaluate(fen, settings.sfDepth, true);
+        const order = [...ranked, ...checked.filter(move => !ranked.some(other => other.uci === move.uci))];
         const deepUci = rootEvaluation.bestMoveUci;
         if (deepUci && !order.some(move => move.uci === deepUci)) {
           const board = new Chess(fen);
@@ -224,55 +216,51 @@ export async function buildTree(
             depth: rootEvaluation.depth, stats: popular.find(row => row.uci === deepUci),
             reason: `Best move from depth-${settings.sfDepth} root analysis; fallback after shallow candidate screening` });
         }
-        let bestConversion: Candidate | null = null;
-        let kingFallback: Candidate | null = null;
+        const verified: Candidate[] = [];
         for (const move of order) {
           check();
           try {
             progress(`Verifying ${move.san} at depth ${settings.sfDepth}…`);
-            const verified = await evaluate(move.fen, settings.sfDepth);
-            const objective = scoreFor(verified.score, settings.color);
-            if (reference - objective > maximum + 1e-8 ||
-                (settings.evaluationFloorEnabled && !belowFloor && objective < settings.evaluationFloor - 1e-8)) {
-              log('info', `${move.san} failed depth-${settings.sfDepth} safety limits: reference ${reference.toFixed(2)}, candidate ${objective.toFixed(2)}, loss ${(reference - objective).toFixed(2)}, allowed ${maximum.toFixed(2)}${settings.evaluationFloorEnabled && !belowFloor ? `, floor ${settings.evaluationFloor.toFixed(2)}` : ''} (all from your side); checking the next candidate.`);
-              continue;
-            }
-            const evidence = winEvidence(move);
-            const reason = protectAdvantage ? 'Protecting an advantage of at least +1: strongest full-depth verified candidate; practical bonuses disabled'
-              : belowFloor ? 'Below evaluation floor; objective continuation selected without a practical bonus'
-              : move.reason || 'Next ranked candidate after deeper verification';
-            const chosen = { ...move, ...verified, reason: `${reason}; verified at depth ${verified.depth} (${verified.source === 'lichess-cloud' ? 'Lichess cloud; engine version unspecified' : 'local Stockfish 19 Full'})${evidence > 0 ? `; ${move.stats!.winRate.toFixed(1)}% recorded wins in ${move.stats!.totalGames} games (95% lower bound ${(evidence * 100).toFixed(1)}%)` : ''}` };
-            if (protectAdvantage) {
-              if (!bestConversion || objective > scoreFor(bestConversion.score, settings.color)) bestConversion = chosen;
-              continue;
-            }
-            if (!belowFloor && !kingFallback && abandonsCastling(fen, chosen)) {
-              kingFallback = chosen;
-              continue;
-            }
-            if (kingFallback) {
-              if (!preservesCastling(fen, chosen) || objective + CASTLING_PREFERENCE_MARGIN + 1e-8 < scoreFor(kingFallback.score, settings.color)) continue;
-              chosen.reason += '; preserves castling options or castles instead of an uncastled king move (within 0.30 pawns at verified depth)';
-            }
-            choiceCache.set(key, [chosen]);
-            return [chosen];
+            const result = await evaluate(move.fen, settings.sfDepth, true);
+            verified.push({ ...move, ...result });
           } catch (error) {
             check();
             log('warning', `Could not verify ${move.san} at depth ${settings.sfDepth}: ${error instanceof Error ? error.message : String(error)}; checking the next candidate.`);
           }
         }
-        if (bestConversion) {
-          choiceCache.set(key, [bestConversion]);
-          return [bestConversion];
+        if (!verified.length) throw new Error(`No candidate could be verified at depth ${settings.sfDepth}; continuation remains unfinished.`);
+        if (deepUci && !verified.some(move => move.uci === deepUci)) throw new Error(`The depth-${settings.sfDepth} best continuation could not be verified; continuation remains unfinished.`);
+        // Compare like with like: equally deep evaluations of continuations,
+        // not an independent (possibly cloud) evaluation before the move.
+        const best = verified.reduce((a, b) => scoreFor(b.score, settings.color) > scoreFor(a.score, settings.color) ? b : a);
+        const reference = scoreFor(best.score, settings.color);
+        const { maximum } = sacrificeLimits(reference, tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss);
+        const belowFloor = settings.evaluationFloorEnabled && scoreFor(rootEvaluation.score, settings.color) < settings.evaluationFloor - 1e-8;
+        const protectAdvantage = reference >= 1;
+        const sound = verified.filter(move => {
+          const objective = scoreFor(move.score, settings.color);
+          const acceptable = reference - objective <= maximum + 1e-8 &&
+            (!settings.evaluationFloorEnabled || belowFloor || objective >= settings.evaluationFloor - 1e-8);
+          if (!acceptable) log('info', `${move.san} failed depth-${settings.sfDepth} safety limits: best continuation ${reference.toFixed(2)}, candidate ${objective.toFixed(2)}, loss ${(reference - objective).toFixed(2)}, allowed ${maximum.toFixed(2)} (all from your side).`);
+          return acceptable;
+        });
+        if (!sound.length) throw new Error(`No verified continuation meets the evaluation floor ${settings.evaluationFloor.toFixed(2)}; best continuation ${reference.toFixed(2)} (from your side).`);
+        let chosen = protectAdvantage || belowFloor ? best : sound[0];
+        if (!protectAdvantage && !belowFloor && abandonsCastling(fen, chosen)) {
+          const alternative = sound.find(move => preservesCastling(fen, move) &&
+            scoreFor(move.score, settings.color) + CASTLING_PREFERENCE_MARGIN + 1e-8 >= scoreFor(chosen.score, settings.color));
+          if (alternative) chosen = { ...alternative, reason: 'Preserves castling options or castles instead of an uncastled king move (within 0.30 pawns at verified depth)' };
         }
-        if (kingFallback) {
-          choiceCache.set(key, [kingFallback]);
-          return [kingFallback];
-        }
-        throw new Error(`No candidate passed depth-${settings.sfDepth} verification within the loss limit from the current evaluation and evaluation floor limits. Reference ${reference.toFixed(2)}, allowed loss ${maximum.toFixed(2)}${settings.evaluationFloorEnabled ? `, floor ${settings.evaluationFloor.toFixed(2)}` : ''} (from your side).`);
+        const reason = protectAdvantage ? 'Protecting an advantage of at least +1: strongest full-depth verified candidate; practical bonuses disabled'
+          : belowFloor ? 'Below evaluation floor; strongest verified continuation without a practical bonus'
+          : chosen.reason || 'Next ranked candidate after deeper verification';
+        const evidence = winEvidence(chosen);
+        chosen = { ...chosen, reason: `${reason}; verified at depth ${chosen.depth} (${chosen.source === 'lichess-cloud' ? 'Lichess cloud; engine version unspecified' : 'local Stockfish 19 Full'}); loss ${(reference - scoreFor(chosen.score, settings.color)).toFixed(2)} from best verified continuation (${reference.toFixed(2)})${evidence > 0 ? `; ${chosen.stats!.winRate.toFixed(1)}% recorded wins in ${chosen.stats!.totalGames} games (95% lower bound ${(evidence * 100).toFixed(1)}%)` : ''}` };
+        choiceCache.set(key, [chosen]);
+        return [chosen];
       }
-      const current = scoreFor((await evaluate(fen)).score, settings.color);
-      if (scoreFor((await evaluate(fen, settings.sfDepth)).score, settings.color) >= 1) return verifyWinner(checked);
+      const current = Math.max(...checked.map(move => scoreFor(move.score, settings.color)));
+      if (current >= 1) return verifyWinner(checked);
       const { maximum: maximumLoss, minimum: minimumLoss } = sacrificeLimits(current,
         tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss, tricky ? settings.trickinessMinLoss : 0);
       let permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
