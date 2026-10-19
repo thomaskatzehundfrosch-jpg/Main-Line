@@ -170,14 +170,14 @@ export const App: React.FC = () => {
     deleteNode,
   } = useRepertoireTree();
 
-  const engine = useEngine();
+  const generator = useGenerator();
+  const engine = useEngine(generator.isGenerating);
   const engineRef = useRef<EngineSnapshot | null>(null);
   engineRef.current = engine;
   const pgnParser = usePgnParser();
   const games = useGames();
   const { files, activeFileId, getActiveFile, updateFileGames, setActive, syncNow, isSyncing } = useFiles();
   const repertoireEval = useRepertoireEval();
-  const generator = useGenerator();
   const { settings, updateSetting } = useSettings();
 
   // ─── Folder ↔ Games bidirectional sync ────────────────────────────────

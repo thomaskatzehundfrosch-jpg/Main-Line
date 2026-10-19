@@ -173,7 +173,7 @@ export function useGenerator(): UseGeneratorReturn {
   }, []);
 
   const addLogEntry = useCallback((entry: GeneratorLogEntry) => {
-    setErrorLog((prev) => [...prev, entry]);
+    setErrorLog((prev) => [...prev.slice(-499), entry]);
   }, []);
 
   const startGeneration = useCallback(

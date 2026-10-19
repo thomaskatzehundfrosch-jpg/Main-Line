@@ -501,6 +501,7 @@ function initializeAnalysisWorker(worker: Worker, numThreads: number): Promise<W
       if (phase === 'boot' && (e.data === 'uciok' || e.data === 'readyok')) {
         phase = 'configure';
         worker.postMessage(`setoption name Threads value ${numThreads}`);
+        worker.postMessage('setoption name Hash value 32');
         worker.postMessage('isready');
         return;
       }

@@ -27,13 +27,15 @@ async function createStockfishWorker(): Promise<Worker> {
  *
  * On worker crash, the hook automatically recreates the worker.
  */
-export function useEngine() {
+export function useEngine(suspended = false) {
   const { state, dispatch } = useEngineContext();
   const workerRef = useRef<Worker | null>(null);
   const currentAnalysisRef = useRef<string>('');
   const linesBufferRef = useRef<Map<number, EngineLine>>(new Map());
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const initRef = useRef(false);
+  const workerEpochRef = useRef(0);
+  const suspendedRef = useRef(suspended);
+  suspendedRef.current = suspended;
   const analysisSeqRef = useRef(0);
   const acceptingResultsRef = useRef(false);
 
@@ -52,7 +54,7 @@ export function useEngine() {
 
   // Keep refs in sync with React state on every render.
   depthRef.current = state.depth;
-  enabledRef.current = state.enabled;
+  enabledRef.current = state.enabled && !suspended;
   multiPVRef.current = state.multiPV;
   threadsRef.current = state.threads;
 
@@ -148,6 +150,7 @@ export function useEngine() {
         needsOptionsRef.current = false;
         sendCommand(`setoption name MultiPV value ${multiPVRef.current}`);
         sendCommand(`setoption name Threads value ${threadsRef.current}`);
+        sendCommand('setoption name Hash value 32');
         sendCommand('isready');
         return;
       }
@@ -224,9 +227,12 @@ export function useEngine() {
         dispatch({ type: 'SET_WORKER_READY', ready: false });
 
         // Re-create after a short cooldown
+        const epoch = workerEpochRef.current;
         setTimeout(() => {
+          if (epoch !== workerEpochRef.current || suspendedRef.current) return;
           createStockfishWorker()
             .then((newWorker) => {
+              if (epoch !== workerEpochRef.current || suspendedRef.current) { newWorker.terminate(); return; }
               workerRef.current = newWorker;
               needsOptionsRef.current = true;
               pendingFenRef.current = null;
@@ -250,12 +256,14 @@ export function useEngine() {
     };
   };
 
-  // Initialize worker (runs once)
+  // Release the full engine while batch generation owns its dedicated worker.
   useEffect(() => {
-    if (initRef.current) return;
-    initRef.current = true;
-
+    const epoch = ++workerEpochRef.current;
+    if (suspended) return;
+    needsOptionsRef.current = true;
+    isRecreatingRef.current = false;
     createStockfishWorker().then((worker) => {
+      if (epoch !== workerEpochRef.current || suspendedRef.current) { worker.terminate(); return; }
       workerRef.current = worker;
       setupWorkerRef.current(worker);
 
@@ -270,13 +278,20 @@ export function useEngine() {
     });
 
     return () => {
+      workerEpochRef.current++;
+      analysisSeqRef.current++;
+      acceptingResultsRef.current = false;
+      pendingFenRef.current = null;
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      dispatch({ type: 'SET_WORKER_READY', ready: false });
+      dispatch({ type: 'SET_THINKING', isThinking: false });
       if (workerRef.current) {
         workerRef.current.postMessage('quit');
         workerRef.current.terminate();
         workerRef.current = null;
       }
     };
-  }, []);
+  }, [suspended, dispatch]);
 
   // Keep onmessage in sync when handleEngineMessage is recreated
   useEffect(() => {
@@ -298,7 +313,7 @@ export function useEngine() {
    */
   const analyze = useCallback(
     (fen: string) => {
-      if (!state.enabled || !workerRef.current) return;
+      if (!enabledRef.current || !workerRef.current) return;
       const seq = ++analysisSeqRef.current;
       // Invalidate the previous search before debounce or cloud network work.
       acceptingResultsRef.current = false;

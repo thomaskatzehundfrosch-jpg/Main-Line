@@ -5,12 +5,13 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const { Chess } = require('chess.js');
 
-function harness(cloud = null) {
+function harness(cloud = null, suspended = false) {
   const effects = [], timers = [], actions = [], commands = [];
   const state = { enabled: true, depth: 20, multiPV: 3, threads: 1 };
-  const worker = { postMessage: (c) => commands.push(c), terminate() {} };
+  let created = 0, terminated = 0;
+  const worker = { postMessage: (c) => commands.push(c), terminate() { terminated++; } };
   const context = { exports: {}, console, navigator: { hardwareConcurrency: 1 },
-    Worker: function () { return worker; },
+    Worker: function () { created++; return worker; },
     setTimeout: (fn) => { timers.push(fn); return timers.length; }, clearTimeout() {},
     require: (name) => {
       if (name === 'react') return { useRef: (current) => ({ current }), useCallback: (fn) => fn, useEffect: (fn) => effects.push(fn) };
@@ -22,9 +23,9 @@ function harness(cloud = null) {
     } };
   const source = fs.readFileSync(require('node:path').join(__dirname, '../src/hooks/useEngine.ts'), 'utf8');
   vm.runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, context);
-  const engine = context.exports.useEngine();
-  effects.forEach((fn) => fn());
-  return { engine, worker, actions, commands, timers };
+  const engine = context.exports.useEngine(suspended);
+  const cleanups = effects.map((fn) => fn());
+  return { engine, worker, actions, commands, timers, cleanups, counts: () => ({ created, terminated }) };
 }
 const tick = () => new Promise(setImmediate);
 const info = (pv) => `info depth 15 multipv 1 score cp 20 pv ${pv}`;
@@ -59,4 +60,21 @@ test('invalid cloud PV falls back to local search without destination-square not
   assert.equal(h.actions.some((a) => a.type === 'SET_LINES'), false);
   h.worker.onmessage({ data: 'readyok' });
   assert.ok(h.commands.includes('go depth 20'));
+});
+
+
+test('batch generation suspends the interactive engine without allocating another worker', async () => {
+  const h = harness(null, true); await tick();
+  assert.equal(h.counts().created, 0);
+  h.engine.analyze(new Chess().fen());
+  assert.equal(h.commands.length, 0);
+});
+
+test('disposing before asynchronous initialization completes terminates the late worker', async () => {
+  const h = harness();
+  h.cleanups.filter(fn => typeof fn === 'function').forEach(fn => fn());
+  await tick();
+  assert.equal(h.counts().created, 1);
+  assert.equal(h.counts().terminated, 1);
+  assert.ok(!h.commands.includes('uci'), 'Late worker never starts its handshake');
 });
