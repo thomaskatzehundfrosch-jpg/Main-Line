@@ -187,6 +187,12 @@ export async function buildTree(
         if (!permitted.length) throw new Error(`No verified candidate meets your evaluation floor (${settings.evaluationFloor.toFixed(2)} from your side) within the per-move loss limit.`);
       }
       const best = Math.max(...permitted.map(move => scoreFor(move.score, settings.color)));
+      if (current >= 1) {
+        const chosen = permitted.reduce((a, b) => scoreFor(b.score, settings.color) > scoreFor(a.score, settings.color) ? b : a);
+        chosen.reason = 'Protecting an advantage of at least +1: strongest full-depth verified candidate; practical bonuses disabled';
+        choiceCache.set(key, [chosen]);
+        return [chosen];
+      }
       const preferCastlingRights = (chosen: Candidate) => {
         if (!abandonsCastling(fen, chosen)) return chosen;
         const alternative = permitted.filter(move => preservesCastling(fen, move)

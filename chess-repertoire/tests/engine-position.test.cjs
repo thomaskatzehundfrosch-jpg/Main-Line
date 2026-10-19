@@ -111,3 +111,15 @@ test('disposing before asynchronous initialization completes terminates the late
   assert.equal(h.counts().terminated, 1);
   assert.ok(!h.commands.includes('uci'), 'Late worker never starts its handshake');
 });
+
+test('local board evaluation starts even if cloud lookup would never resolve', async () => {
+  const h = harness(new Promise(() => {})); await tick();
+  h.worker.onmessage({ data: 'readyok' });
+  h.worker.onmessage({ data: 'readyok' });
+  h.engine.analyze(new Chess().fen());
+  await h.timers.at(-1)();
+  h.worker.onmessage({ data: 'readyok' });
+  assert.ok(h.commands.includes('go depth 20'));
+  h.worker.onmessage({ data: info('e2e4 e7e5') });
+  assert.equal(h.actions.findLast(action => action.type === 'SET_LINES').lines[0].pv[0], 'e4');
+});

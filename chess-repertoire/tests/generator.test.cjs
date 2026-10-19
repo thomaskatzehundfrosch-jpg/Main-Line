@@ -635,3 +635,46 @@ test('castling preference distinguishes king moves, castling, lost rights and bl
     }
   }
 });
+
+for (const generatorMode of ['opening-lab', 'legacy']) {
+  test(`${generatorMode}: Evans Gambit advantage overrides popular recapture and minimum sacrifice`, async () => {
+    const seed = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'b4', 'Bxb4', 'c3', 'Bd6', 'd4', 'exd4'];
+    const position = new Chess(); seed.forEach(move => position.move(move));
+    const castle = new Chess(position.fen()); castle.move('O-O');
+    const capture = new Chess(position.fen()); capture.move('cxd4');
+    const root = await buildTree([seed], { ...defaults, generatorMode, analysisMode: 'lichess+stockfish',
+      maxMoveNumber: 7, sfDepth: 25, trickiness: 'high', trickinessMinLoss: .4, trickinessMaxLoss: 1,
+    }, {}, { current: false }, dummyWorker, services({
+      topMoves: async (_w, fen, depth, count) => fen === position.fen()
+        ? [{ uci: 'e1g1', eval: .99, depth }, { uci: 'c3d4', eval: .33, depth }]
+        : new Chess(fen).moves({ verbose: true }).slice(0, count).map(move => ({ uci: uci(move), eval: 0, depth })),
+      analyze: async (_w, fen, depth) => ({ depth, score: fen === position.fen() ? 112
+        : fen === castle.fen() ? (depth === 25 ? 99 : 20) : fen === capture.fen() ? 33 : 0 }),
+      replies: async fen => fen === position.fen() ? [
+        { uci: 'c3d4', san: 'cxd4', totalGames: 3000, playRate: 60, winRate: 70 },
+        { uci: 'e1g1', san: 'O-O', totalGames: 2000, playRate: 40, winRate: 64 },
+      ] : [],
+    }));
+    const chosen = walk(root).find(node => node.fen === position.fen()).children[0];
+    assert.equal(chosen.san, 'O-O');
+    assert.equal(chosen.stockfish.depth, 25);
+    assert.match(chosen.reason, /Protecting an advantage/);
+  });
+  test(`${generatorMode}: advantage protection uses Black's perspective`, async () => {
+    const position = new Chess(); position.move('e4');
+    const best = new Chess(position.fen()); best.move('e5');
+    const practical = new Chess(position.fen()); practical.move('c5');
+    const root = await buildTree([['e4']], { ...defaults, generatorMode, color: 'black',
+      analysisMode: 'lichess+stockfish', sfDepth: 25, maxEvalLoss: 1,
+    }, {}, { current: false }, dummyWorker, services({
+      topMoves: async (_w, _fen, depth) => [{ uci: 'e7e5', eval: -1.25, depth }, { uci: 'c7c5', eval: -.4, depth }],
+      analyze: async (_w, fen, depth) => ({ depth, score: fen === position.fen() ? -130 : fen === best.fen() ? -125 : -40 }),
+      replies: async fen => fen === position.fen() ? [
+        { uci: 'c7c5', san: 'c5', totalGames: 3000, playRate: 90, winRate: 70 },
+        { uci: 'e7e5', san: 'e5', totalGames: 1000, playRate: 10, winRate: 60 },
+      ] : [],
+    }));
+    assert.equal(root.children[0].children[0].san, 'e5');
+    assert.match(root.children[0].children[0].reason, /Protecting an advantage/);
+  });
+}

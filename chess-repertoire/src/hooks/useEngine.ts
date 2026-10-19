@@ -4,7 +4,6 @@ import { useEngineContext } from '../context/EngineContext';
 import type { EngineLine } from '../types';
 import { Chess } from 'chess.js';
 import { logger } from '../utils/errorLogger';
-import { getCloudEval } from '../utils/lichessApi';
 
 /**
  * Create a Stockfish worker.
@@ -171,38 +170,6 @@ export function useEngine(suspended = false) {
     }
   }, [dispatch, sendCommand, uciToSan]);
 
-  const getCloudLines = useCallback(async (fen: string): Promise<EngineLine[] | null> => {
-    const cloudEval = await getCloudEval(fen, multiPVRef.current);
-    if (!cloudEval || !Array.isArray(cloudEval.pvs) || cloudEval.pvs.length === 0) {
-      return null;
-    }
-
-    const lines = cloudEval.pvs.slice(0, multiPVRef.current).map((pv, index) => {
-      const pvUci = pv.moves.trim().split(/\s+/).filter(Boolean);
-      const pvSan = uciToSan(fen, pvUci);
-      let score = 0;
-      let mate: number | null = null;
-
-      if (typeof pv.cp === 'number') {
-        score = pv.cp;
-      } else if (typeof pv.mate === 'number') {
-        mate = pv.mate;
-      }
-
-      return {
-        depth: cloudEval.depth,
-        score,
-        mate,
-        pv: pvSan,
-        pvUci: pvUci.slice(0, pvSan.length),
-        multipv: index + 1,
-      };
-    });
-
-    // A mismatched cloud response must fall back to local analysis.
-    return lines.length > 0 && lines.every((line) => line.pv.length > 0) ? lines : null;
-  }, [uciToSan]);
-
   // ─── Worker setup helper (stored as ref so the error handler can call it
   //     to re-initialise a fresh worker without stale-closure issues) ────────
   const setupWorkerRef = useRef<(worker: Worker) => void>(() => {});
@@ -337,17 +304,8 @@ export function useEngine(suspended = false) {
         dispatch({ type: 'SET_THINKING', isThinking: true });
         dispatch({ type: 'SET_CURRENT_FEN', fen });
 
-        const cloudLines = await getCloudLines(fen);
-        if (seq !== analysisSeqRef.current || !enabledRef.current) return;
-
-        if (cloudLines) {
-          dispatch({ type: 'SET_LINES', lines: cloudLines });
-          dispatch({ type: 'SET_THINKING', isThinking: false });
-          currentAnalysisRef.current = fen;
-          return;
-        }
-
-        if (!workerRef.current) return;
+        // Board evaluation starts locally without waiting for a network lookup.
+        if (seq !== analysisSeqRef.current || !enabledRef.current || !workerRef.current) return;
 
         // Queue the FEN for the readyok handler
         pendingFenRef.current = fen;
@@ -360,7 +318,7 @@ export function useEngine(suspended = false) {
         // → readyok handler will send  position fen … → go depth …
       }, 150);
     },
-    [state.enabled, sendCommand, dispatch, getCloudLines]
+    [state.enabled, sendCommand, dispatch]
   );
 
   /**

@@ -137,7 +137,7 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
               <input className={inputClass} type="number" min="0" max="5" step="0.1" value={settings.trickinessMaxLoss} onChange={e => update('trickinessMaxLoss', e.target.valueAsNumber)} />
             </label>
           </div>
-          <p className="text-[11px] text-text-muted">Search this loss interval relative to the position evaluation before your move, from your side’s perspective. Reversed bounds are sorted. Replaces the normal allowed-loss setting while enabled. If no candidate offers a supported practical improvement, keep the best move within the maximum loss. If none meets that limit, leave the continuation unfinished. Uses your opponent profile; small samples count less. Examining replies makes generation slower. Opening Lab Gen checks up to six contenders and three replies each; unchecked replies remain unknown.</p>
+          <p className="text-[11px] text-text-muted">Search this loss interval relative to the position evaluation before your move, from your side’s perspective. At +1 or better, protect the advantage: choose the strongest full-depth verified candidate, ignoring minimum sacrifice and practical bonuses. Reversed bounds are sorted. Replaces the normal allowed-loss setting while enabled. If no candidate offers a supported practical improvement, keep the best move within the maximum loss. If none meets that limit, leave the continuation unfinished. Uses your opponent profile; small samples count less. Examining replies makes generation slower. Opening Lab Gen checks up to six contenders and three replies each; unchecked replies remain unknown.</p>
         </>}
       </div>}
       <div className="space-y-2">
