@@ -1,3 +1,4 @@
+import { STOCKFISH_WORKER_URL } from '../engine/stockfishConfig.js';
 import { useEffect, useRef, useCallback } from 'react';
 import { useEngineContext } from '../context/EngineContext';
 import type { EngineLine } from '../types';
@@ -7,12 +8,12 @@ import { getCloudEval } from '../utils/lichessApi';
 
 /**
  * Create a Stockfish worker.
- * First tries loading the real Stockfish WASM engine from /stockfish/stockfish-19-lite-single.js
+ * First tries loading the real Stockfish WASM engine from /stockfish/stockfish-19-single.js
  * (classic worker). If that file doesn't exist, falls back to the simulation
  * module worker.
  */
 async function createStockfishWorker(): Promise<Worker> {
-  return new Worker('/stockfish/stockfish-19-lite-single.js?v=19.0.1');
+  return new Worker(STOCKFISH_WORKER_URL);
 }
 
 /**
@@ -34,6 +35,7 @@ export function useEngine() {
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initRef = useRef(false);
   const analysisSeqRef = useRef(0);
+  const acceptingResultsRef = useRef(false);
 
   // ─── Engine state-machine refs ──────────────────────────────────────
   // Whether the very first UCI handshake + setoption round has finished.
@@ -91,6 +93,7 @@ export function useEngine() {
    */
   const handleEngineMessage = useCallback((message: string) => {
     if (message.startsWith('info') && message.includes('score') && message.includes(' pv ')) {
+      if (!acceptingResultsRef.current || !enabledRef.current) return;
       const depthMatch = message.match(/depth (\d+)/);
       const scoreMatch = message.match(/score (cp|mate) (-?\d+)/);
       const pvMatch = message.match(/ pv ([a-h].+)/);
@@ -104,15 +107,9 @@ export function useEngine() {
         const multipv = multipvMatch ? parseInt(multipvMatch[1], 10) : 1;
 
         const fen = currentAnalysisRef.current;
-        let pvSan = uciToSan(fen, pvUci);
-
-        // Fallback: if SAN conversion fails, show just the destination square
-        if (pvSan.length === 0 && pvUci.length > 0) {
-          pvSan = pvUci.map((uci) => {
-            const to = uci.substring(2, 4);
-            return to;
-          });
-        }
+        const pvSan = uciToSan(fen, pvUci);
+        // Never turn an illegal/stale move into a plausible destination square.
+        if (pvSan.length === 0) return;
 
         // Stockfish reports scores from the side-to-move's perspective.
         // Normalize to always be from White's perspective.
@@ -124,7 +121,7 @@ export function useEngine() {
           score: scoreType === 'cp' ? scoreValue * sign : 0,
           mate: scoreType === 'mate' ? scoreValue * sign : null,
           pv: pvSan,
-          pvUci,
+          pvUci: pvUci.slice(0, pvSan.length),
           multipv,
         };
 
@@ -139,7 +136,9 @@ export function useEngine() {
         dispatch({ type: 'SET_THINKING', isThinking: true });
       }
     } else if (message.startsWith('bestmove')) {
-      dispatch({ type: 'SET_THINKING', isThinking: false });
+      if (acceptingResultsRef.current) {
+        dispatch({ type: 'SET_THINKING', isThinking: false });
+      }
     } else if (message === 'uciok') {
       // Engine acknowledged UCI mode — ask if it's ready
       sendCommand('isready');
@@ -161,6 +160,7 @@ export function useEngine() {
       if (fen && enabledRef.current) {
         pendingFenRef.current = null;
         currentAnalysisRef.current = fen;
+        acceptingResultsRef.current = true;
         dispatch({ type: 'SET_CURRENT_FEN', fen });
         sendCommand(`position fen ${fen}`);
         sendCommand(`go depth ${depthRef.current}`);
@@ -190,13 +190,14 @@ export function useEngine() {
         depth: cloudEval.depth,
         score,
         mate,
-        pv: pvSan.length > 0 ? pvSan : pvUci.map((uci) => uci.substring(2, 4)),
-        pvUci,
+        pv: pvSan,
+        pvUci: pvUci.slice(0, pvSan.length),
         multipv: index + 1,
       };
     });
 
-    return lines.length > 0 ? lines : null;
+    // A mismatched cloud response must fall back to local analysis.
+    return lines.length > 0 && lines.every((line) => line.pv.length > 0) ? lines : null;
   }, [uciToSan]);
 
   // ─── Worker setup helper (stored as ref so the error handler can call it
@@ -299,6 +300,13 @@ export function useEngine() {
     (fen: string) => {
       if (!state.enabled || !workerRef.current) return;
       const seq = ++analysisSeqRef.current;
+      // Invalidate the previous search before debounce or cloud network work.
+      acceptingResultsRef.current = false;
+      pendingFenRef.current = null;
+      sendCommand('stop');
+      linesBufferRef.current.clear();
+      dispatch({ type: 'CLEAR_LINES' });
+      dispatch({ type: 'SET_CURRENT_FEN', fen });
 
       // Debounce rapid position changes
       if (debounceTimerRef.current) {
@@ -306,7 +314,7 @@ export function useEngine() {
       }
 
       debounceTimerRef.current = setTimeout(async () => {
-        if (!workerRef.current) return;
+        if (!workerRef.current || seq !== analysisSeqRef.current || !enabledRef.current) return;
 
         // Clear previous results in the UI
         linesBufferRef.current.clear();
@@ -345,6 +353,8 @@ export function useEngine() {
    */
   const stopAnalysis = useCallback(() => {
     analysisSeqRef.current++;
+    acceptingResultsRef.current = false;
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     pendingFenRef.current = null;
     sendCommand('stop');
     dispatch({ type: 'SET_THINKING', isThinking: false });
@@ -358,6 +368,8 @@ export function useEngine() {
     dispatch({ type: 'SET_ENABLED', enabled: newEnabled });
     if (!newEnabled) {
       analysisSeqRef.current++;
+      acceptingResultsRef.current = false;
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       pendingFenRef.current = null;
       sendCommand('stop');
       dispatch({ type: 'CLEAR_LINES' });
@@ -384,6 +396,7 @@ export function useEngine() {
       dispatch({ type: 'SET_MULTIPV', multiPV: clamped });
 
       // Safely update the option and re-analyse via readyok protocol
+      acceptingResultsRef.current = false;
       sendCommand('stop');
       sendCommand(`setoption name MultiPV value ${clamped}`);
 
@@ -410,6 +423,7 @@ export function useEngine() {
       dispatch({ type: 'SET_THREADS', threads: clamped });
 
       // Safely update the option and re-analyse via readyok protocol
+      acceptingResultsRef.current = false;
       sendCommand('stop');
       sendCommand(`setoption name Threads value ${clamped}`);
 
