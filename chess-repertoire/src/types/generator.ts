@@ -9,6 +9,8 @@ export interface GeneratorSettings {
   maxMoveNumber: number;
   /** Revisit existing opponent positions from this full move number; omitted extends leaves only. */
   fillBranchesFromMove?: number;
+  /** Preserve supplied moves without auditing their engine quality. New moves are verified. */
+  trustSuppliedMoves: boolean;
   studySize: StudySize;
   /** Final verification depth. Opening Lab Gen compares candidates at min(18, sfDepth). */
   sfDepth: number;
@@ -40,6 +42,7 @@ export const STUDY_SIZES = {
 
 export const DEFAULT_GENERATOR_SETTINGS: GeneratorSettings = {
   generatorMode: 'opening-lab',
+  trustSuppliedMoves: false,
   color: 'white', analysisMode: 'lichess+stockfish', maxMoveNumber: 15,
   studySize: 'standard', sfDepth: 25, maxEvalLoss: 0.7,
   tacticalExtension: 2, avoidQueenTrades: false,
@@ -59,6 +62,7 @@ export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorS
   return {
     ...input,
     generatorMode: input.generatorMode === 'legacy' ? 'legacy' : 'opening-lab',
+    trustSuppliedMoves: input.trustSuppliedMoves === true,
     color: input.color === 'black' ? 'black' : 'white',
     analysisMode: input.analysisMode === 'stockfish' ? 'stockfish' : 'lichess+stockfish',
     studySize: input.studySize in STUDY_SIZES ? input.studySize : 'standard',

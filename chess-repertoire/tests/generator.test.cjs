@@ -772,3 +772,43 @@ test('final-depth fallback does not bypass a genuine safety violation', async ()
   assert.equal(root.children.length, 0);
   assert.match(root.warning, /Reference 0.90, allowed loss 0.10/);
 });
+
+for (const generatorMode of ['opening-lab', 'legacy']) {
+  test(`${generatorMode}: trusted PGN skips seed audits but verifies new leaf continuations`, async () => {
+    const seed = ['e4', 'e5'], position = new Chess(); seed.forEach(move => position.move(move));
+    const analyses = [], searches = [];
+    const original = services();
+    const root = await buildTree([seed], { ...defaults, generatorMode, trustSuppliedMoves: true, maxMoveNumber: 2 },
+      {}, { current: false }, dummyWorker, services({
+        analyze: async (worker, fen, depth) => { analyses.push(fen); return original.analyze(worker, fen, depth); },
+        topMoves: async (worker, fen, depth, count) => { searches.push(fen); return original.topMoves(worker, fen, depth, count); },
+      }));
+    assert.ok(searches.includes(position.fen()), 'Starts analysis at the leaf');
+    assert.ok(!analyses.includes(new Chess().fen()), 'Does not audit the starting position');
+    const afterE4 = new Chess(); afterE4.move('e4');
+    assert.ok(!analyses.includes(afterE4.fen()), 'Does not audit earlier supplied moves');
+    assert.match(root.children[0].reason, /User-supplied, unverified/);
+    assert.equal(root.children[0].stockfish, null);
+    assert.ok(walk(root).some(node => !node.isSeed && node.stockfish?.depth >= defaults.sfDepth), 'New moves have verified evaluations');
+  });
+  test(`${generatorMode}: trusting a PGN still completes missing opponent replies`, async () => {
+    const afterE4 = new Chess(); afterE4.move('e4');
+    const suppliedLeaf = new Chess(afterE4.fen()); suppliedLeaf.move('e5');
+    const analysis = [];
+    const original = services();
+    const root = await buildTree([['e4', 'e5']], { ...defaults, generatorMode, trustSuppliedMoves: true,
+      fillBranchesFromMove: 1, maxMoveNumber: 1 }, {}, { current: false }, dummyWorker, services({
+      topMoves: async (_w, _fen, depth) => [{ uci: 'e7e5', eval: 0, depth }, { uci: 'c7c5', eval: 0, depth }],
+      analyze: async (worker, fen, depth) => { analysis.push(fen); return original.analyze(worker, fen, depth); },
+    }));
+    assert.deepEqual(new Set(root.children[0].children.map(node => node.san)), new Set(['e5', 'c5']));
+    assert.ok(!analysis.includes(suppliedLeaf.fen()), 'Existing supplied reply is not reevaluated');
+    assert.equal(root.children[0].children.find(node => node.san === 'e5').stockfish, null);
+    assert.ok(root.children[0].children.find(node => node.san === 'c5').stockfish.depth >= defaults.sfDepth);
+  });
+}
+
+test('trusting supplied moves is opt-in and persists through normalization', () => {
+  assert.equal(normalizeGeneratorSettings({ ...DEFAULT_GENERATOR_SETTINGS, trustSuppliedMoves: undefined }).trustSuppliedMoves, false);
+  assert.equal(normalizeGeneratorSettings({ ...DEFAULT_GENERATOR_SETTINGS, trustSuppliedMoves: true }).trustSuppliedMoves, true);
+});

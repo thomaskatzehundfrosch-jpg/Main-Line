@@ -402,6 +402,15 @@ export async function buildTree(
     }
     const result: Candidate[] = [];
     for (const move of selected) {
+      const existing = settings.trustSuppliedMoves ? node.children.find(child => child.uci === move.uci) : undefined;
+      if (existing) {
+        // Existing replies count toward coverage but do not need a fresh audit.
+        result.push({ san: existing.san!, uci: existing.uci, fen: existing.fen,
+          score: existing.stockfish?.eval ?? 0, depth: existing.stockfish?.depth ?? 0,
+          stats: popular.find(reply => reply.uci === move.uci), strongestDefense: move.uci === strongest.uci,
+          reason: existing.reason ?? 'Supplied reply preserved' });
+        continue;
+      }
       const checked = await candidate(fen, move.uci, popular.find(reply => reply.uci === move.uci));
       checked.strongestDefense = move.uci === strongest.uci;
       checked.reason = checked.strongestDefense ? 'Strongest engine defense'
@@ -430,6 +439,12 @@ export async function buildTree(
     // Seeds are audited, never filtered. Shared prefixes are checked only once.
     for (const { node, parent } of seedNodes) {
       check();
+      if (settings.trustSuppliedMoves) {
+        if (node.isSeed) node.reason = node.stockfish
+          ? 'User-supplied move — verification skipped this run; previous evaluation retained'
+          : 'User-supplied, unverified — trusted starting move';
+        continue;
+      }
       if (!node.isOurMove || (resumeTree && node.stockfish && node.stockfish.depth >= settings.sfDepth)) continue;
       progress(`Checking your move ${node.fullMoveNumber}${settings.color === 'white' ? '.' : '...'} ${node.san} (preserved)`);
       try {
@@ -449,6 +464,8 @@ export async function buildTree(
       }
       publish();
     }
+
+    if (settings.trustSuppliedMoves) publish();
 
     while (queue.length) {
       check();
