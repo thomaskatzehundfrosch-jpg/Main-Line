@@ -589,3 +589,49 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
     assert.equal(new Set(ids).size, ids.length);
   });
 }
+
+for (const generatorMode of ['opening-lab', 'legacy']) {
+  for (const scenario of ['preserve', 'necessary king move', 'deeper refutation', 'verification failure']) {
+    test(`${generatorMode}: castling preference handles ${scenario}`, async () => {
+      const seed = ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Nf6', 'd4', 'Bb4+'];
+      const position = new Chess(); seed.forEach(move => position.move(move));
+      const king = new Chess(position.fen()); king.move('Kf1');
+      const knight = new Chess(position.fen()); knight.move('Nbd2');
+      const settings = { ...defaults, generatorMode, analysisMode: 'lichess+stockfish',
+        maxMoveNumber: 5, sfDepth: 25, evaluationFloorEnabled: false, maxEvalLoss: 1 };
+      const root = await buildTree([seed], settings, {}, { current: false }, dummyWorker, services({
+        topMoves: async (_w, fen, depth, count) => fen === position.fen()
+          ? [{ uci: 'e1f1', eval: .02, depth }, { uci: 'b1d2', eval: .39, depth }]
+          : new Chess(fen).moves({ verbose: true }).slice(0, count).map(move => ({ uci: uci(move), eval: 0, depth })),
+        analyze: async (_w, fen, depth) => {
+          if (fen === knight.fen() && depth === 25 && scenario === 'verification failure') throw Error('verification failed');
+          const score = fen === position.fen() ? 40 : fen === king.fen() ? 2 : fen === knight.fen()
+            ? scenario === 'necessary king move' || (scenario === 'deeper refutation' && depth === 25) ? -40 : 39 : 0;
+          return { score, depth };
+        },
+        replies: async fen => fen === position.fen() ? [
+          { uci: 'e1f1', san: 'Kf1', totalGames: 900, playRate: 90, winRate: 60 },
+          { uci: 'b1d2', san: 'Nbd2', totalGames: 100, playRate: 10, winRate: 50 },
+        ] : [],
+      }));
+      const parent = walk(root).find(node => node.fen === position.fen());
+      const preserve = scenario === 'preserve';
+      assert.equal(parent.children[0].san, preserve ? 'Nbd2' : 'Kf1');
+      if (preserve) assert.match(parent.children[0].reason, /[Pp]reserves castling/);
+    });
+  }
+}
+
+test('castling preference distinguishes king moves, castling, lost rights and black rights', () => {
+  const { abandonsCastling, preservesCastling } = require('../src/utils/castlingPreference.ts');
+  for (const turn of ['w', 'b']) {
+    const fen = `r3k2r/8/8/8/8/8/8/R3K2R ${turn} KQkq - 0 1`;
+    for (const [san, abandons, preserves] of [['Kf1', true, false], ['O-O', false, true], ['Rh2', false, false]]) {
+      const board = new Chess(fen), move = board.move(turn === 'b' ? san.replace('1', '8').replace('2', '7') : san);
+      const candidate = { uci: uci(move), fen: board.fen() };
+      assert.equal(abandonsCastling(fen, candidate), abandons);
+      assert.equal(preservesCastling(fen, candidate), preserves);
+      assert.equal(abandonsCastling(fen.replace('KQkq', '-'), candidate), false);
+    }
+  }
+});

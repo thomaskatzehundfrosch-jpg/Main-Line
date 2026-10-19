@@ -7,6 +7,7 @@ import { getMostLikelyMoves } from '../utils/lichessApi';
 import type { LichessMove } from '../utils/lichessApi';
 import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils/generatorSeeds';
 import { abortError, abortableDelay } from '../utils/generatorCancellation';
+import { abandonsCastling, preservesCastling, CASTLING_PREFERENCE_MARGIN } from '../utils/castlingPreference';
 
 const dependencies = { analyze: analyzePositionWithStockfish, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
 type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; stats?: LichessMove; strongestDefense?: boolean; reason: string };
@@ -152,7 +153,12 @@ export async function buildTree(
     const popular = await popularReplies(fen);
     const tricky = settings.trickiness !== 'off' && settings.analysisMode !== 'stockfish';
     const count = ourTurn ? (tricky ? 5 : settings.avoidQueenTrades ? 4 : 1) : maxReplies;
-    const top = await services.topMoves(worker!, fen, settings.sfDepth, count, 90000, signal);
+    let top = await services.topMoves(worker!, fen, settings.sfDepth, count, 90000, signal);
+    if (ourTurn && count === 1 && top[0]) {
+      const board = new Chess(fen), uci = top[0].uci;
+      const move = board.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+      if (move && abandonsCastling(fen, { uci, fen: board.fen() })) top = await services.topMoves(worker!, fen, settings.sfDepth, 4, 90000, signal);
+    }
     check();
     if (!top.length || top.some(move => move.depth < settings.sfDepth || move.eval == null)) {
       throw new Error('Engine did not return a verified best move.');
@@ -181,6 +187,13 @@ export async function buildTree(
         if (!permitted.length) throw new Error(`No verified candidate meets your evaluation floor (${settings.evaluationFloor.toFixed(2)} from your side) within the per-move loss limit.`);
       }
       const best = Math.max(...permitted.map(move => scoreFor(move.score, settings.color)));
+      const preferCastlingRights = (chosen: Candidate) => {
+        if (!abandonsCastling(fen, chosen)) return chosen;
+        const alternative = permitted.filter(move => preservesCastling(fen, move)
+          && scoreFor(move.score, settings.color) + CASTLING_PREFERENCE_MARGIN + 1e-8 >= scoreFor(chosen.score, settings.color))
+          .sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color))[0];
+        return alternative ? { ...alternative, reason: 'Preserves castling options or castles instead of an uncastled king move (within 0.30 pawns at verified depth)' } : chosen;
+      };
       if (tricky) {
         // A fallback may be below the minimum sacrifice, but never exceeds the maximum.
         const baseline = permitted.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
@@ -223,8 +236,9 @@ export async function buildTree(
           }
         }
         chosen.reason = explanation;
-        choiceCache.set(key, [chosen]);
-        return [chosen];
+        const preferred = preferCastlingRights(chosen);
+        choiceCache.set(key, [preferred]);
+        return [preferred];
       }
       let sound = permitted;
       if (settings.avoidQueenTrades) {
@@ -238,8 +252,9 @@ export async function buildTree(
       chosen.reason = chosen.stats
         ? `Common in your opponent profile; ${loss.toFixed(2)} pawns lost from the current evaluation`
         : 'Best verified candidate within your preferences';
-      choiceCache.set(key, [chosen]);
-      return [chosen];
+      const preferred = preferCastlingRights(chosen);
+      choiceCache.set(key, [preferred]);
+      return [preferred];
     }
     let selected: Array<{ uci: string; playRate: number }>;
     if (popular.length) {

@@ -10,6 +10,7 @@ import { getMostLikelyMoves } from '../utils/lichessApi';
 import type { LichessMove } from '../utils/lichessApi';
 import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils/generatorSeeds';
 import { abortError, abortableDelay } from '../utils/generatorCancellation';
+import { abandonsCastling, preservesCastling, CASTLING_PREFERENCE_MARGIN } from '../utils/castlingPreference';
 
 const localDependencies = { analyze: analyzePositionWithStockfish, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
 const dependencies = { ...localDependencies, ...createGeneratorCloudAnalysis(localDependencies) };
@@ -170,7 +171,14 @@ export async function buildTree(
     const popular = await popularReplies(fen);
     const tricky = settings.trickiness !== 'off' && settings.analysisMode !== 'stockfish';
     const count = ourTurn ? (tricky ? 6 : settings.avoidQueenTrades ? 4 : 1) : maxReplies;
-    const top = await topMoves(fen, searchDepth, count);
+    let top = await topMoves(fen, searchDepth, count);
+    // Engine-only mode normally asks for one move. Discover alternatives only
+    // when that recommendation would abandon castling rights.
+    if (ourTurn && count === 1 && top[0]) {
+      const board = new Chess(fen), uci = top[0].uci;
+      const move = board.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+      if (move && abandonsCastling(fen, { uci, fen: board.fen() })) top = await topMoves(fen, searchDepth, 4);
+    }
     check();
     if (!top.length || top.some(move => move.depth < searchDepth || move.eval == null)) {
       throw new Error('Engine did not return a verified best move.');
@@ -201,6 +209,7 @@ export async function buildTree(
         const maximum = tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss;
         const belowFloor = settings.evaluationFloorEnabled && reference < settings.evaluationFloor - 1e-8;
         const order = belowFloor ? [...ranked].sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color)) : ranked;
+        let kingFallback: Candidate | null = null;
         for (const move of order) {
           check();
           try {
@@ -216,12 +225,24 @@ export async function buildTree(
             const reason = belowFloor ? 'Below evaluation floor; objective continuation selected without a practical bonus'
               : move.reason || 'Next ranked candidate after deeper verification';
             const chosen = { ...move, ...verified, reason: `${reason}; verified at depth ${verified.depth} (${verified.source === 'lichess-cloud' ? 'Lichess cloud; engine version unspecified' : 'local Stockfish 19 Full'})${evidence > 0 ? `; ${move.stats!.winRate.toFixed(1)}% recorded wins in ${move.stats!.totalGames} games (95% lower bound ${(evidence * 100).toFixed(1)}%)` : ''}` };
+            if (!belowFloor && !kingFallback && abandonsCastling(fen, chosen)) {
+              kingFallback = chosen;
+              continue;
+            }
+            if (kingFallback) {
+              if (!preservesCastling(fen, chosen) || objective + CASTLING_PREFERENCE_MARGIN + 1e-8 < scoreFor(kingFallback.score, settings.color)) continue;
+              chosen.reason += '; preserves castling options or castles instead of an uncastled king move (within 0.30 pawns at verified depth)';
+            }
             choiceCache.set(key, [chosen]);
             return [chosen];
           } catch (error) {
             check();
             log('warning', `Could not verify ${move.san} at depth ${settings.sfDepth}; checking the next candidate.`);
           }
+        }
+        if (kingFallback) {
+          choiceCache.set(key, [kingFallback]);
+          return [kingFallback];
         }
         throw new Error(`No candidate passed depth-${settings.sfDepth} verification within the sacrifice and evaluation-floor limits.`);
       }
