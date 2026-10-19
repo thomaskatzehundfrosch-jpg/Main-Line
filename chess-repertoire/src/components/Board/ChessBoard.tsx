@@ -15,6 +15,7 @@ interface ChessBoardProps {
   score?: number;
   mate?: number | null;
   sizeScale?: number;
+  compact?: boolean;
 }
 
 const ChessBoard: React.FC<ChessBoardProps> = ({
@@ -26,6 +27,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   score = 0,
   mate = null,
   sizeScale = 1,
+  compact = false,
 }) => {
   const boardContainerRef = useRef<HTMLDivElement>(null);
   const [boardWidth, setBoardWidth] = useState(480);
@@ -40,8 +42,9 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     const updateBoardWidth = () => {
       if (boardContainerRef.current) {
         const containerWidth = boardContainerRef.current.offsetWidth;
-        const baseWidth = Math.min(700, containerWidth - 50);
-        const minWidth = sizeScale < 1 ? 150 : 300;
+        const reservedWidth = compact ? (settings.showEvalBar ? 24 : 0) : 50;
+        const baseWidth = Math.min(700, containerWidth - reservedWidth);
+        const minWidth = compact ? 0 : sizeScale < 1 ? 150 : 300;
         const width = Math.max(minWidth, baseWidth * sizeScale);
         setBoardWidth(width);
       }
@@ -56,7 +59,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
     return () => {
       resizeObserver.disconnect();
     };
-  }, [sizeScale]);
+  }, [sizeScale, compact, settings.showEvalBar]);
 
   // Clear selection when FEN changes (new position)
   useEffect(() => {
@@ -211,7 +214,7 @@ const ChessBoard: React.FC<ChessBoardProps> = ({
   return (
     <div
       ref={boardContainerRef}
-      className="flex items-start gap-0 rounded-lg p-2 w-full"
+      className={`flex items-start gap-0 w-full ${compact ? 'p-0' : 'rounded-lg p-2'}`}
     >
       {/* Evaluation Bar */}
       {settings.showEvalBar && (

@@ -226,7 +226,7 @@ export const App: React.FC = () => {
   const isMobile = useIsMobile();
   const [mobileTab, setMobileTab] = useState<MobileTab>('tree');
   const [boardMinimized, setBoardMinimized] = useState(false);
-  const [boardExpanded, setBoardExpanded] = useState(false);
+  const [boardExpanded, setBoardExpanded] = useState(true);
 
   const [filesOpen, setFilesOpen] = useState(() => !isMobile);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -2165,9 +2165,9 @@ export const App: React.FC = () => {
         </div>
 
         {/* Middle Panel: Chessboard */}
-        <div className={`${boardExpanded ? 'w-1/2' : 'w-[38%]'} min-w-0 shrink-0 flex flex-col overflow-y-auto border-r border-border-subtle transition-[width] duration-200`}>
+        <div className={`${boardExpanded ? 'w-[min(50%,max(320px,calc(100dvh-280px)))]' : 'w-[min(38%,360px)]'} min-w-0 shrink-0 flex flex-col overflow-y-auto border-r border-border-subtle transition-[width] duration-200`}>
           {/* Chessboard */}
-          <div className="flex flex-col items-center p-3 gap-1">
+          <div className="flex flex-col items-center p-0 gap-1">
             {/* Game viewer banner */}
             {viewingGame && (
               <div className="w-full max-w-[400px] flex items-center justify-between bg-accent-teal/10 border border-accent-teal/30 rounded-md px-3 py-1.5 mb-1">
@@ -2189,7 +2189,7 @@ export const App: React.FC = () => {
             )}
             <div className={`w-full transition-all ${
               boardExpanded
-                ? 'max-w-[770px]'
+                ? 'max-w-none'
                 : 'max-w-[440px]'
             }`}>
               <ChessBoard
@@ -2200,6 +2200,7 @@ export const App: React.FC = () => {
                 score={engine.lines.length > 0 ? engine.lines[0].score : 0}
                 mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
                 sizeScale={1}
+                compact
               />
             </div>
             {viewingGame ? (
@@ -2229,17 +2230,7 @@ export const App: React.FC = () => {
                 sizeToggleMode="expand"
               />
             )}
-            <button
-              onClick={() => setTreeExploreMode((prev) => !prev)}
-              className={`mt-1.5 w-full max-w-[200px] rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
-                treeExploreMode
-                  ? 'border-[#00d4aa]/60 bg-[#00d4aa]/12 text-[#00d4aa]'
-                  : 'border-border-subtle bg-bg-surface text-text-secondary hover:border-[#00d4aa]/40 hover:text-[#00d4aa]'
-              }`}
-              title={treeExploreMode ? 'Explore mode ON — click to disable' : 'Enable explore mode (navigate without adding moves)'}
-            >
-              {treeExploreMode ? 'Explore Mode On' : 'Explore Mode'}
-            </button>
+
           </div>
 
         </div>
@@ -2299,6 +2290,19 @@ export const App: React.FC = () => {
                     onMultiPVChange={engine.setMultiPV}
                     onThreadsChange={engine.setThreads}
                   />
+                </div>
+                <div className="px-3 py-2 border-t border-border-subtle">
+            <button
+              onClick={() => setTreeExploreMode((prev) => !prev)}
+              className={`w-full rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors ${
+                treeExploreMode
+                  ? 'border-[#00d4aa]/60 bg-[#00d4aa]/12 text-[#00d4aa]'
+                  : 'border-border-subtle bg-bg-surface text-text-secondary hover:border-[#00d4aa]/40 hover:text-[#00d4aa]'
+              }`}
+              title={treeExploreMode ? 'Explore mode ON — click to disable' : 'Enable explore mode (navigate without adding moves)'}
+            >
+              {treeExploreMode ? 'Explore Mode On' : 'Explore Mode'}
+            </button>
                 </div>
                 <MoveExplorer
                   fen={displayFen}
