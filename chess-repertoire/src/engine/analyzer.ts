@@ -6,7 +6,10 @@ import { logger } from '../utils/errorLogger';
 import { getCloudEval } from '../utils/lichessApi';
 
 const ENGINE_READY_TIMEOUT_MS = 15000;
-const POSITION_ANALYSIS_TIMEOUT_MS = 45000;
+/** Deep verification in the full-network, single-thread browser engine needs longer. */
+export function positionAnalysisTimeout(depth: number): number {
+  return depth >= 22 ? 180000 : depth >= 20 ? 120000 : depth >= 18 ? 90000 : 45000;
+}
 const WORKER_BOOT_TIMEOUT_MS = 10000;
 
 /**
@@ -163,14 +166,15 @@ export function analyzePositionWithStockfish(
       rejectOnce(new Error(`Stockfish analysis worker crashed: ${event.message || 'Unknown worker error'}`));
     };
 
+    const timeoutMs = positionAnalysisTimeout(depth);
     const timeoutId = window.setTimeout(() => {
       try {
         worker.postMessage('stop');
       } catch {
         // Ignore secondary shutdown errors after a timeout.
       }
-      rejectOnce(new Error(`Stockfish position analysis timed out after ${POSITION_ANALYSIS_TIMEOUT_MS}ms.`));
-    }, POSITION_ANALYSIS_TIMEOUT_MS);
+      rejectOnce(new Error(`Stockfish position analysis timed out after ${timeoutMs}ms. Requested depth ${depth}; ${bestDepth > 0 ? `reached depth ${bestDepth}` : 'no scored principal variation received'}.`));
+    }, timeoutMs);
 
     // Phase 2: register the real analysis handler and kick off the search.
     const analysisHandler = (e: MessageEvent<string>) => {

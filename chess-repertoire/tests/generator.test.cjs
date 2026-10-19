@@ -710,3 +710,30 @@ for (const generatorMode of ['opening-lab', 'legacy']) for (const color of ['whi
     assert.equal(parent.children[0].uci, uci(moves[1]), 'Prefer the practical 0.05 sacrifice, not the 0.50 sacrifice or an automatic best-move fallback');
   });
 }
+
+test('deep position searches receive a bounded budget and report actual progress on timeout', async () => {
+  const { positionAnalysisTimeout } = require('../src/engine/analyzer.ts');
+  assert.equal(positionAnalysisTimeout(12), 45000);
+  assert.equal(positionAnalysisTimeout(18), 90000);
+  assert.equal(positionAnalysisTimeout(20), 120000);
+  assert.equal(positionAnalysisTimeout(25), 180000);
+  const previousWindow = global.window;
+  let timeout, scheduled;
+  global.window = { setTimeout: (callback, milliseconds) => { timeout = callback; scheduled = milliseconds; return 0; } };
+  const handlers = new Set();
+  const worker = {
+    addEventListener: (type, handler) => { if (type === 'message') handlers.add(handler); },
+    removeEventListener: (_type, handler) => handlers.delete(handler),
+    postMessage() {},
+  };
+  const send = data => [...handlers].forEach(handler => handler({ data }));
+  try {
+    const pending = analyzePositionWithStockfish(worker, new Chess().fen(), 25);
+    assert.equal(scheduled, 180000);
+    send('readyok');
+    send('info depth 23 score cp 42 pv e2e4');
+    timeout();
+    await assert.rejects(pending, /Requested depth 25; reached depth 23/);
+    assert.equal(handlers.size, 0, 'Timed-out search releases listeners');
+  } finally { global.window = previousWindow; }
+});
