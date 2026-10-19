@@ -1961,8 +1961,9 @@ export const App: React.FC = () => {
       ) : (
       /* ── Desktop layout ── */
       <div className="flex-1 flex min-h-0">
-        {/* Left Panel: Files + Opening Tree */}
-        <div className="flex-1 min-w-0 border-r border-border-subtle flex flex-col">
+        {/* Files and board share one row; the tree spans their full width below. */}
+        <div className="flex-1 min-w-0 min-h-0 grid grid-cols-2 grid-rows-[min(55dvh,600px)_minmax(0,1fr)] border-r border-border-subtle">
+          <div className="min-w-0 min-h-0 overflow-auto border-r border-border-subtle border-b">
           {/* Repertoire Files */}
           <div className="border-b border-border-subtle">
             <div
@@ -1991,6 +1992,73 @@ export const App: React.FC = () => {
             )}
           </div>
 
+          </div>
+          <div className="min-w-0 min-h-0 overflow-hidden border-b border-border-subtle">
+          {/* Chessboard */}
+          <div className="flex h-full flex-col items-center p-0 gap-1">
+            {/* Game viewer banner */}
+            {viewingGame && (
+              <div className="w-full max-w-[400px] flex items-center justify-between bg-accent-teal/10 border border-accent-teal/30 rounded-md px-3 py-1.5 mb-1">
+                <div className="text-xs text-accent-teal truncate">
+                  <span className="font-semibold">Viewing:</span>{' '}
+                  {viewingGame.white} vs {viewingGame.black}
+                  <span className="text-text-muted ml-2">
+                    Move {viewingMoveIndex}/{gamePositions.length - 1}
+                  </span>
+                </div>
+                <button
+                  onClick={handleCloseGameViewer}
+                  className="btn-icon p-0.5 text-accent-teal hover:text-accent-teal/70 flex-shrink-0"
+                  title="Close game viewer (Esc)"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            <div className="w-full min-h-0" style={{ maxWidth: boardExpanded ? 'min(100%, calc(min(55dvh, 600px) - 40px))' : 'min(100%, 320px, calc(min(55dvh, 600px) - 40px))' }}>
+              <ChessBoard
+                fen={displayFen}
+                orientation={orientation}
+                onMove={viewingGame || previewNode ? () => false : handleBoardMove}
+                engineBestMove={previewNode ? labNextArrow : labHover ? [labHover] : engine.enabled ? engineArrows : undefined}
+                score={engine.lines.length > 0 ? engine.lines[0].score : 0}
+                mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
+                sizeScale={1}
+                compact
+              />
+            </div>
+            {viewingGame ? (
+              <BoardControls
+                onStart={gameViewerStart}
+                onBack={gameViewerBack}
+                onForward={gameViewerForward}
+                onEnd={gameViewerEnd}
+                onFlip={flipBoard}
+                canGoBack={viewingMoveIndex > 0}
+                canGoForward={viewingMoveIndex < gamePositions.length - 1}
+                onToggleSize={() => setBoardExpanded((prev) => !prev)}
+                isBoardAltSize={boardExpanded}
+                sizeToggleMode="expand"
+              />
+            ) : (
+              <BoardControls
+                onStart={navigateToStart}
+                onBack={navigateBack}
+                onForward={navigateForward}
+                onEnd={navigateToEnd}
+                onFlip={flipBoard}
+                canGoBack={currentPath.length > 1}
+                canGoForward={currentNode.children.length > 0}
+                onToggleSize={() => setBoardExpanded((prev) => !prev)}
+                isBoardAltSize={boardExpanded}
+                sizeToggleMode="expand"
+              />
+            )}
+
+          </div>
+
+          </div>
+          <div className="col-span-2 min-w-0 min-h-0 flex flex-col">
           {/* Opening Tree */}
           <div className="panel-header flex items-center justify-end gap-3">
             <div className="flex items-center gap-2">
@@ -2162,77 +2230,7 @@ export const App: React.FC = () => {
               onFinishLineFromNode={handleFinishLineFromNode}
             />
           </div>
-        </div>
-
-        {/* Middle Panel: Chessboard */}
-        <div className={`${boardExpanded ? 'w-[min(50%,max(320px,calc(100dvh-280px)))]' : 'w-[min(38%,360px)]'} min-w-0 shrink-0 flex flex-col overflow-y-auto border-r border-border-subtle transition-[width] duration-200`}>
-          {/* Chessboard */}
-          <div className="flex flex-col items-center p-0 gap-1">
-            {/* Game viewer banner */}
-            {viewingGame && (
-              <div className="w-full max-w-[400px] flex items-center justify-between bg-accent-teal/10 border border-accent-teal/30 rounded-md px-3 py-1.5 mb-1">
-                <div className="text-xs text-accent-teal truncate">
-                  <span className="font-semibold">Viewing:</span>{' '}
-                  {viewingGame.white} vs {viewingGame.black}
-                  <span className="text-text-muted ml-2">
-                    Move {viewingMoveIndex}/{gamePositions.length - 1}
-                  </span>
-                </div>
-                <button
-                  onClick={handleCloseGameViewer}
-                  className="btn-icon p-0.5 text-accent-teal hover:text-accent-teal/70 flex-shrink-0"
-                  title="Close game viewer (Esc)"
-                >
-                  ✕
-                </button>
-              </div>
-            )}
-            <div className={`w-full transition-all ${
-              boardExpanded
-                ? 'max-w-none'
-                : 'max-w-[440px]'
-            }`}>
-              <ChessBoard
-                fen={displayFen}
-                orientation={orientation}
-                onMove={viewingGame || previewNode ? () => false : handleBoardMove}
-                engineBestMove={previewNode ? labNextArrow : labHover ? [labHover] : engine.enabled ? engineArrows : undefined}
-                score={engine.lines.length > 0 ? engine.lines[0].score : 0}
-                mate={engine.lines.length > 0 ? engine.lines[0].mate : null}
-                sizeScale={1}
-                compact
-              />
-            </div>
-            {viewingGame ? (
-              <BoardControls
-                onStart={gameViewerStart}
-                onBack={gameViewerBack}
-                onForward={gameViewerForward}
-                onEnd={gameViewerEnd}
-                onFlip={flipBoard}
-                canGoBack={viewingMoveIndex > 0}
-                canGoForward={viewingMoveIndex < gamePositions.length - 1}
-                onToggleSize={() => setBoardExpanded((prev) => !prev)}
-                isBoardAltSize={boardExpanded}
-                sizeToggleMode="expand"
-              />
-            ) : (
-              <BoardControls
-                onStart={navigateToStart}
-                onBack={navigateBack}
-                onForward={navigateForward}
-                onEnd={navigateToEnd}
-                onFlip={flipBoard}
-                canGoBack={currentPath.length > 1}
-                canGoForward={currentNode.children.length > 0}
-                onToggleSize={() => setBoardExpanded((prev) => !prev)}
-                isBoardAltSize={boardExpanded}
-                sizeToggleMode="expand"
-              />
-            )}
-
           </div>
-
         </div>
 
         {/* Right Panel: Analysis, explorer, and game tools */}
