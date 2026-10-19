@@ -6,6 +6,7 @@
 import type { GeneratorSettings, GeneratorLichessStats } from '../types/generator';
 import { abortableDelay, abortError } from './generatorCancellation';
 import { getStoredToken } from './lichessAuth';
+import { normalizeExplorerUci } from './explorerMove.js';
 
 /** Timestamp of last successful request start (for throttling). */
 let _lastRequestTime = 0;
@@ -261,7 +262,9 @@ async function fetchLichess(
       throw new Error('Lichess API response missing moves field');
     }
 
-    return data as LichessApiResponse;
+    return { ...data, moves: data.moves.map((move: LichessMoveEntry) => ({
+      ...move, uci: normalizeExplorerUci(fen, move.uci),
+    })) } as LichessApiResponse;
   } catch (err: any) {
     if (signal?.aborted || err.name === 'AbortError') throw abortError();
     const isNonRetryable =

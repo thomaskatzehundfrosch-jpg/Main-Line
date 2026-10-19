@@ -1,16 +1,10 @@
 import {board,uci} from './core.js';
 import {get,put} from './storage.js';
+import {normalizeExplorerUci} from '../utils/explorerMove.js';
 let retryAt=0;
 export class HumanDataError extends Error{constructor(status,message){super(message);this.status=status;}}
 export function normaliseExplorerMove(state,move){
- const b=board(state);
- if(typeof move!=='string')return move;
- const from=move.slice(0,2),to=move.slice(2,4),king=b.get(from),rook=b.get(to);
- if(move.length===4&&king?.type==='k'&&rook?.type==='r'&&king.color===rook.color&&from[0]==='e'&&from[1]===to[1]&&['1','8'].includes(from[1])&&['a','h'].includes(to[0])){
-  const castle=b.moves({square:from,verbose:true}).find(m=>m.flags.includes(to[0]==='h'?'k':'q'));
-  if(castle)return uci(castle);
- }
- return move;
+ return normalizeExplorerUci(board(state).fen(),move);
 }
 export function parseHumanData(data,state,rating=2000){
  const valid=n=>Number.isSafeInteger(n)&&n>=0;
