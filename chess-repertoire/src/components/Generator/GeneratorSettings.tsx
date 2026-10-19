@@ -43,7 +43,22 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
   const preset = STUDY_SIZES[settings.studySize];
   return <div className="flex flex-col h-full overflow-y-auto custom-scrollbar">
     <fieldset disabled={isGenerating} className="p-4 space-y-4 disabled:opacity-60">
-      <p className="text-xs text-text-muted">Your existing moves are preserved. Generate adds continuations at the ends of your lines.</p>
+      <p className="text-xs text-text-muted">Your existing moves are preserved. Choose where the generator should add continuations and missing branches.</p>
+      <label className={labelClass}>Continue existing repertoire
+        <select className={inputClass} value={settings.fillBranchesFromMove == null ? 'leaves' : 'fill'}
+          onChange={e => update('fillBranchesFromMove', e.target.value === 'fill' ? 1 : undefined)}>
+          <option value="leaves">Extend line endings only</option>
+          <option value="fill">Fill missing branches from move…</option>
+        </select>
+      </label>
+      {settings.fillBranchesFromMove != null && <label className={labelClass}>Start adding missing replies at move
+        <input className={inputClass} type="number" min="1" max="40" step="1"
+          value={settings.fillBranchesFromMove}
+          onChange={e => update('fillBranchesFromMove', e.target.valueAsNumber)} />
+      </label>}
+      <p className="text-[11px] text-text-muted">{settings.fillBranchesFromMove == null
+        ? 'Starts at the end of each loaded line.'
+        : `Checks existing opponent positions from move ${settings.fillBranchesFromMove} onward. Earlier branches are preserved; line endings are also extended. Reply selection follows the opponent profile and branching settings below.`}</p>
       <label className={labelClass}>Generator
         <select aria-label="Generator version" className={inputClass} value={settings.generatorMode} onChange={e => update('generatorMode', e.target.value as GeneratorSettings['generatorMode'])}>
           <option value="opening-lab">Opening Lab Gen</option>
