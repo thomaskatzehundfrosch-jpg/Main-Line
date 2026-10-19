@@ -555,3 +555,37 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
     assert.equal(root.children[0].children[0].san, 'e5');
   });
 }
+
+for (const generatorMode of ['opening-lab', 'legacy']) {
+  test(`${generatorMode}: a transient verification failure does not poison shared position evaluations`, async () => {
+    let attempts = 0;
+    const start = new Chess().fen();
+    const root = await buildTree([['e4', 'e5'], ['d4', 'd5']], { ...defaults, generatorMode }, {}, { current: false }, dummyWorker,
+      services({ analyze: async (_w, fen, depth) => {
+        if (fen === start && ++attempts === 1) throw new Error('Temporary engine timeout');
+        return { score: 0, depth };
+      } }));
+    assert.equal(attempts, 2, 'Shared position was retried rather than reusing its rejected promise');
+    assert.match(root.children[0].warning, /Temporary engine timeout/);
+    assert.ok(!root.children[1].warning, 'The second branch was verified successfully');
+    assert.ok(root.children[1].stockfish);
+  });
+}
+
+for (const generatorMode of ['opening-lab', 'legacy']) {
+  test(`${generatorMode}: resume continues saved frontier with unique IDs and preserves snapshot metadata`, async () => {
+    const saved = buildSeedTree([['e4', 'e5']], 'white');
+    const leaf = saved.children[0].children[0];
+    leaf.id = 'gen_1'; leaf.endReason = 'stopped';
+    saved.children[0].warning = 'Existing move was preserved';
+    const original = JSON.stringify(saved);
+    const root = await buildTree(null, { ...defaults, generatorMode, maxMoveNumber: 2 }, {}, { current: false }, dummyWorker, services(), saved);
+    assert.equal(JSON.stringify(saved), original, 'Checkpoint input is immutable');
+    const resumed = root.children[0].children[0];
+    assert.equal(resumed.id, 'gen_1'); assert.ok(resumed.children.length);
+    assert.equal(resumed.endReason, undefined, 'Old stopped marker cleared after continuing');
+    assert.equal(root.children[0].warning, 'Existing move was preserved');
+    const ids = walk(root).map(node => node.id);
+    assert.equal(new Set(ids).size, ids.length);
+  });
+}

@@ -73,19 +73,25 @@ export async function buildTree(
   callbacks: GeneratorCallbacks,
   stop: { current: boolean; signal?: AbortSignal },
   worker: Worker | null,
-  services?: typeof dependencies
+  services?: typeof dependencies,
+  resumeTree?: GeneratorNode,
 ): Promise<GeneratorNode> {
-  if (input.generatorMode === 'legacy') return buildLegacyTree(seeds, input, callbacks, stop, worker, services ?? localDependencies);
+  if (input.generatorMode === 'legacy') return buildLegacyTree(seeds, input, callbacks, stop, worker, services ?? localDependencies, resumeTree);
   const analysisServices = services ?? dependencies;
   if (!worker) throw new Error('Stockfish is required to verify continuations.');
   const settings = normalizeGeneratorSettings(input);
   const searchDepth = Math.min(18, settings.sfDepth);
   const { maxNodes, maxReplies, coverage } = STUDY_SIZES[settings.studySize];
-  const root = buildSeedTree(seeds ?? [], settings.color);
+  if (resumeTree && resumeTree.repertoireColor !== settings.color) throw new Error('Saved run color does not match its settings.');
+  const root = resumeTree ? cloneGeneratorTree(resumeTree) : buildSeedTree(seeds ?? [], settings.color);
   const signal = stop.signal;
   let totalNodes = countGeneratorNodes(root);
   let apiCalls = 0;
   let nextId = 0;
+  const existingIds = new Set<string>();
+  const rememberIds = (node: GeneratorNode) => { existingIds.add(node.id); node.children.forEach(rememberIds); };
+  rememberIds(root);
+  const nextNodeId = () => { let id: string; do { id = `gen_${++nextId}`; } while (existingIds.has(id)); existingIds.add(id); return id; };
   const check = () => { if (stop.current || signal?.aborted) throw abortError(); };
   const log = (level: 'info' | 'warning' | 'error', message: string) => {
     callbacks.onLog?.({ id: `log_${Date.now()}_${++nextId}`, timestamp: new Date().toLocaleTimeString(), level, message, context: null });
@@ -98,7 +104,8 @@ export async function buildTree(
   async function topMoves(fen: string, depth: number, count: number) {
     check();
     const key = JSON.stringify([fen, depth, count]);
-    if (!topCache.has(key)) topCache.set(key, analysisServices.topMoves(worker!, fen, depth, count, 90000, signal));
+    if (!topCache.has(key)) topCache.set(key, analysisServices.topMoves(worker!, fen, depth, count, 90000, signal)
+      .catch(error => { topCache.delete(key); throw error; }));
     const result = await topCache.get(key)!;
     check();
     return result;
@@ -117,7 +124,7 @@ export async function buildTree(
       evalCache.set(key, analysisServices.analyze(worker!, fen, depth, signal).then(result => {
         if (result.depth < depth || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
         return { score: result.score / 100, depth: result.depth, source: result.source ?? 'local' as const };
-      }));
+      }).catch(error => { evalCache.delete(key); throw error; }));
     }
     const result = await evalCache.get(key)!;
     check();
@@ -375,7 +382,7 @@ export async function buildTree(
     // Seeds are audited, never filtered. Shared prefixes are checked only once.
     for (const { node, parent } of seedNodes) {
       check();
-      if (!node.isOurMove) continue;
+      if (!node.isOurMove || (resumeTree && node.stockfish && node.stockfish.depth >= settings.sfDepth)) continue;
       progress(`Checking your move ${node.fullMoveNumber}${settings.color === 'white' ? '.' : '...'} ${node.san} (preserved)`);
       try {
         const reference = await evaluate(parent.fen, settings.sfDepth);
@@ -401,6 +408,8 @@ export async function buildTree(
       queue.sort((a, b) => a.node.depth - b.node.depth || b.likelihood - a.likelihood);
       const item = queue.shift()!;
       active = item.node;
+      active.endReason = undefined;
+      active.cappedByMoveLimit = false;
       const chess = new Chess(active.fen);
       if (chess.isGameOver() || item.ancestors.has(positionKey(active.fen))) {
         active.endReason = item.ancestors.has(positionKey(active.fen)) ? 'repetition' : 'terminal';
@@ -435,7 +444,7 @@ export async function buildTree(
           if (active.children.some(child => child.uci === move.uci)) { added.push(move); continue; }
           if (totalNodes >= maxNodes) { active.endReason = 'budget'; break; }
           const node: GeneratorNode = {
-            id: `gen_${++nextId}`, san: move.san, uci: move.uci, fen: move.fen,
+            id: nextNodeId(), san: move.san, uci: move.uci, fen: move.fen,
             children: [], depth: active.depth + 1, fullMoveNumber: Number(active.fen.split(' ')[5]),
             isOurMove: ourTurn, isMainLine: active.children.length === 0,
             isDangerous: !ourTurn && scoreFor(move.score, settings.color) < -0.5,

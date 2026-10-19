@@ -12,7 +12,12 @@ import type {
 } from '../types/generator';
 import { STUDY_SIZES } from '../types/generator';
 import { buildSeedTree } from '../utils/generatorSeeds';
-import { createAnalysisWorker } from '../engine/analyzer';
+import { createAnalysisWorker, analyzePositionWithStockfish, getTopMovesWithStockfish } from '../engine/analyzer';
+import { createRecyclingWorkerSession } from '../engine/recyclingWorker';
+import { createGeneratorCloudAnalysis } from '../engine/generatorCloudAnalysis';
+import { getMostLikelyMoves } from '../utils/lichessApi';
+import { readGeneratorCheckpoint, saveGeneratorCheckpoint, GENERATOR_CHECKPOINT_KEY } from '../utils/generatorCheckpoint';
+import type { GeneratorCheckpoint } from '../utils/generatorCheckpoint';
 import { buildTree } from '../engine/generatorTreeBuilder';
 
 /* ------------------------------------------------------------------ */
@@ -111,9 +116,12 @@ export interface UseGeneratorReturn {
     pgnSeeds: string[][] | null,
     sfWorker: Worker | null,
     onComplete?: (finalRoot: GeneratorNode) => void,
-    onError?: (error: Error) => void
+    onError?: (error: Error) => void,
+    resumeTree?: GeneratorNode
   ) => void;
   stopGeneration: () => void;
+  savedCheckpoint: GeneratorCheckpoint | null;
+  resumeGeneration: () => void;
   clearTree: () => void;
   stopRef: React.MutableRefObject<boolean>;
   addLogEntry: (entry: GeneratorLogEntry) => void;
@@ -146,6 +154,7 @@ export function useGenerator(): UseGeneratorReturn {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<GeneratorProgress>(INITIAL_PROGRESS);
   const [errorLog, setErrorLog] = useState<GeneratorLogEntry[]>([]);
+  const [savedCheckpoint, setSavedCheckpoint] = useState<GeneratorCheckpoint | null>(() => readGeneratorCheckpoint());
   const [latestNode, setLatestNode] = useState<GeneratorNode | null>(null);
   const stopRef = useRef(false);
   const runRef = useRef<{ controller: AbortController; stop: { current: boolean; signal: AbortSignal }; worker: Worker | null } | null>(null);
@@ -178,7 +187,7 @@ export function useGenerator(): UseGeneratorReturn {
 
   const startGeneration = useCallback(
     (settings: GeneratorSettings, pgnSeeds: string[][] | null, sfWorker: Worker | null,
-      onComplete?: (root: GeneratorNode) => void, onError?: (error: Error) => void) => {
+      onComplete?: (root: GeneratorNode) => void, onError?: (error: Error) => void, resumeTree?: GeneratorNode) => {
       // Every run owns its cancellation state and dedicated worker. Old results cannot
       // write into a later run, even if a promise completes after cancellation.
       if (runRef.current) {
@@ -195,24 +204,45 @@ export function useGenerator(): UseGeneratorReturn {
       setProgress({ nodes: 0, maxNodes: STUDY_SIZES[settings.studySize].maxNodes, status: 'Starting…', apiCalls: 0, outcome: 'running' });
       setLatestNode(null);
       const isCurrent = () => runRef.current === run;
+      let lastCheckpoint = 0;
+      let storageWarningShown = false;
+      const checkpoint = (root: GeneratorNode, force = false) => {
+        if (!isCurrent() || (!force && Date.now() - lastCheckpoint < 5000)) return;
+        lastCheckpoint = Date.now();
+        const saved = saveGeneratorCheckpoint(root, settings);
+        if (saved) setSavedCheckpoint(saved);
+        else if (!storageWarningShown) {
+          storageWarningShown = true;
+          addLogEntry({ id: `checkpoint_${Date.now()}`, timestamp: new Date().toLocaleTimeString(), level: 'warning', message: 'Could not save a recovery checkpoint on this device. Export your result before reloading.', context: null });
+        }
+      };
       const execute = async () => {
         const worker = sfWorker ?? await createAnalysisWorker(1);
         run.worker = worker;
         if (!isCurrent() || run.stop.current) { worker.terminate(); throw new DOMException('Generation stopped', 'AbortError'); }
+        const search = createRecyclingWorkerSession(worker, () => createAnalysisWorker(1), next => { run.worker = next; }, controller.signal);
+        const local = {
+          analyze: (_worker: Worker, fen: string, depth: number, signal?: AbortSignal) =>
+            search(current => analyzePositionWithStockfish(current, fen, depth, signal)),
+          topMoves: (_worker: Worker, fen: string, depth: number, count = 3, timeout = 90000, signal?: AbortSignal) =>
+            search(current => getTopMovesWithStockfish(current, fen, depth, count, timeout, signal)),
+        };
+        const analysis = settings.generatorMode === 'legacy' ? local : createGeneratorCloudAnalysis(local);
         return buildTree(pgnSeeds, settings, {
-        onNodeAdded: root => { if (isCurrent()) setTree(root); },
+        onNodeAdded: root => { if (isCurrent()) { setTree(root); checkpoint(root); } },
         onNewNode: node => { if (isCurrent()) setLatestNode(node); },
         onLog: entry => { if (isCurrent()) addLogEntry(entry); },
         onProgress: value => { if (isCurrent()) setProgress(value); },
         onComplete: root => {
           if (!isCurrent()) return;
+          checkpoint(root, true);
           setTree(root);
           setSelectedNode(root);
           setLatestNode(null);
           setIsGenerating(false);
           if (!run.stop.current) onComplete?.(root);
         },
-        }, run.stop, worker);
+        }, run.stop, worker, { ...analysis, replies: getMostLikelyMoves }, resumeTree);
       };
       execute().catch((cause: unknown) => {
         if (!isCurrent()) return;
@@ -232,6 +262,12 @@ export function useGenerator(): UseGeneratorReturn {
       });
     }, [addLogEntry, setTree, setSelectedNode]
   );
+
+  const resumeGeneration = useCallback(() => {
+    const saved = readGeneratorCheckpoint();
+    if (!saved || runRef.current) return;
+    startGeneration(saved.settings, null, null, undefined, undefined, saved.tree);
+  }, [startGeneration]);
 
   const stopGeneration = useCallback(() => {
     stopRef.current = true;
@@ -261,6 +297,8 @@ export function useGenerator(): UseGeneratorReturn {
 
   const clearTree = useCallback(() => {
     if (runRef.current) return;
+    try { localStorage.removeItem(GENERATOR_CHECKPOINT_KEY); } catch { /* unavailable storage */ }
+    setSavedCheckpoint(null);
     _cachedTree = null;
     _cachedSelectedNodeId = null;
     setTree(null);
@@ -395,6 +433,8 @@ export function useGenerator(): UseGeneratorReturn {
     setErrorLog,
     startGeneration,
     stopGeneration,
+    savedCheckpoint,
+    resumeGeneration,
     clearTree,
     stopRef,
     addLogEntry,

@@ -337,6 +337,13 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
         )}
       </div>
 
+      {gen.savedCheckpoint && !busy && <div className="flex flex-wrap items-center gap-3 border-b border-border-subtle bg-bg-surface px-4 py-2 text-xs text-text-secondary">
+        <span>Saved run: {new Date(gen.savedCheckpoint.savedAt).toLocaleString()}. Resume continues from its saved tree and settings; import the result to apply it to your repertoire.</span>
+        <button className="btn-secondary" onClick={() => { setSettings(gen.savedCheckpoint!.settings); gen.resumeGeneration(); }}>
+          Resume saved run
+        </button>
+      </div>}
+
       {/* 3-column layout */}
       <div className="flex flex-1 min-h-0 flex-col overflow-y-auto md:overflow-hidden md:flex-row">
         {/* Left: Settings */}
