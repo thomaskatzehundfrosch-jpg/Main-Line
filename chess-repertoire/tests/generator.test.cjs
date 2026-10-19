@@ -678,3 +678,35 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
     assert.match(root.children[0].children[0].reason, /Protecting an advantage/);
   });
 }
+
+test('gradual sacrifice cap follows the evaluation and relaxes an incompatible minimum', () => {
+  const { sacrificeLimits } = require('../src/utils/sacrificeLimits.ts');
+  for (const [evaluation, expected] of [[-.5, .7], [.3, .7], [.5, .5], [.7, .3], [.9, .1], [.99, .01]]) {
+    const limits = sacrificeLimits(evaluation, .7, .4);
+    assert.ok(Math.abs(limits.maximum - expected) < 1e-8);
+    assert.equal(limits.minimum, expected + 1e-8 < .4 ? 0 : .4);
+  }
+  assert.equal(sacrificeLimits(.9, .05).maximum, .05, 'A stricter user limit still applies');
+});
+for (const generatorMode of ['opening-lab', 'legacy']) for (const color of ['white', 'black']) {
+  test(`${generatorMode} ${color}: +0.9 caps sacrifice at 0.1 while retaining practical choices`, async () => {
+    const position = new Chess(); if (color === 'black') position.move('e4');
+    const sign = color === 'white' ? 1 : -1;
+    const moves = position.moves({ verbose: true }).slice(0, 3);
+    const fens = moves.map(move => { const board = new Chess(position.fen()); board.move(move); return board.fen(); });
+    const replyBoard = new Chess(fens[1]);
+    const reply = replyBoard.moves({ verbose: true })[0]; replyBoard.move(reply);
+    const root = await buildTree(color === 'black' ? [['e4']] : null, { ...defaults, color, generatorMode,
+      analysisMode: 'lichess+stockfish', sfDepth: 25, trickiness: 'high', trickinessMinLoss: .4, trickinessMaxLoss: .7,
+    }, {}, { current: false }, dummyWorker, services({
+      topMoves: async (_w, fen, depth, count) => (fen === position.fen() ? moves : new Chess(fen).moves({ verbose: true }))
+        .slice(0, count).map(move => ({ uci: uci(move), eval: 0, depth })),
+      analyze: async (_w, fen, depth) => ({ depth, score: sign * (fen === position.fen() ? 90 : fen === replyBoard.fen() ? 110 : [89, 85, 40][fens.indexOf(fen)] ?? 0) }),
+      replies: async fen => fen === position.fen() ? moves.map((move, index) => ({ uci: uci(move), san: move.san,
+        totalGames: 1000, playRate: 33, winRate: [40, 70, 90][index], lossRate: 0, drawRate: 0 })) : fen === fens[1]
+        ? [{ uci: uci(reply), san: reply.san, totalGames: 1000, playRate: 100, winRate: 70 }] : [],
+    }));
+    const parent = color === 'white' ? root : root.children[0];
+    assert.equal(parent.children[0].uci, uci(moves[1]), 'Prefer the practical 0.05 sacrifice, not the 0.50 sacrifice or an automatic best-move fallback');
+  });
+}

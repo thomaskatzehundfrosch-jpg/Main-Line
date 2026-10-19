@@ -11,6 +11,7 @@ import type { LichessMove } from '../utils/lichessApi';
 import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils/generatorSeeds';
 import { abortError, abortableDelay } from '../utils/generatorCancellation';
 import { abandonsCastling, preservesCastling, CASTLING_PREFERENCE_MARGIN } from '../utils/castlingPreference';
+import { sacrificeLimits } from '../utils/sacrificeLimits';
 
 const localDependencies = { analyze: analyzePositionWithStockfish, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
 const dependencies = { ...localDependencies, ...createGeneratorCloudAnalysis(localDependencies) };
@@ -206,7 +207,7 @@ export async function buildTree(
         ? winLowerBound(move.stats.winRate / 100 * move.stats.totalGames, move.stats.totalGames) : 0;
       async function verifyWinner(ranked: Candidate[]): Promise<Candidate[]> {
         const reference = scoreFor((await evaluate(fen, settings.sfDepth)).score, settings.color);
-        const maximum = tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss;
+        const { maximum } = sacrificeLimits(reference, tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss);
         const belowFloor = settings.evaluationFloorEnabled && reference < settings.evaluationFloor - 1e-8;
         const protectAdvantage = reference >= 1;
         // Include all discovered candidates: shallow screening and a minimum
@@ -261,7 +262,8 @@ export async function buildTree(
       }
       const current = scoreFor((await evaluate(fen)).score, settings.color);
       if (scoreFor((await evaluate(fen, settings.sfDepth)).score, settings.color) >= 1) return verifyWinner(checked);
-      const maximumLoss = tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss;
+      const { maximum: maximumLoss, minimum: minimumLoss } = sacrificeLimits(current,
+        tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss, tricky ? settings.trickinessMinLoss : 0);
       let permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
       if (!permitted.length) throw new Error(`No verified candidate stays within the ${maximumLoss.toFixed(2)} pawn loss limit from the current evaluation (${current.toFixed(2)} from your side).`);
       if (settings.evaluationFloorEnabled) {
@@ -279,7 +281,7 @@ export async function buildTree(
         const baseline = permitted.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
         let eligible = permitted.filter(move => {
           const loss = Math.max(0, current - scoreFor(move.score, settings.color));
-          return loss + 1e-8 >= settings.trickinessMinLoss && loss <= settings.trickinessMaxLoss + 1e-8;
+          return loss + 1e-8 >= minimumLoss && loss <= maximumLoss + 1e-8;
         });
         if (settings.avoidQueenTrades) {
           const keepQueens = eligible.filter(move => !allowsImmediateQueenTrade(fen, move.san));
@@ -316,7 +318,7 @@ export async function buildTree(
             // Recorded replies can expose a stronger defence; never reward that discrepancy.
             const defended = Math.min(defenceScore, ...rows.map(row => row.cp / 100));
             const loss = Math.max(0, current - defended);
-            if (loss > maximumLoss + 1e-8 || loss + 1e-8 < settings.trickinessMinLoss ||
+            if (loss > maximumLoss + 1e-8 || loss + 1e-8 < minimumLoss ||
                 (settings.evaluationFloorEnabled && defended < settings.evaluationFloor - 1e-8)) continue;
             const evidence = replyEvidence(rows, defended * 100, 30);
             const benefit = rows.reduce((sum, row) => {

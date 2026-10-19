@@ -8,6 +8,7 @@ import type { LichessMove } from '../utils/lichessApi';
 import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils/generatorSeeds';
 import { abortError, abortableDelay } from '../utils/generatorCancellation';
 import { abandonsCastling, preservesCastling, CASTLING_PREFERENCE_MARGIN } from '../utils/castlingPreference';
+import { sacrificeLimits } from '../utils/sacrificeLimits';
 
 const dependencies = { analyze: analyzePositionWithStockfish, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
 type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; stats?: LichessMove; strongestDefense?: boolean; reason: string };
@@ -172,7 +173,8 @@ export async function buildTree(
         catch (error) { check(); if (uci === strongest.uci) throw error; }
       }
       const current = scoreFor((await evaluate(fen)).score, settings.color);
-      const maximumLoss = tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss;
+      const { maximum: maximumLoss, minimum: minimumLoss } = sacrificeLimits(current,
+        tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss, tricky ? settings.trickinessMinLoss : 0);
       let permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
       if (!permitted.length) throw new Error(`No verified candidate stays within the ${maximumLoss.toFixed(2)} pawn loss limit from the current evaluation (${current.toFixed(2)} from your side).`);
       if (settings.evaluationFloorEnabled) {
@@ -205,7 +207,7 @@ export async function buildTree(
         const baseline = permitted.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
         let eligible = permitted.filter(move => {
           const loss = Math.max(0, current - scoreFor(move.score, settings.color));
-          return loss + 1e-8 >= settings.trickinessMinLoss && loss <= settings.trickinessMaxLoss + 1e-8;
+          return loss + 1e-8 >= minimumLoss && loss <= maximumLoss + 1e-8;
         });
         if (settings.avoidQueenTrades) {
           const keepQueens = eligible.filter(move => !allowsImmediateQueenTrade(fen, move.san));
