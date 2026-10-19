@@ -56,7 +56,6 @@ import {
   type ImportantLineRecommendation,
 } from '../utils/gameGapRecommendations';
 import { getCachedGeneratorSettings } from '../utils/generatorSettingsCache';
-import { END_REASON_LABELS } from '../types/generator';
 import type { GeneratorNode } from '../types/generator';
 
 type SidebarTab = 'analysis' | 'games' | 'lab';
@@ -128,21 +127,6 @@ function getFenFullMoveNumber(fen: string, fallbackDepth: number): number {
   return Number.isFinite(fullMove) && fullMove > 0 ? fullMove : Math.max(1, Math.ceil(fallbackDepth / 2));
 }
 
-function buildGeneratedNodeComment(node: GeneratorNode): string {
-  const parts: string[] = [];
-  if (node.stockfish && node.stockfish.eval !== null) {
-    const ev = node.stockfish.eval;
-    parts.push(`eval: ${ev >= 0 ? '+' : ''}${ev.toFixed(2)}`);
-  }
-  if (node.lichess && node.lichess.totalGames > 0) {
-    parts.push(`${node.lichess.totalGames} games`);
-  }
-  if (node.reason) parts.push(node.reason);
-  if (node.warning) parts.push(node.warning);
-  if (node.endReason) parts.push(END_REASON_LABELS[node.endReason]);
-  return parts.join(' | ');
-}
-
 function convertGeneratedChild(node: GeneratorNode, parentId: string | null, color: 'white' | 'black', original?: TreeNode): TreeNode {
   return {
     id: node.id,
@@ -154,7 +138,7 @@ function convertGeneratedChild(node: GeneratorNode, parentId: string | null, col
     whiteWins: node.lichess ? Math.round(node.lichess.totalGames * ((color === 'white' ? node.lichess.winRate : node.lichess.lossRate) / 100)) : 0,
     blackWins: node.lichess ? Math.round(node.lichess.totalGames * ((color === 'white' ? node.lichess.lossRate : node.lichess.winRate) / 100)) : 0,
     draws: node.lichess ? Math.round(node.lichess.totalGames * (node.lichess.drawRate / 100)) : 0,
-    comment: [original?.comment, buildGeneratedNodeComment(node)].filter(Boolean).join(' | '),
+    comment: original?.comment ?? '',
     nags: original?.nags ?? [],
     depth: node.depth,
   };

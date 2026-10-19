@@ -11,11 +11,15 @@ import {
   upsertRemoteFile,
   deleteRemoteFile,
   pushAllFilesToCloud,
-} from '../lib/supabaseSync';
+} from '../lib/firebaseSync';
 
 const STORAGE_KEY = 'main-line-files';
 const ACTIVE_KEY = 'main-line-active-file';
 const DEBOUNCE_MS = 500;
+
+function reportCloudFailure(error: unknown) {
+  logger.error('storage', 'Cloud sync failed. Your changes remain saved on this device.', error instanceof Error ? error.message : String(error));
+}
 
 function toTimestamp(value: string | undefined): number {
   if (!value) return 0;
@@ -429,7 +433,7 @@ export function useFiles() {
         importedGames: importedGames ?? [],
       };
       dispatch({ type: 'SAVE_FILE', file });
-      if (user) upsertRemoteFile(user.id, file);
+      if (user) upsertRemoteFile(user.id, file).catch(reportCloudFailure);
       return file;
     },
     [dispatch, user]
@@ -449,7 +453,7 @@ export function useFiles() {
             nodeCount: countNodes(clonedTree),
             updatedAt: new Date().toISOString(),
           };
-          upsertRemoteFile(user.id, updated);
+          upsertRemoteFile(user.id, updated).catch(reportCloudFailure);
         }
       }
     },
@@ -466,7 +470,7 @@ export function useFiles() {
             ...existing,
             importedGames: games,
             updatedAt: new Date().toISOString(),
-          });
+          }).catch(reportCloudFailure);
         }
       }
     },
@@ -476,7 +480,7 @@ export function useFiles() {
   const deleteFile = useCallback(
     (id: string) => {
       dispatch({ type: 'DELETE_FILE', id });
-      if (user) deleteRemoteFile(user.id, id);
+      if (user) deleteRemoteFile(user.id, id).catch(reportCloudFailure);
     },
     [dispatch, user]
   );
@@ -491,7 +495,7 @@ export function useFiles() {
             ...existing,
             name,
             updatedAt: new Date().toISOString(),
-          });
+          }).catch(reportCloudFailure);
         }
       }
     },
@@ -529,7 +533,7 @@ export function useFiles() {
 
       if (user) {
         for (const file of normalizedIncoming) {
-          void upsertRemoteFile(user.id, file);
+          void upsertRemoteFile(user.id, file).catch(reportCloudFailure);
         }
       }
     },

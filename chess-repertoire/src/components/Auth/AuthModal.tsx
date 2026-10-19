@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Mail, Lock, LogIn, UserPlus } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { isSupabaseConfigured } from '../../lib/supabase';
+import { isFirebaseConfigured } from '../../lib/firebase';
 
 interface AuthModalProps {
   onClose: () => void;
@@ -18,7 +18,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  if (!isSupabaseConfigured) {
+  if (!isFirebaseConfigured) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
         <div className="bg-bg-primary border border-border-subtle rounded-xl p-6 w-full max-w-sm shadow-2xl">
@@ -27,10 +27,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose }) => {
             <button onClick={onClose} className="btn-icon"><X className="w-4 h-4" /></button>
           </div>
           <p className="text-text-muted text-sm">
-            Supabase is not configured yet. Add{' '}
-            <code className="text-accent-teal">VITE_SUPABASE_URL</code> and{' '}
-            <code className="text-accent-teal">VITE_SUPABASE_ANON_KEY</code> to your{' '}
-            <code className="text-accent-teal">.env</code> file to enable login and cloud sync.
+            Cloud sync is not available in this build yet. Your repertoires remain saved on this device.
           </p>
         </div>
       </div>

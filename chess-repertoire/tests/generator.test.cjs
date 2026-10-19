@@ -498,3 +498,14 @@ test('cancelling a pending cloud lookup never starts local fallback', async () =
   await assert.rejects(pending, { name: 'AbortError' });
   assert.equal(localCalls, 0);
 });
+
+test('generation adds no comments to converted trees or PGN exports', () => {
+  const tree = buildSeedTree([['e4', 'e5', 'Nf3']], 'white');
+  for (const node of walk(tree)) {
+    node.reason = 'Generated explanation';
+    node.warning = 'Generated warning';
+    node.stockfish = { eval: 0.25, depth: 12 };
+  }
+  assert.ok(walk(convertToTreeNode(tree)).every(node => node.comment === ''));
+  assert.ok(!exportGeneratorPGN(tree, { color: 'white' }, true).includes('{'));
+});

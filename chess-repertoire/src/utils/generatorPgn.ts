@@ -9,7 +9,6 @@ import { sanitizePgnForParser } from './pgnSanitizer';
 import { parseGames } from '@mliebelt/pgn-parser';
 import type { PgnMove } from '@mliebelt/pgn-types';
 import { buildSeedTree } from './generatorSeeds';
-import { END_REASON_LABELS } from '../types/generator';
 
 /** Parse all main lines and nested variations, validating SAN before loading. */
 export function parsePGN(pgnText: string): string[][] {
@@ -36,12 +35,12 @@ export function parsePGN(pgnText: string): string[][] {
 }
 
 /**
- * Export a GeneratorNode tree to PGN format with annotations.
+ * Export generated moves to PGN without automatic analysis comments.
  */
 export function exportGeneratorPGN(
   tree: GeneratorNode,
   settings: { color: string },
-  withAnnotations: boolean = true
+  _withAnnotations: boolean = false
 ): string {
   const exportTree = tree;
   const headers = [
@@ -54,7 +53,7 @@ export function exportGeneratorPGN(
     '',
   ];
 
-  const moveText = buildPGNMoves(exportTree, withAnnotations, false);
+  const moveText = buildPGNMoves(exportTree, false);
   return headers.join('\n') + '\n' + moveText + ' *\n';
 }
 
@@ -63,7 +62,6 @@ export function exportGeneratorPGN(
  */
 function buildPGNMoves(
   node: GeneratorNode,
-  withAnnotations: boolean,
   forceBlackNumber: boolean
 ): string {
   if (!node.children || node.children.length === 0) return '';
@@ -88,12 +86,6 @@ function buildPGNMoves(
     result += mainChild.san || '';
   }
 
-  // Annotation comment
-  if (withAnnotations) {
-    const annotation = buildAnnotation(mainChild);
-    if (annotation) result += ` {${annotation}}`;
-  }
-
   // Variations (in parentheses)
   let hasVariations = false;
   for (const varChild of variations) {
@@ -105,12 +97,7 @@ function buildPGNMoves(
       varText += `${moveNum}... ${varChild.san}`;
     }
 
-    if (withAnnotations) {
-      const ann = buildAnnotation(varChild);
-      if (ann) varText += ` {${ann}}`;
-    }
-
-    const continuation = buildPGNMoves(varChild, withAnnotations, false);
+    const continuation = buildPGNMoves(varChild, false);
     if (continuation) varText += ' ' + continuation;
 
     result += ` (${varText})`;
@@ -118,7 +105,7 @@ function buildPGNMoves(
 
   // Continue main line
   const nextForceBlack = hasVariations || false;
-  const mainContinuation = buildPGNMoves(mainChild, withAnnotations, nextForceBlack);
+  const mainContinuation = buildPGNMoves(mainChild, nextForceBlack);
   if (mainContinuation) result += ' ' + mainContinuation;
 
   return result;
@@ -126,29 +113,4 @@ function buildPGNMoves(
 
 function isExportableSan(san: string | null): san is string {
   return Boolean(san && !/^[a-h]$/.test(san));
-}
-
-/**
- * Build an annotation comment for a node.
- */
-function buildAnnotation(node: GeneratorNode): string {
-  const parts: string[] = [];
-
-  if (node.stockfish && node.stockfish.eval !== null) {
-    const ev = node.stockfish.eval;
-    const sign = ev >= 0 ? '+' : '';
-    parts.push(`SF: ${sign}${ev.toFixed(2)}/d${node.stockfish.depth}`);
-  }
-
-  if (node.lichess && node.lichess.totalGames) {
-    parts.push(`${node.lichess.totalGames}g`);
-    if (node.lichess.winRate !== undefined) {
-      parts.push(`W${Math.round(node.lichess.winRate)}%`);
-    }
-  }
-
-  if (node.reason) parts.push(node.reason);
-  if (node.warning) parts.push(node.warning);
-  if (node.endReason) parts.push(END_REASON_LABELS[node.endReason]);
-  return parts.join(' | ').replace(/[{}]/g, '');
 }

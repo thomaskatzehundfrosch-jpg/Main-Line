@@ -5,7 +5,6 @@
 import type { TreeNode } from '../types';
 import type { GeneratorNode } from '../types/generator';
 import { generateNodeId, resetNodeIdCounter } from './treeBuilder';
-import { END_REASON_LABELS } from '../types/generator';
 
 /**
  * Convert a GeneratorNode tree to a TreeNode tree for import into the main repertoire.
@@ -44,8 +43,7 @@ function convertNodeRecursive(
     blackWins = gameCount - whiteWins - draws;
   }
 
-  // Build comment from analysis data
-  const comment = buildComment(genNode);
+  const comment = "";
 
   const treeNode: TreeNode = {
     id,
@@ -68,32 +66,4 @@ function convertNodeRecursive(
   );
 
   return treeNode;
-}
-
-/**
- * Build a comment string from generator analysis data.
- */
-function buildComment(node: GeneratorNode): string {
-  const parts: string[] = [];
-
-  if (node.stockfish && node.stockfish.eval !== null) {
-    const ev = node.stockfish.eval;
-    const sign = ev >= 0 ? '+' : '';
-    parts.push(`eval: ${sign}${ev.toFixed(2)}`);
-  }
-
-  if (node.lichess && node.lichess.totalGames > 0) {
-    parts.push(
-      `${node.lichess.totalGames} games (W${Math.round(node.lichess.winRate)}% D${Math.round(node.lichess.drawRate)}% L${Math.round(node.lichess.lossRate)}%)`
-    );
-  }
-
-  if (node.isDangerous) {
-    parts.push('⚠ dangerous line');
-  }
-
-  if (node.reason) parts.push(node.reason);
-  if (node.warning) parts.push(node.warning);
-  if (node.endReason) parts.push(END_REASON_LABELS[node.endReason]);
-  return parts.join(' | ');
 }
