@@ -100,7 +100,7 @@ export async function buildTree(
   };
   const publish = () => callbacks.onNodeAdded?.(cloneGeneratorTree(root));
   const progress = (status: string) => callbacks.onProgress?.({ nodes: totalNodes, maxNodes, apiCalls, status, outcome: 'running' });
-  const evalCache = new Map<string, Promise<{ score: number; depth: number; source?: 'lichess-cloud' | 'local' }>>();
+  const evalCache = new Map<string, Promise<{ score: number; depth: number; source?: 'lichess-cloud' | 'local'; bestMoveUci?: string }>>();
   const replyCache = new Map<string, LichessMove[]>();
   const topCache = new Map<string, ReturnType<typeof analysisServices.topMoves>>();
   async function topMoves(fen: string, depth: number, count: number) {
@@ -116,7 +116,7 @@ export async function buildTree(
   const coverages: number[] = [];
   let explorerFailures = 0;
 
-  async function evaluate(fen: string, depth = searchDepth): Promise<{ score: number; depth: number; source?: 'lichess-cloud' | 'local' }> {
+  async function evaluate(fen: string, depth = searchDepth): Promise<{ score: number; depth: number; source?: 'lichess-cloud' | 'local'; bestMoveUci?: string }> {
     check();
     const chess = new Chess(fen);
     if (chess.isCheckmate()) return { score: chess.turn() === 'w' ? -100 : 100, depth };
@@ -125,7 +125,7 @@ export async function buildTree(
     if (!evalCache.has(key)) {
       evalCache.set(key, analysisServices.analyze(worker!, fen, depth, signal).then(result => {
         if (result.depth < depth || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
-        return { score: result.score / 100, depth: result.depth, source: result.source ?? 'local' as const };
+        return { score: result.score / 100, depth: result.depth, source: result.source ?? 'local' as const, bestMoveUci: result.bestMoveUci };
       }).catch(error => { evalCache.delete(key); throw error; }));
     }
     const result = await evalCache.get(key)!;
@@ -206,13 +206,24 @@ export async function buildTree(
       const winEvidence = (move: Candidate) => move.stats && move.stats.totalGames >= Math.max(100, settings.minGames)
         ? winLowerBound(move.stats.winRate / 100 * move.stats.totalGames, move.stats.totalGames) : 0;
       async function verifyWinner(ranked: Candidate[]): Promise<Candidate[]> {
-        const reference = scoreFor((await evaluate(fen, settings.sfDepth)).score, settings.color);
+        const rootEvaluation = await evaluate(fen, settings.sfDepth);
+        const reference = scoreFor(rootEvaluation.score, settings.color);
         const { maximum } = sacrificeLimits(reference, tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss);
         const belowFloor = settings.evaluationFloorEnabled && reference < settings.evaluationFloor - 1e-8;
         const protectAdvantage = reference >= 1;
         // Include all discovered candidates: shallow screening and a minimum
         // sacrifice must not hide the best conversion at full depth.
-        const order = protectAdvantage ? checked : belowFloor ? [...ranked].sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color)) : ranked;
+        const order = [...(protectAdvantage ? checked : belowFloor ? [...ranked].sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color)) : ranked)];
+        // A best move discovered at final depth may be absent from the shallow
+        // shortlist, or have been removed by shallow safety screening.
+        const deepUci = rootEvaluation.bestMoveUci;
+        if (deepUci && !order.some(move => move.uci === deepUci)) {
+          const board = new Chess(fen);
+          const move = board.move({ from: deepUci.slice(0, 2), to: deepUci.slice(2, 4), promotion: deepUci[4] });
+          if (move) order.push({ san: move.san, uci: deepUci, fen: board.fen(), score: rootEvaluation.score,
+            depth: rootEvaluation.depth, stats: popular.find(row => row.uci === deepUci),
+            reason: `Best move from depth-${settings.sfDepth} root analysis; fallback after shallow candidate screening` });
+        }
         let bestConversion: Candidate | null = null;
         let kingFallback: Candidate | null = null;
         for (const move of order) {
@@ -223,7 +234,7 @@ export async function buildTree(
             const objective = scoreFor(verified.score, settings.color);
             if (reference - objective > maximum + 1e-8 ||
                 (settings.evaluationFloorEnabled && !belowFloor && objective < settings.evaluationFloor - 1e-8)) {
-              log('info', `${move.san} failed depth-${settings.sfDepth} safety limits; checking the next candidate.`);
+              log('info', `${move.san} failed depth-${settings.sfDepth} safety limits: reference ${reference.toFixed(2)}, candidate ${objective.toFixed(2)}, loss ${(reference - objective).toFixed(2)}, allowed ${maximum.toFixed(2)}${settings.evaluationFloorEnabled && !belowFloor ? `, floor ${settings.evaluationFloor.toFixed(2)}` : ''} (all from your side); checking the next candidate.`);
               continue;
             }
             const evidence = winEvidence(move);
@@ -247,7 +258,7 @@ export async function buildTree(
             return [chosen];
           } catch (error) {
             check();
-            log('warning', `Could not verify ${move.san} at depth ${settings.sfDepth}; checking the next candidate.`);
+            log('warning', `Could not verify ${move.san} at depth ${settings.sfDepth}: ${error instanceof Error ? error.message : String(error)}; checking the next candidate.`);
           }
         }
         if (bestConversion) {
@@ -258,14 +269,14 @@ export async function buildTree(
           choiceCache.set(key, [kingFallback]);
           return [kingFallback];
         }
-        throw new Error(`No candidate passed depth-${settings.sfDepth} verification within the loss limit from the current evaluation and evaluation-floor limits.`);
+        throw new Error(`No candidate passed depth-${settings.sfDepth} verification within the loss limit from the current evaluation and evaluation floor limits. Reference ${reference.toFixed(2)}, allowed loss ${maximum.toFixed(2)}${settings.evaluationFloorEnabled ? `, floor ${settings.evaluationFloor.toFixed(2)}` : ''} (from your side).`);
       }
       const current = scoreFor((await evaluate(fen)).score, settings.color);
       if (scoreFor((await evaluate(fen, settings.sfDepth)).score, settings.color) >= 1) return verifyWinner(checked);
       const { maximum: maximumLoss, minimum: minimumLoss } = sacrificeLimits(current,
         tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss, tricky ? settings.trickinessMinLoss : 0);
       let permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
-      if (!permitted.length) throw new Error(`No verified candidate stays within the ${maximumLoss.toFixed(2)} pawn loss limit from the current evaluation (${current.toFixed(2)} from your side).`);
+      if (!permitted.length) return verifyWinner(checked);
       if (settings.evaluationFloorEnabled) {
         if (current < settings.evaluationFloor - 1e-8) {
           // Already below the floor: no practical or popularity bonus, only the best defense.
@@ -274,7 +285,7 @@ export async function buildTree(
           return verifyWinner([chosen, ...permitted.filter(move => move !== chosen)]);
         }
         permitted = permitted.filter(move => scoreFor(move.score, settings.color) + 1e-8 >= settings.evaluationFloor);
-        if (!permitted.length) throw new Error(`No verified candidate meets your evaluation floor (${settings.evaluationFloor.toFixed(2)} from your side) within the per-move loss limit.`);
+        if (!permitted.length) return verifyWinner(checked);
       }
       if (tricky) {
         // A fallback may be below the minimum sacrifice, but never exceeds the maximum.

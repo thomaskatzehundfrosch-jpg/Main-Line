@@ -737,3 +737,38 @@ test('deep position searches receive a bounded budget and report actual progress
     assert.equal(handlers.size, 0, 'Timed-out search releases listeners');
   } finally { global.window = previousWindow; }
 });
+
+for (const color of ['white', 'black']) for (const shallowRejects of [false, true]) {
+  test(`final-depth best move rescues an exhausted shortlist (${color}, shallow rejection: ${shallowRejects})`, async () => {
+    const position = new Chess(); if (color === 'black') position.move('e4');
+    const legal = position.moves({ verbose: true });
+    const shallow = legal.slice(0, 3), deep = legal[5];
+    const deepBoard = new Chess(position.fen()); deepBoard.move(deep);
+    const sign = color === 'white' ? 1 : -1;
+    const logs = [];
+    const root = await buildTree(color === 'black' ? [['e4']] : null,
+      { ...defaults, color, sfDepth: 25, maxEvalLoss: .7, evaluationFloorEnabled: false },
+      { onLog: entry => logs.push(entry) }, { current: false }, dummyWorker, services({
+        topMoves: async (_w, fen, depth, count) => (fen === position.fen() ? shallow : new Chess(fen).moves({ verbose: true }))
+          .slice(0, count).map(move => ({ uci: uci(move), eval: 0, depth })),
+        analyze: async (_w, fen, depth) => ({ depth, bestMoveUci: fen === position.fen() && depth === 25 ? uci(deep) : '',
+          score: sign * (fen === position.fen() ? 90 : fen === deepBoard.fen() ? 89 : depth === 25 || shallowRejects ? 20 : 90) }),
+      }));
+    const parent = color === 'white' ? root : root.children[0];
+    assert.equal(parent.children[0].uci, uci(deep));
+    assert.equal(parent.children[0].stockfish.depth, 25);
+    assert.match(parent.children[0].reason, /depth-25 root analysis/);
+    assert.ok(logs.some(entry => /reference 0.90, candidate 0.20, loss 0.70, allowed 0.10/.test(entry.message)));
+  });
+}
+
+test('final-depth fallback does not bypass a genuine safety violation', async () => {
+  const position = new Chess(), legal = position.moves({ verbose: true });
+  const root = await buildTree(null, { ...defaults, sfDepth: 25, maxEvalLoss: .7, evaluationFloorEnabled: false },
+    {}, { current: false }, dummyWorker, services({
+      analyze: async (_w, fen, depth) => ({ depth, score: fen === position.fen() ? 90 : 20,
+        bestMoveUci: fen === position.fen() ? uci(legal.at(-1)) : '' }),
+    }));
+  assert.equal(root.children.length, 0);
+  assert.match(root.warning, /Reference 0.90, allowed loss 0.10/);
+});
