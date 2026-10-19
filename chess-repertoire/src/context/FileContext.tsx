@@ -147,6 +147,7 @@ function fileReducer(state: FileState, action: FileAction): FileState {
     }
 
     case 'UPDATE_FILE_GAMES':
+      if (!state.files.some(f => f.id === action.id && f.importedGames !== action.games)) return state;
       return {
         ...state,
         files: state.files.map((f) =>
@@ -462,16 +463,17 @@ export function useFiles() {
 
   const updateFileGames = useCallback(
     (id: string, games: ImportedGame[]) => {
+      const existing = state.files.find((f) => f.id === id);
+      // App's sync effect also runs when this callback changes with the file list.
+      // Do not dispatch or queue cloud snapshots for the same games again.
+      if (!existing || existing.importedGames === games) return;
       dispatch({ type: 'UPDATE_FILE_GAMES', id, games });
       if (user) {
-        const existing = state.files.find((f) => f.id === id);
-        if (existing) {
-          upsertRemoteFile(user.id, {
-            ...existing,
-            importedGames: games,
-            updatedAt: new Date().toISOString(),
-          }).catch(reportCloudFailure);
-        }
+        upsertRemoteFile(user.id, {
+          ...existing,
+          importedGames: games,
+          updatedAt: new Date().toISOString(),
+        }).catch(reportCloudFailure);
       }
     },
     [dispatch, user, state.files]
