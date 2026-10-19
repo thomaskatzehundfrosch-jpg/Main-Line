@@ -388,7 +388,8 @@ export async function buildTree(
         }
       } catch (error) {
         check();
-        node.warning = 'Your move was preserved, but engine verification failed.';
+        const reason = error instanceof Error ? error.message : String(error);
+        node.warning = `Your move was preserved, but engine verification failed: ${reason}`;
         log('warning', `${node.san}: ${node.warning}`);
       }
       publish();

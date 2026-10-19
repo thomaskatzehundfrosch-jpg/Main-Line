@@ -544,3 +544,14 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
     assert.ok(root.children.every(n => n.children.length), 'Every new White move gets a Black answer');
   });
 }
+
+for (const generatorMode of ['opening-lab', 'legacy']) {
+  test(`${generatorMode}: supplied move verification warnings include the engine failure reason`, async () => {
+    const logs = [];
+    const root = await buildTree([['e4', 'e5']], { ...defaults, generatorMode }, { onLog: log => logs.push(log) }, { current: false }, dummyWorker,
+      services({ analyze: async () => { throw new Error('Stockfish position analysis timed out after 45000ms.'); } }));
+    assert.match(root.children[0].warning, /verification failed: Stockfish position analysis timed out after 45000ms/);
+    assert.ok(logs.some(log => log.message.includes('45000ms')));
+    assert.equal(root.children[0].children[0].san, 'e5');
+  });
+}
