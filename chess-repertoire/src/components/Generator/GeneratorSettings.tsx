@@ -44,6 +44,10 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
   return <div className="flex flex-col h-full overflow-y-auto custom-scrollbar">
     <fieldset disabled={isGenerating} className="p-4 space-y-4 disabled:opacity-60">
       <p className="text-xs text-text-muted">Your existing moves are preserved. Choose where the generator should add continuations and missing branches.</p>
+      <label className={labelClass}>Maximum move number per line
+        <input className={inputClass} type="number" min="1" max="40" step="1" value={settings.maxMoveNumber} onChange={e => update('maxMoveNumber', e.target.valueAsNumber)} />
+      </label>
+      <p className="text-[11px] text-text-muted">Full move numbers: 15 targets move 15 for both sides. Tactical extensions can go beyond this target.</p>
       <label className={labelClass}>Continue existing repertoire
         <select className={inputClass} value={settings.fillBranchesFromMove == null ? 'leaves' : 'fill'}
           onChange={e => update('fillBranchesFromMove', e.target.value === 'fill' ? 1 : undefined)}>
@@ -99,9 +103,9 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
           <button type="button" onClick={() => { clearStoredToken(); setConnected(false); }}>Disconnect</button></div>
           : <button type="button" className="btn-secondary w-full" onClick={() => startOAuthFlow()}>Connect Lichess</button>}
       </div>}
-      <label className={labelClass}>Study size
+      <label className={labelClass}>Total move budget
         <select className={inputClass} value={settings.studySize} onChange={e => update('studySize', e.target.value as StudySize)}>
-          <option value="compact">Compact</option><option value="standard">Standard</option><option value="broad">Broad</option>
+          <option value="compact">150</option><option value="standard">500</option><option value="broad">1200</option>
         </select>
       </label>
       <p className="text-[11px] text-text-muted">{settings.analysisMode === 'stockfish'
@@ -151,15 +155,12 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
         </select>
       </label>
       <p className="text-[11px] text-text-muted">Keeps the first two generated opponent turns wide, then narrows unlikely paths. Reserves budget to continue existing lines. Overrides frequency and coverage targets when necessary. With decay enabled, rare lines keep the full target depth instead of ending two moves earlier. Missing frequencies do not make a path rare.</p>
-      <label className={labelClass}>Target move number
-        <input className={inputClass} type="number" min="1" max="40" value={settings.maxMoveNumber} onChange={e => update('maxMoveNumber', e.target.valueAsNumber)} />
-      </label>
       <details className="text-xs text-text-secondary">
         <summary className="cursor-pointer py-1">Advanced preferences</summary>
         <div className="space-y-3 pt-3">
           <label className={labelClass}>{settings.generatorMode === 'opening-lab' ? 'Final verification depth' : 'Analysis quality'}
             <select className={inputClass} value={settings.sfDepth} onChange={e => update('sfDepth', Number(e.target.value))}>
-              <option value="12">Quick</option><option value="16">Standard</option><option value="20">Thorough</option><option value="25">Deep — slower</option>
+              <option value="12">12</option><option value="16">16</option><option value="20">20</option><option value="25">25</option>
             </select>
           </label>
           <label className={labelClass}>Allowed loss from current evaluation (pawns)
@@ -167,7 +168,7 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
           </label>
           <label className={labelClass}>Extra moves for checks and captures
             <select className={inputClass} value={settings.tacticalExtension} onChange={e => update('tacticalExtension', Number(e.target.value))}>
-              {[0, 1, 2, 3, 4].map(n => <option key={n} value={n}>{n === 0 ? 'Off' : n}</option>)}
+              {[0, 1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}
             </select>
           </label>
           <label className="flex gap-2"><input type="checkbox" checked={settings.avoidQueenTrades} onChange={e => update('avoidQueenTrades', e.target.checked)} />Prefer to avoid immediate queen exchanges</label>
