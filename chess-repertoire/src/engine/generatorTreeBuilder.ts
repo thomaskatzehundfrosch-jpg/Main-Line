@@ -217,16 +217,45 @@ export async function buildTree(
             reason: `Best move from depth-${settings.sfDepth} root analysis; fallback after shallow candidate screening` });
         }
         const verified: Candidate[] = [];
-        for (const move of order) {
+        const verify = async (move: Candidate) => {
           check();
-          try {
-            progress(`Verifying ${move.san} at depth ${settings.sfDepth}…`);
-            const result = await evaluate(move.fen, settings.sfDepth, true);
-            verified.push({ ...move, ...result });
-          } catch (error) {
+          progress(`Verifying ${move.san} at depth ${settings.sfDepth}…`);
+          return { ...move, ...await evaluate(move.fen, settings.sfDepth, true) };
+        };
+        // The full-depth root search identifies the baseline. Verify that child
+        // first, then stop as soon as a ranked practical move meets its limits.
+        const baselineMove = deepUci ? order.find(move => move.uci === deepUci) : undefined;
+        const baseline = baselineMove ? await verify(baselineMove) : undefined;
+        const baselineScore = baseline ? scoreFor(baseline.score, settings.color) : undefined;
+        const alreadyBelowFloor = settings.evaluationFloorEnabled && scoreFor(rootEvaluation.score, settings.color) < settings.evaluationFloor - 1e-8;
+        if (baseline && (baselineScore! >= 1 || alreadyBelowFloor)) {
+          verified.push(baseline);
+        } else {
+          if (baseline) verified.push(baseline);
+          const limit = baseline ? sacrificeLimits(baselineScore!, tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss).maximum : undefined;
+          let kingChoice: Candidate | undefined;
+          for (const move of order) {
             check();
-            log('warning', `Could not verify ${move.san} at depth ${settings.sfDepth}: ${error instanceof Error ? error.message : String(error)}; checking the next candidate.`);
+            try {
+              const result = baseline && move.uci === baseline.uci ? baseline : await verify(move);
+              if (!baseline || result !== baseline) verified.push(result);
+              if (!baseline) continue; // Older/custom providers without a best move need exhaustive comparison.
+              const objective = scoreFor(result.score, settings.color);
+              const acceptable = baselineScore! - objective <= limit! + 1e-8 &&
+                (!settings.evaluationFloorEnabled || objective >= settings.evaluationFloor - 1e-8);
+              if (!acceptable) continue;
+              if (!kingChoice && abandonsCastling(fen, result)) { kingChoice = result; continue; }
+              if (kingChoice && (!preservesCastling(fen, result) || objective + CASTLING_PREFERENCE_MARGIN + 1e-8 < scoreFor(kingChoice.score, settings.color))) continue;
+              // Keep the accepted practical move first for the common selection below.
+              verified.splice(0, verified.length, result, ...verified.filter(other => other.uci !== result.uci));
+              kingChoice = undefined;
+              break;
+            } catch (error) {
+              check();
+              log('warning', `Could not verify ${move.san} at depth ${settings.sfDepth}: ${error instanceof Error ? error.message : String(error)}; checking the next candidate.`);
+            }
           }
+          if (kingChoice) verified.splice(0, verified.length, kingChoice, ...verified.filter(other => other.uci !== kingChoice!.uci));
         }
         if (!verified.length) throw new Error(`No candidate could be verified at depth ${settings.sfDepth}; continuation remains unfinished.`);
         if (deepUci && !verified.some(move => move.uci === deepUci)) throw new Error(`The depth-${settings.sfDepth} best continuation could not be verified; continuation remains unfinished.`);

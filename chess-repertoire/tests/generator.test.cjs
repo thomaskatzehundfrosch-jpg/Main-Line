@@ -677,7 +677,7 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
 
 test('gradual sacrifice cap follows the evaluation and relaxes an incompatible minimum', () => {
   const { sacrificeLimits } = require('../src/utils/sacrificeLimits.ts');
-  for (const [evaluation, expected] of [[-.5, .7], [.3, .7], [.5, .5], [.7, .3], [.9, .1], [.99, .01]]) {
+  for (const [evaluation, expected] of [[-.5, .7], [.3, .7], [.5, .5], [.7, .3], [.9, .15], [.97, .15], [.99, .15]]) {
     const limits = sacrificeLimits(evaluation, .7, .4);
     assert.ok(Math.abs(limits.maximum - expected) < 1e-8);
     assert.equal(limits.minimum, expected + 1e-8 < .4 ? 0 : .4);
@@ -685,7 +685,7 @@ test('gradual sacrifice cap follows the evaluation and relaxes an incompatible m
   assert.equal(sacrificeLimits(.9, .05).maximum, .05, 'A stricter user limit still applies');
 });
 for (const generatorMode of ['opening-lab', 'legacy']) for (const color of ['white', 'black']) {
-  test(`${generatorMode} ${color}: +0.9 caps sacrifice at 0.1 while retaining practical choices`, async () => {
+  test(`${generatorMode} ${color}: +0.9 caps sacrifice at 0.15 while retaining practical choices`, async () => {
     const position = new Chess(); if (color === 'black') position.move('e4');
     const sign = color === 'white' ? 1 : -1;
     const moves = position.moves({ verbose: true }).slice(0, 3);
@@ -754,7 +754,7 @@ for (const color of ['white', 'black']) for (const shallowRejects of [false, tru
     assert.equal(parent.children[0].uci, uci(deep));
     assert.equal(parent.children[0].stockfish.depth, 25);
     assert.match(parent.children[0].reason, /depth-25 root analysis/);
-    assert.ok(logs.some(entry => /best continuation 0.89, candidate 0.20, loss 0.69, allowed 0.11/.test(entry.message)));
+    assert.ok(logs.some(entry => /best continuation 0.89, candidate 0.20, loss 0.69, allowed 0.15/.test(entry.message)));
   });
 }
 
@@ -835,7 +835,8 @@ for (const color of ['white', 'black']) {
     assert.equal(parent.children[0].uci, uci(legal[1]), '0.17 loss fits the 0.18 cap; higher-win-rate 0.22 loss does not');
     assert.equal(parent.children[0].stockfish.source, 'local');
     assert.match(parent.children[0].reason, /loss 0.17 from best verified continuation \(0.82\)/);
-    assert.ok(finalCalls.includes(fens[0]) && finalCalls.includes(fens[2]));
+    assert.ok(finalCalls.includes(fens[0]) && finalCalls.includes(fens[1]), 'Verify baseline and accepted candidate');
+    assert.ok(!finalCalls.includes(fens[2]), 'No deep search for candidates after the accepted choice');
   });
 }
 
@@ -877,3 +878,29 @@ test('timed-out position search retries once on the same worker and never downgr
     assert.equal(timers.length, 4, 'No unlimited retries');
   } finally { global.window = previousWindow; }
 });
+
+for (const score of [97, 120]) {
+  test(`full-depth baseline ${score / 100}: stops verification early without weakening safety`, async () => {
+    const position = new Chess(), legal = position.moves({ verbose: true }).slice(0, 3);
+    const fens = legal.map(move => { const board = new Chess(); board.move(move); return board.fen(); });
+    const calls = [];
+    const root = await buildTree(null, { ...defaults, sfDepth: 25, analysisMode: 'lichess+stockfish' }, {},
+      { current: false }, dummyWorker, {
+        ...services({
+          topMoves: async (_w, _fen, depth) => legal.map(move => ({ uci: uci(move), eval: 0, depth })),
+          analyze: async (_w, fen, depth) => ({ depth, score: fen === position.fen() ? score : [score, score - 13, score - 30][fens.indexOf(fen)] ?? 0 }),
+          replies: async fen => fen === position.fen() ? legal.map((move, index) => ({ uci: uci(move), san: move.san,
+            totalGames: 1000, playRate: 33, winRate: [40, 80, 70][index] })) : [],
+        }),
+        verify: async (_w, fen, depth) => {
+          calls.push(fen);
+          return { depth, score: fen === position.fen() ? score : [score, score - 13, score - 30][fens.indexOf(fen)] ?? 0,
+            bestMoveUci: fen === position.fen() ? uci(legal[0]) : '', source: 'local' };
+        },
+      });
+    assert.equal(calls[1], fens[0], 'Verify baseline before practical candidates');
+    assert.equal(root.children[0].uci, uci(legal[score >= 100 ? 0 : 1]));
+    assert.ok(!calls.includes(fens[2]), 'Do not verify remaining candidates once a choice is established');
+    assert.equal(calls.length, score >= 100 ? 2 : 3);
+  });
+}
