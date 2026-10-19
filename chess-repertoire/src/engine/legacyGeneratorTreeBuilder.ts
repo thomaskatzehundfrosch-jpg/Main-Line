@@ -283,7 +283,10 @@ export async function buildTree(
   const seedNodes: Array<{ node: GeneratorNode; parent: GeneratorNode }> = [];
   function collect(node: GeneratorNode, ancestors = new Set<string>()) {
     const next = new Set(ancestors).add(positionKey(node.fen));
-    if (!node.children.length) queue.push({ node, likelihood: 1, pathProbability: 1, opponentTurns: 0, targetDepth: settings.maxMoveNumber * 2, ancestors });
+    const revisitReplies = settings.fillBranchesFromMove !== undefined
+      && new Chess(node.fen).turn() !== (settings.color === 'white' ? 'w' : 'b')
+      && Number(node.fen.split(' ')[5]) >= settings.fillBranchesFromMove;
+    if (!node.children.length || revisitReplies) queue.push({ node, likelihood: 1, pathProbability: 1, opponentTurns: 0, targetDepth: settings.maxMoveNumber * 2, ancestors });
     for (const child of node.children) { seedNodes.push({ node: child, parent: node }); collect(child, next); }
   }
   collect(root);
@@ -349,6 +352,8 @@ export async function buildTree(
         check();
         const added: Candidate[] = [];
         for (const move of moves) {
+          // Existing branches were queued by collect; only create and queue missing replies.
+          if (active.children.some(child => child.uci === move.uci)) { added.push(move); continue; }
           if (totalNodes >= maxNodes) { active.endReason = 'budget'; break; }
           const node: GeneratorNode = {
             id: `gen_${++nextId}`, san: move.san, uci: move.uci, fen: move.fen,

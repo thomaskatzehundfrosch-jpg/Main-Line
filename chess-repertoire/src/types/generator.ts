@@ -7,6 +7,8 @@ export interface GeneratorSettings {
   color: 'white' | 'black';
   analysisMode: AnalysisMode;
   maxMoveNumber: number;
+  /** Revisit existing opponent positions from this full move number; omitted extends leaves only. */
+  fillBranchesFromMove?: number;
   studySize: StudySize;
   /** Final verification depth. Opening Lab Gen compares candidates at min(18, sfDepth). */
   sfDepth: number;
@@ -61,6 +63,8 @@ export function normalizeGeneratorSettings(input: GeneratorSettings): GeneratorS
     analysisMode: input.analysisMode === 'stockfish' ? 'stockfish' : 'lichess+stockfish',
     studySize: input.studySize in STUDY_SIZES ? input.studySize : 'standard',
     maxMoveNumber: Math.round(number(input.maxMoveNumber, 15, 1, 40)),
+    fillBranchesFromMove: input.fillBranchesFromMove == null ? undefined
+      : Math.round(number(input.fillBranchesFromMove, 1, 1, 40)),
     sfDepth: Math.round(number(input.sfDepth, 25, 8, 25)),
     maxEvalLoss: number(input.maxEvalLoss, 0.7, 0, 1),
     evaluationFloorEnabled: input.evaluationFloorEnabled ?? true,

@@ -522,3 +522,25 @@ test('extending an existing repertoire retains every branch and grows each unfin
     assert.ok(node.children.length > 0, `Extended ${line.join(' ')}`);
   }
 });
+
+for (const generatorMode of ['opening-lab', 'legacy']) {
+  test(`${generatorMode}: missing replies start at the selected full move and preserve existing branches`, async () => {
+    const seeds = [['e4', 'e5', 'Nf3', 'Nc6']];
+    const settings = { ...defaults, generatorMode, maxMoveNumber: 3, fillBranchesFromMove: 2 };
+    const root = await buildTree(seeds, settings, {}, { current: false }, dummyWorker, services());
+    const e4 = root.children.find(n => n.san === 'e4');
+    assert.deepEqual(e4.children.map(n => n.san), ['e5'], 'No new replies before move 2');
+    const nf3 = e4.children[0].children.find(n => n.san === 'Nf3');
+    assert.ok(nf3.children.some(n => n.san === 'Nc6'), 'Existing reply survives');
+    assert.ok(nf3.children.length > 1, 'Missing replies are added at move 2');
+    assert.equal(new Set(nf3.children.map(n => n.uci)).size, nf3.children.length, 'No duplicate replies');
+    assert.ok(nf3.children.every(n => n.children.length), 'New and existing replies get continuations');
+  });
+  test(`${generatorMode}: black repertoire fills White replies from move 1 without adding own alternatives`, async () => {
+    const root = await buildTree([['e4', 'e5']], { ...defaults, generatorMode, color: 'black', maxMoveNumber: 2, fillBranchesFromMove: 1 }, {}, { current: false }, dummyWorker, services());
+    assert.ok(root.children.length > 1, 'White first-move alternatives added');
+    const e4 = root.children.find(n => n.san === 'e4');
+    assert.deepEqual(e4.children.map(n => n.san), ['e5'], 'Existing own choice preserved without alternatives');
+    assert.ok(root.children.every(n => n.children.length), 'Every new White move gets a Black answer');
+  });
+}

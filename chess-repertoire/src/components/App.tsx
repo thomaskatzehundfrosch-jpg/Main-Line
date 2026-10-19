@@ -281,6 +281,8 @@ export const App: React.FC = () => {
   const [isLoadingRecommendations, setIsLoadingRecommendations] = useState(false);
   const [activeSignal, setActiveSignal] = useState<'tricky' | 'gaps' | 'important' | null>(null);
   const [regeneratingNodeId, setRegeneratingNodeId] = useState<string | null>(null);
+  const [fillMissingBranches, setFillMissingBranches] = useState(false);
+  const [branchStartMove, setBranchStartMove] = useState(1);
   const [regenerationError, setRegenerationError] = useState<string | null>(null);
   const treeRegenerationTargetRef = useRef<{
     nodeId: string;
@@ -420,6 +422,7 @@ export const App: React.FC = () => {
       const selectedFullMoveNumber = Math.max(...leafMoveNumbers(node));
       const generatorSettings = {
         ...cachedGeneratorSettings,
+        fillBranchesFromMove: fillMissingBranches ? branchStartMove : undefined,
         maxMoveNumber: Math.max(cachedGeneratorSettings.maxMoveNumber, selectedFullMoveNumber + 4),
       };
 
@@ -486,7 +489,7 @@ export const App: React.FC = () => {
         }
       );
     },
-    [currentPath, engine, generator, graftGeneratedContinuation, tree]
+    [currentPath, engine, generator, graftGeneratedContinuation, tree, fillMissingBranches, branchStartMove]
   );
 
   useEffect(() => {
@@ -1048,6 +1051,30 @@ export const App: React.FC = () => {
     <div className="flex flex-col border-t border-border-subtle">
       <div className="px-3 py-2">
         <div className="flex flex-col gap-2">
+          <label className="text-[11px] text-text-secondary flex flex-col gap-1">
+            Repertoire extension
+            <select
+              className="rounded border border-border-subtle bg-bg-primary px-2 py-1"
+              value={fillMissingBranches ? 'fill' : 'leaves'}
+              disabled={generator.isGenerating}
+              onChange={e => setFillMissingBranches(e.target.value === 'fill')}
+            >
+              <option value="leaves">Extend line endings</option>
+              <option value="fill">Fill missing branches and extend</option>
+            </select>
+          </label>
+          {fillMissingBranches && <label className="text-[11px] text-text-secondary flex items-center justify-between gap-2">
+            Add missing replies from move
+            <input
+              type="number" min={1} max={40} value={branchStartMove}
+              disabled={generator.isGenerating}
+              className="w-16 rounded border border-border-subtle bg-bg-primary px-2 py-1"
+              onChange={e => setBranchStartMove(Math.max(1, Math.min(40, Math.round(e.target.valueAsNumber || 1))))}
+            />
+          </label>}
+          {fillMissingBranches && <p className="text-[10px] text-text-muted">
+            Checks existing opponent positions from this move onward and adds missing replies using generator settings. Earlier positions keep their branches; line endings are extended.
+          </p>}
           <button
             onClick={() => handleFinishLineFromNode(currentNode)}
             disabled={!currentNode.move || generator.isGenerating}
