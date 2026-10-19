@@ -1,3 +1,4 @@
+import { STOCKFISH_WORKER_URL } from './stockfishConfig.js';
 import { Chess } from 'chess.js';
 import type { ImportedGame, MistakeRecord, MistakeTier } from '../types/game';
 import { classifyMistake, generateMistakeId } from '../types/game';
@@ -461,7 +462,7 @@ function terminateWorkerSafely(worker: Worker): void {
 }
 
 async function createRawAnalysisWorker(): Promise<Worker> {
-  return new Worker('/stockfish/stockfish-19-lite-single.js?v=19.0.1');
+  return new Worker(STOCKFISH_WORKER_URL);
 }
 
 function initializeAnalysisWorker(worker: Worker, numThreads: number): Promise<Worker> {
@@ -540,7 +541,7 @@ export async function createAnalysisWorker(threads?: number): Promise<Worker> {
       err instanceof Error ? err.message : String(err)
     );
 
-    const fallbackWorker = new Worker('/stockfish/stockfish-19-lite-single.js?v=19.0.1');
+    const fallbackWorker = new Worker(STOCKFISH_WORKER_URL);
     return initializeAnalysisWorker(fallbackWorker, numThreads);
   }
 }
