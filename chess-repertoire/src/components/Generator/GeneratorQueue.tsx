@@ -8,10 +8,6 @@ import { buildSeedTree } from '../../utils/generatorSeeds';
 type Job = { id: string; name: string; seeds: string[][]; settings: GeneratorSettings;
   status: 'queued' | 'running' | 'done' | 'paused' | 'failed'; tree?: GeneratorNode; error?: string };
 const KEY = 'main-line-generator-queue-v1';
-const presets = [
-  ['Kalashnikov', '1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 e5'],
-  ['Sveshnikov', '1. e4 c5 2. Nf3 Nc6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 e5'],
-];
 function readJobs(): Job[] {
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || '[]');
@@ -111,7 +107,6 @@ export function GeneratorQueue({ gen, settings, setSettings, connected }: {
       <button className="btn-primary" disabled={locked || !jobs.some(j => ['queued', 'paused'].includes(j.status))}
         onClick={() => { setError(''); setRunning(true); }}>Run all</button>
       {running && <button className="btn-secondary" onClick={() => { setRunning(false); gen.stopGeneration(); }}>Stop queue</button>}
-      {presets.map(([label, pgn]) => <button key={label} disabled={locked} className="btn-secondary" onClick={() => add(label, pgn)}>+ {label}</button>)}
     </div>
     <div className="flex flex-wrap gap-2">
       <input aria-label="Variation name" placeholder="Variation name" value={name} disabled={locked} onChange={e => setName(e.target.value)} className="bg-bg-primary border border-border-subtle rounded px-2 py-1" />
