@@ -228,7 +228,8 @@ export async function buildTree(
         const baseline = baselineMove ? await verify(baselineMove) : undefined;
         const baselineScore = baseline ? scoreFor(baseline.score, settings.color) : undefined;
         const alreadyBelowFloor = settings.evaluationFloorEnabled && scoreFor(rootEvaluation.score, settings.color) < settings.evaluationFloor - 1e-8;
-        if (baseline && (baselineScore! >= 1 || alreadyBelowFloor)) {
+        const rootAdvantage = scoreFor(rootEvaluation.score, settings.color) >= 1;
+        if (baseline && (rootAdvantage || baselineScore! >= 1 || alreadyBelowFloor)) {
           verified.push(baseline);
         } else {
           if (baseline) verified.push(baseline);
@@ -265,7 +266,7 @@ export async function buildTree(
         const reference = scoreFor(best.score, settings.color);
         const { maximum } = sacrificeLimits(reference, tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss);
         const belowFloor = settings.evaluationFloorEnabled && scoreFor(rootEvaluation.score, settings.color) < settings.evaluationFloor - 1e-8;
-        const protectAdvantage = reference >= 1;
+        const protectAdvantage = rootAdvantage || reference >= 1;
         const sound = verified.filter(move => {
           const objective = scoreFor(move.score, settings.color);
           const acceptable = reference - objective <= maximum + 1e-8 &&

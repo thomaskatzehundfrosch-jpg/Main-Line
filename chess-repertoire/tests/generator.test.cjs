@@ -654,7 +654,7 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
     const chosen = walk(root).find(node => node.fen === position.fen()).children[0];
     assert.equal(chosen.san, 'O-O');
     assert.equal(chosen.stockfish.depth, 25);
-    assert.match(chosen.reason, /best verified continuation|best verified candidate/);
+    assert.match(chosen.reason, /Protecting an advantage/);
   });
   test(`${generatorMode}: advantage protection uses Black's perspective`, async () => {
     const position = new Chess(); position.move('e4');
@@ -902,5 +902,30 @@ for (const score of [97, 120]) {
     assert.equal(root.children[0].uci, uci(legal[score >= 100 ? 0 : 1]));
     assert.ok(!calls.includes(fens[2]), 'Do not verify remaining candidates once a choice is established');
     assert.equal(calls.length, score >= 100 ? 2 : 3);
+  });
+}
+
+for (const generatorMode of ['opening-lab', 'legacy']) for (const color of ['white', 'black']) {
+  test(`${generatorMode} ${color}: +1 before the move keeps protection active if best child drops below +1`, async () => {
+    const board = new Chess(); if (color === 'black') board.move('e4');
+    const moves = board.moves({ verbose: true }).slice(0, 2), sign = color === 'white' ? 1 : -1;
+    const fens = moves.map(move => { const child = new Chess(board.fen()); child.move(move); return child.fen(); });
+    const calls = [];
+    const evaluate = async (_w, fen, depth) => {
+      calls.push(fen);
+      return { depth, score: sign * (fen === board.fen() ? 105 : fen === fens[0] ? 97 : 84),
+        bestMoveUci: fen === board.fen() ? uci(moves[0]) : '', source: 'local' };
+    };
+    const root = await buildTree(color === 'black' ? [['e4']] : null, { ...defaults, generatorMode, color,
+      analysisMode: 'lichess+stockfish', sfDepth: 25 }, {}, { current: false }, dummyWorker, {
+      ...services({ analyze: evaluate,
+        topMoves: async (_w, _fen, depth) => moves.map(move => ({ uci: uci(move), eval: 0, depth })),
+        replies: async fen => fen === board.fen() ? moves.map((move, index) => ({ uci: uci(move), san: move.san,
+          totalGames: 1000, playRate: 50, winRate: index ? 90 : 40 })) : [],
+      }), verify: evaluate,
+    });
+    const chosen = (color === 'white' ? root : root.children[0]).children[0];
+    assert.equal(chosen.uci, uci(moves[0]), 'No practical sacrifice after the root crossed +1');
+    assert.match(chosen.reason, /Protecting an advantage/);
   });
 }
