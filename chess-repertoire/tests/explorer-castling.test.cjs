@@ -31,11 +31,9 @@ test('all explorer lookup paths normalize black castling and preserve its freque
     if (name === './lichessAuth') return { getStoredToken: () => 'test' };
     if (name === './generatorCancellation') return { abortableDelay: async () => {}, abortError: () => Error('aborted') };
     throw Error(name);
-  }, URLSearchParams, Date, fetch: async () => ({ ok: true, status: 200,
-    json: async () => ({ white: 40, draws: 20, black: 40, moves: [
+  }, URLSearchParams, Date, Response, fetch: async () => new Response(JSON.stringify({ white: 40, draws: 20, black: 40, moves: [
       { uci: 'e8h8', san: 'O-O', white: 40, draws: 20, black: 40 },
-    ] }),
-  }) });
+    ] }), { status: 200 }) });
   const fen = 'r3k2r/8/8/8/8/8/8/R3K2R b KQkq - 0 1';
   const settings = { color: 'white', ratingMin: 1800, ratingMax: 2200, speeds: ['rapid'] };
   for (const method of ['getMostLikelyMoves', 'getMostPlayedMoves', 'getMostLikelyMove']) {

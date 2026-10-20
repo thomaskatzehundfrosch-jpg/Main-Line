@@ -1,6 +1,6 @@
 /**
  * Lichess Opening Explorer API client.
- * Handles API calls with throttling (~1 req/sec) and exponential backoff on 429.
+ * Serializes API requests and waits a full minute after rate limiting.
  */
 
 import type { GeneratorSettings, GeneratorLichessStats } from '../types/generator';
@@ -11,10 +11,8 @@ import { normalizeExplorerUci } from './explorerMove.js';
 /** Timestamp of last successful request start (for throttling). */
 let _lastRequestTime = 0;
 
-/** Minimum ms between API calls.
- *  The Opening Explorer endpoint is more permissive than the main API;
- *  200 ms (≈5 req/s) is safe. The exponential backoff handles any 429s. */
-const THROTTLE_MS = 200;
+/** Minimum spacing; requests are also serialized across tabs via Web Locks. */
+const THROTTLE_MS = 1000;
 
 /** Max retry attempts on 429 / network errors. */
 const MAX_RETRIES = 5;
@@ -74,16 +72,23 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Wait until the throttle window has elapsed since the last request.
- */
-async function throttle(): Promise<void> {
-  const now = Date.now();
-  const elapsed = now - _lastRequestTime;
-  if (elapsed < THROTTLE_MS) {
-    await delay(THROTTLE_MS - elapsed);
-  }
-  _lastRequestTime = Date.now();
+// Hold the lock until the response body is received. A 429 cools down every
+// caller, including other tabs, before another request can start.
+let requestTail: Promise<unknown> = Promise.resolve();
+async function coordinatedFetch(url: string, init: RequestInit): Promise<Response> {
+  const request = async () => {
+    await abortableDelay(Math.max(0, THROTTLE_MS - (Date.now() - _lastRequestTime)), init.signal ?? undefined);
+    _lastRequestTime = Date.now();
+    const response = await fetch(url, init);
+    const body = await response.arrayBuffer();
+    if (response.status === 429) await delay(60000);
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+  };
+  const execute = async () => typeof navigator !== 'undefined' && navigator.locks
+    ? await navigator.locks.request('main-line-lichess-api', request) : await request();
+  const pending = requestTail.then(execute, execute);
+  requestTail = pending.catch(() => {});
+  return pending;
 }
 
 function buildCloudEvalUrl(fen: string, multiPv: number): string {
@@ -109,11 +114,10 @@ export async function getCloudEval(
     return cloudEvalCache.get(cacheKey) ?? null;
   }
 
-  await throttle();
 
   try {
     const url = buildCloudEvalUrl(fen, requestedPv);
-    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    const res = await coordinatedFetch(url, { headers: { 'Accept': 'application/json' } });
 
     if (res.status === 404) {
       cloudEvalCache.set(cacheKey, null);
@@ -122,9 +126,8 @@ export async function getCloudEval(
 
     if (res.status === 429) {
       if (attempt <= MAX_RETRIES) {
-        const backoff = 3000 * Math.pow(2, attempt - 1);
-        logError?.('warning', `Lichess cloud eval rate limited. Waiting ${backoff / 1000}s before retry ${attempt}/${MAX_RETRIES}...`);
-        await delay(backoff);
+        const backoff = 60000;
+        logError?.('warning', `Lichess cloud eval rate limited. Waited ${backoff / 1000}s; retry ${attempt}/${MAX_RETRIES}...`);
         return getCloudEval(fen, requestedPv, logError, attempt + 1);
       }
       throw new Error(`Lichess cloud eval rate limited after ${MAX_RETRIES} retries`);
@@ -204,8 +207,7 @@ function totalGames(move: LichessMoveEntry): number {
 
 /**
  * Fetch opening data from Lichess API with retry logic.
- * Automatically throttles to ~1 req/sec and retries on 429 with
- * exponential backoff (3s, 6s, 12s, 24s, 48s).
+ * Serializes requests and retries after a shared 60-second cooldown on 429.
  */
 async function fetchLichess(
   fen: string,
@@ -215,8 +217,6 @@ async function fetchLichess(
   signal?: AbortSignal
 ): Promise<LichessApiResponse> {
   if (signal?.aborted) throw abortError();
-  await abortableDelay(Math.max(0, THROTTLE_MS - (Date.now() - _lastRequestTime)), signal);
-  _lastRequestTime = Date.now();
 
   try {
     const url = buildLichessUrl(fen, settings);
@@ -229,13 +229,12 @@ async function fetchLichess(
     const headers: Record<string, string> = { 'Accept': 'application/json' };
     headers['Authorization'] = `Bearer ${token}`;
     logError('info', `Lichess request (attempt ${attempt}): ${url}`);
-    const res = await fetch(url, { headers, signal });
+    const res = await coordinatedFetch(url, { headers, signal });
 
     if (res.status === 429) {
       if (attempt <= MAX_RETRIES) {
-        const backoff = 3000 * Math.pow(2, attempt - 1);
-        logError('warning', `Lichess rate limited (429). Waiting ${backoff / 1000}s before retry ${attempt}/${MAX_RETRIES}...`);
-        await abortableDelay(backoff, signal);
+        const backoff = 60000;
+        logError('warning', `Lichess rate limited (429). Waited ${backoff / 1000}s; retry ${attempt}/${MAX_RETRIES}...`);
         return fetchLichess(fen, settings, logError, attempt + 1, signal);
       }
       throw new Error(`Lichess API rate limited after ${MAX_RETRIES} retries`);
