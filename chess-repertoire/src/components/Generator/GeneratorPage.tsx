@@ -24,7 +24,6 @@ import type { TreeNode } from '../../types';
 import { END_REASON_LABELS } from '../../types/generator';
 import type { GeneratorNode, GeneratorSettings } from '../../types/generator';
 import type { UseGeneratorReturn } from '../../hooks/useGenerator';
-import { GeneratorQueue } from './GeneratorQueue';
 import { GeneratorSettingsPanel } from './GeneratorSettings';
 import { GeneratorProgressBar } from './GeneratorProgress';
 import { GeneratorMoveTree } from './GeneratorMoveTree';
@@ -344,8 +343,6 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
           Resume saved run
         </button>
       </div>}
-
-      <GeneratorQueue gen={gen} settings={settings} setSettings={setSettings} connected={connected} />
 
       {/* 3-column layout */}
       <div className="flex flex-1 min-h-0 flex-col overflow-y-auto md:overflow-hidden md:flex-row">
