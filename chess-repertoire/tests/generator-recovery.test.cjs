@@ -11,6 +11,19 @@ const { buildSeedTree } = require('../src/utils/generatorSeeds.ts');
 const { DEFAULT_GENERATOR_SETTINGS } = require('../src/types/generator.ts');
 const fake = () => ({ terminated: 0, terminate() { this.terminated++; } });
 
+test('default session reuses a healthy worker across long generation runs', async () => {
+  let now = 0, created = 0;
+  const first = fake();
+  const search = createRecyclingWorkerSession(first, async () => { created++; return fake(); },
+    () => {}, new AbortController().signal, undefined, () => now);
+  for (let i = 0; i < 100; i++) {
+    now += 120000;
+    assert.equal(await search(async worker => worker), first);
+  }
+  assert.equal(created, 0);
+  assert.equal(first.terminated, 0);
+});
+
 test('worker rotation happens between searches and releases old worker before allocating its replacement', async () => {
   const first = fake(), second = fake(), owned = [];
   let finish;

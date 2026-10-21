@@ -1,10 +1,10 @@
-/** Rotate only between awaited searches; never interrupt an active evaluation. */
+/** Reuse healthy workers; optional rotation happens only between awaited searches. */
 export function createRecyclingWorkerSession(
   initial: Worker,
   create: () => Promise<Worker>,
   onWorker: (worker: Worker | null) => void,
   signal: AbortSignal,
-  limits = { searches: 40, milliseconds: 120000 },
+  limits = { searches: Infinity, milliseconds: Infinity },
   now = Date.now,
 ) {
   let worker: Worker | null = initial;

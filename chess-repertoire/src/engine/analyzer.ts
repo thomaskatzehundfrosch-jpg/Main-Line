@@ -10,7 +10,9 @@ const ENGINE_READY_TIMEOUT_MS = 15000;
 export function positionAnalysisTimeout(depth: number): number {
   return depth >= 22 ? 180000 : depth >= 20 ? 120000 : depth >= 18 ? 90000 : 45000;
 }
-const WORKER_BOOT_TIMEOUT_MS = 10000;
+// The full-network WASM download and compilation can exceed ten seconds on a
+// cold cache. Keep this bounded while allowing slower devices to initialize.
+const WORKER_BOOT_TIMEOUT_MS = 180000;
 
 /**
  * Custom thresholds for mistake classification.
@@ -557,7 +559,7 @@ export async function createAnalysisWorker(threads?: number): Promise<Worker> {
   } catch (err) {
     logger.warn(
       'engine',
-      'Primary Stockfish analysis worker failed to start; retrying with fallback worker.',
+      'Stockfish analysis worker failed to start; retrying with a fresh worker.',
       err instanceof Error ? err.message : String(err)
     );
 
