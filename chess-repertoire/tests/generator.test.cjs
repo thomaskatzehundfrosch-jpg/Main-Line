@@ -495,7 +495,7 @@ test('cancelling a pending cloud lookup never starts local fallback', async () =
   assert.equal(localCalls, 0);
 });
 
-test('generation adds no comments to converted trees or PGN exports', () => {
+test('generation exports evaluation comments only when requested', () => {
   const tree = buildSeedTree([['e4', 'e5', 'Nf3']], 'white');
   for (const node of walk(tree)) {
     node.reason = 'Generated explanation';
@@ -503,7 +503,11 @@ test('generation adds no comments to converted trees or PGN exports', () => {
     node.stockfish = { eval: 0.25, depth: 12 };
   }
   assert.ok(walk(convertToTreeNode(tree)).every(node => node.comment === ''));
-  assert.ok(!exportGeneratorPGN(tree, { color: 'white' }, true).includes('{'));
+  assert.ok(!exportGeneratorPGN(tree, { color: 'white' }).includes('{'));
+  const annotated = exportGeneratorPGN(tree, { color: 'white' }, true);
+  assert.equal((annotated.match(/\[%eval 0\.25,12\]/g) || []).length, 3);
+  assert.ok(!annotated.includes('Generated explanation'));
+  assert.deepEqual(parsePGN(annotated), [['e4', 'e5', 'Nf3']]);
 });
 
 test('extending an existing repertoire retains every branch and grows each unfinished leaf', async () => {

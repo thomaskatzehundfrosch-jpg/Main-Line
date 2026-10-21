@@ -35,12 +35,12 @@ export function parsePGN(pgnText: string): string[][] {
 }
 
 /**
- * Export generated moves to PGN without automatic analysis comments.
+ * Export generated moves with optional stored position evaluations (White perspective).
  */
 export function exportGeneratorPGN(
   tree: GeneratorNode,
   settings: { color: string },
-  _withAnnotations: boolean = false
+  withEvaluations: boolean = false
 ): string {
   const exportTree = tree;
   const headers = [
@@ -53,7 +53,7 @@ export function exportGeneratorPGN(
     '',
   ];
 
-  const moveText = buildPGNMoves(exportTree, false);
+  const moveText = buildPGNMoves(exportTree, false, withEvaluations);
   return headers.join('\n') + '\n' + moveText + ' *\n';
 }
 
@@ -62,7 +62,8 @@ export function exportGeneratorPGN(
  */
 function buildPGNMoves(
   node: GeneratorNode,
-  forceBlackNumber: boolean
+  forceBlackNumber: boolean,
+  withEvaluations: boolean
 ): string {
   if (!node.children || node.children.length === 0) return '';
 
@@ -86,6 +87,8 @@ function buildPGNMoves(
     result += mainChild.san || '';
   }
 
+  result += evaluationComment(mainChild, withEvaluations);
+
   // Variations (in parentheses)
   let hasVariations = false;
   for (const varChild of variations) {
@@ -97,7 +100,8 @@ function buildPGNMoves(
       varText += `${moveNum}... ${varChild.san}`;
     }
 
-    const continuation = buildPGNMoves(varChild, false);
+    varText += evaluationComment(varChild, withEvaluations);
+    const continuation = buildPGNMoves(varChild, false, withEvaluations);
     if (continuation) varText += ' ' + continuation;
 
     result += ` (${varText})`;
@@ -105,7 +109,7 @@ function buildPGNMoves(
 
   // Continue main line
   const nextForceBlack = hasVariations || false;
-  const mainContinuation = buildPGNMoves(mainChild, nextForceBlack);
+  const mainContinuation = buildPGNMoves(mainChild, nextForceBlack, withEvaluations);
   if (mainContinuation) result += ' ' + mainContinuation;
 
   return result;
@@ -113,4 +117,11 @@ function buildPGNMoves(
 
 function isExportableSan(san: string | null): san is string {
   return Boolean(san && !/^[a-h]$/.test(san));
+}
+
+function evaluationComment(node: GeneratorNode, enabled: boolean): string {
+  const evaluation = node.stockfish;
+  if (!enabled || evaluation?.eval == null || !Number.isFinite(evaluation.eval)) return '';
+  const depth = Number.isFinite(evaluation.depth) && evaluation.depth > 0 ? `,${evaluation.depth}` : '';
+  return ` { [%eval ${evaluation.eval.toFixed(2)}${depth}] }`;
 }

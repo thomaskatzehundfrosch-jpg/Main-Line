@@ -58,6 +58,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
     return () => window.removeEventListener('lichess-auth-updated', sync);
   }, []);
   const busy = gen.isGenerating;
+  const [includeEvaluations, setIncludeEvaluations] = useState(false);
 
   const [settings, _setSettings] = useState<GeneratorSettings>(() => getCachedGeneratorSettings());
 
@@ -280,7 +281,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
 
   const handleExportPGN = useCallback(() => {
     if (!gen.tree) return;
-    const pgn = exportGeneratorPGN(gen.tree, settings);
+    const pgn = exportGeneratorPGN(gen.tree, settings, includeEvaluations);
     const blob = new Blob([pgn], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -290,7 +291,7 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  }, [gen.tree, settings]);
+  }, [gen.tree, settings, includeEvaluations]);
 
   const node = displayNode;
   const generatorBoardWidth = isMobile ? 320 : (boardExpanded ? 480 : 360);
@@ -314,6 +315,12 @@ export const GeneratorPage: React.FC<GeneratorPageProps> = ({ onClose, onImportT
           Choose your starting moves, then generate continuations
         </span>
 
+        {gen.tree && (
+          <label className="ml-auto flex items-center gap-2 text-xs text-text-secondary" title="Include stored evaluations from White’s perspective and search depth in the PGN">
+            <input type="checkbox" checked={includeEvaluations} onChange={event => setIncludeEvaluations(event.target.checked)} />
+            Include eval info in PGN
+          </label>
+        )}
         {gen.tree && !busy && (
           <div className="ml-auto flex items-center gap-2">
             <button
