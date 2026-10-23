@@ -654,18 +654,21 @@ export function getTopMoves(
 export async function getTopMovesWithFallback(
   worker: Worker, fen: string, depth: number, numMoves = 3,
   timeoutMs = 90000, signal?: AbortSignal,
+  onRecovery?: (message: string) => void,
 ): Promise<TopMoveResult[]> {
   try {
     const rows = numMoves <= 1 ? [] : await getTopMovesWithStockfish(worker, fen, depth, numMoves, timeoutMs, signal);
     if (rows[0]?.depth >= depth && rows[0].eval != null) {
       return rows.filter(row => row.depth >= depth && row.eval != null);
     }
+    if (numMoves > 1) onRecovery?.(`Candidate search returned insufficient quality: requested depth ${depth}, ${numMoves} lines; received ${rows.map(row => `${row.uci} depth ${row.depth} score ${row.eval ?? 'missing'}`).join('; ') || 'no lines'}. Retrying with one line.`);
   } catch (error) {
     if (signal?.aborted || !(error instanceof Error) ||
       !/timed out|no usable/.test(error.message)) throw error;
+    onRecovery?.(`${error.message} Retrying candidate discovery with one line at depth ${depth}.`);
   }
   // Keep the best-move safety requirement even if wide MultiPV discovery fails.
-  const result = await analyzePositionWithRetry(worker, fen, depth, signal);
+  const result = await analyzePositionWithRetry(worker, fen, depth, signal, onRecovery);
   return [{ uci: result.bestMoveUci, eval: result.score / 100, depth: result.depth,
     fallbackFromDepth: result.fallbackFromDepth }];
 }
@@ -730,7 +733,7 @@ export function getTopMovesWithStockfish(
       // analyzePosition call, which now syncs via isready/readyok anyway.
       worker.postMessage('stop');
       worker.postMessage('setoption name MultiPV value 1');
-      rejectOnce(new Error(`Stockfish MultiPV timed out after ${timeoutMs}ms`));
+      rejectOnce(new Error(`Stockfish MultiPV timed out after ${timeoutMs}ms: requested depth ${depth}, ${numMoves} lines; received ${Object.values(pvMap).map(row => `${row.uci} depth ${row.depth}`).join('; ') || 'no scored lines'}.`));
     }, timeoutMs);
 
     // Map: multipv index -> { uci, eval, depth }
@@ -811,7 +814,7 @@ export function getTopMovesWithStockfish(
       if (settled) return;
       if (e.data === 'readyok') {
         worker.removeEventListener('message', optionReadyHandler);
-        worker.postMessage('ucinewgame');
+        // Same engine session: preserve hash entries from related positions.
         worker.postMessage(`position fen ${fen}`);
         worker.postMessage(`go depth ${depth}`);
       }

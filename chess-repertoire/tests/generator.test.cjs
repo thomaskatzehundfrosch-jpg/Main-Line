@@ -961,7 +961,8 @@ test('candidate discovery recovers shallow MultiPV with a fresh single-line sear
   global.window = global;
   const worker = new WorkerStub();
   const send = data => worker.dispatchEvent(new MessageEvent('message', { data }));
-  const pending = getTopMovesWithFallback(worker, new Chess().fen(), 18, 3);
+  const diagnostics = [];
+  const pending = getTopMovesWithFallback(worker, new Chess().fen(), 18, 3, 90000, undefined, message => diagnostics.push(message));
   send('readyok'); send('readyok');
   send('info depth 17 multipv 1 score cp 25 pv e2e4');
   send('bestmove e2e4');
@@ -971,6 +972,9 @@ test('candidate discovery recovers shallow MultiPV with a fresh single-line sear
   const rows = await pending;
   assert.equal(rows[0].uci, 'd2d4');
   assert.equal(rows[0].depth, 18);
+  assert.match(diagnostics[0], /requested depth 18, 3 lines/);
+  assert.match(diagnostics[0], /e2e4 depth 17/);
+  assert.ok(!worker.commands.includes('ucinewgame'), 'Related searches retain engine hash');
 });
 
 test('candidate discovery retains deep scored PVs and drops shallow secondary lines', async () => {

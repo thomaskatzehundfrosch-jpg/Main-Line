@@ -221,13 +221,30 @@ export function useGenerator(): UseGeneratorReturn {
         run.worker = worker;
         if (!isCurrent() || run.stop.current) { worker.terminate(); throw new DOMException('Generation stopped', 'AbortError'); }
         const search = createRecyclingWorkerSession(worker, () => createAnalysisWorker(1), next => { run.worker = next; }, controller.signal);
+        let searchId = 0;
+        const engineLog = (level: 'info' | 'warning', message: string) => {
+          if (isCurrent()) addLogEntry({ id: `engine_${Date.now()}_${++searchId}`, timestamp: new Date().toLocaleTimeString(), level, message, context: null });
+        };
+        const measured = async <T,>(fen: string, depth: number, lines: number, task: () => Promise<T>): Promise<T> => {
+          const started = Date.now();
+          const label = `Local Stockfish: depth ${depth}, ${lines} line${lines === 1 ? '' : 's'}, move ${fen.split(' ')[5]} (${fen.split(' ')[1] === 'w' ? 'White' : 'Black'} to move)`;
+          engineLog('info', `${label} — started.`);
+          try {
+            const result = await task();
+            engineLog('info', `${label} — finished in ${((Date.now() - started) / 1000).toFixed(1)}s.`);
+            return result;
+          } catch (error) {
+            if (!controller.signal.aborted) engineLog('warning', `${label} — failed after ${((Date.now() - started) / 1000).toFixed(1)}s: ${error instanceof Error ? error.message : String(error)}. FEN: ${fen}`);
+            throw error;
+          }
+        };
         const local = {
           analyze: (_worker: Worker, fen: string, depth: number, signal?: AbortSignal) =>
-            search(current => analyzePositionWithRetry(current, fen, depth, signal, message => {
-              if (isCurrent()) addLogEntry({ id: `retry_${Date.now()}`, timestamp: new Date().toLocaleTimeString(), level: 'warning', message, context: null });
-            })),
+            measured(fen, depth, 1, () => search(current => analyzePositionWithRetry(current, fen, depth, signal,
+              message => engineLog('warning', message)))),
           topMoves: (_worker: Worker, fen: string, depth: number, count = 3, timeout = 90000, signal?: AbortSignal) =>
-            search(current => getTopMovesWithFallback(current, fen, depth, count, timeout, signal)),
+            measured(fen, depth, count, () => search(current => getTopMovesWithFallback(current, fen, depth, count, timeout, signal,
+              message => engineLog('warning', message)))),
         };
         const analysis = createGeneratorCloudAnalysis(local);
         return buildTree(pgnSeeds, settings, {
