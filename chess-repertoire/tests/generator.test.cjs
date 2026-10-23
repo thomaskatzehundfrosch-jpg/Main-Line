@@ -955,3 +955,37 @@ test('generation rejects unmarked insufficient-depth results', async () => {
     services({ analyze: async (_w, fen, depth) => ({ fen, score: 0, depth: depth === 25 ? 22 : depth, source: 'local' }) }));
   assert.equal(root.endReason, 'analysis-failed');
 });
+
+test('candidate discovery recovers shallow MultiPV with a fresh single-line search', async () => {
+  const { getTopMovesWithFallback } = require('../src/engine/analyzer.ts');
+  global.window = global;
+  const worker = new WorkerStub();
+  const send = data => worker.dispatchEvent(new MessageEvent('message', { data }));
+  const pending = getTopMovesWithFallback(worker, new Chess().fen(), 18, 3);
+  send('readyok'); send('readyok');
+  send('info depth 17 multipv 1 score cp 25 pv e2e4');
+  send('bestmove e2e4');
+  await new Promise(setImmediate);
+  send('readyok');
+  send('info depth 18 score cp 30 pv d2d4'); send('bestmove d2d4');
+  const rows = await pending;
+  assert.equal(rows[0].uci, 'd2d4');
+  assert.equal(rows[0].depth, 18);
+});
+
+test('candidate discovery retains deep scored PVs and drops shallow secondary lines', async () => {
+  const { getTopMovesWithFallback } = require('../src/engine/analyzer.ts');
+  const worker = new WorkerStub();
+  const send = data => worker.dispatchEvent(new MessageEvent('message', { data }));
+  const pending = getTopMovesWithFallback(worker, new Chess().fen(), 18, 3);
+  send('readyok'); send('readyok');
+  send('info depth 18 multipv 1 score cp 25 pv e2e4');
+  send('info depth 17 multipv 2 score cp 20 pv d2d4');
+  send('info depth 16 multipv 1 score cp 15 pv e2e4');
+  send('info depth 19 multipv 1 pv e2e4');
+  send('bestmove e2e4');
+  const rows = await pending;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].depth, 18);
+  assert.equal(rows[0].eval, .25);
+});

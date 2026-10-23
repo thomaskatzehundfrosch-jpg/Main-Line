@@ -12,7 +12,7 @@ import type {
 } from '../types/generator';
 import { STUDY_SIZES } from '../types/generator';
 import { buildSeedTree } from '../utils/generatorSeeds';
-import { createAnalysisWorker, analyzePositionWithRetry, getTopMovesWithStockfish } from '../engine/analyzer';
+import { createAnalysisWorker, analyzePositionWithRetry, getTopMovesWithFallback } from '../engine/analyzer';
 import { createRecyclingWorkerSession } from '../engine/recyclingWorker';
 import { createGeneratorCloudAnalysis } from '../engine/generatorCloudAnalysis';
 import { getMostLikelyMoves } from '../utils/lichessApi';
@@ -227,9 +227,9 @@ export function useGenerator(): UseGeneratorReturn {
               if (isCurrent()) addLogEntry({ id: `retry_${Date.now()}`, timestamp: new Date().toLocaleTimeString(), level: 'warning', message, context: null });
             })),
           topMoves: (_worker: Worker, fen: string, depth: number, count = 3, timeout = 90000, signal?: AbortSignal) =>
-            search(current => getTopMovesWithStockfish(current, fen, depth, count, timeout, signal)),
+            search(current => getTopMovesWithFallback(current, fen, depth, count, timeout, signal)),
         };
-        const analysis = settings.generatorMode === 'legacy' ? local : createGeneratorCloudAnalysis(local);
+        const analysis = createGeneratorCloudAnalysis(local);
         return buildTree(pgnSeeds, settings, {
         onNodeAdded: root => { if (isCurrent()) { setTree(root); checkpoint(root); } },
         onNewNode: node => { if (isCurrent()) setLatestNode(node); },

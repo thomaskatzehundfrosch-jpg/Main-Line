@@ -5,7 +5,7 @@ import { replyEvidence, winLowerBound } from '../openingLab/evidence.js';
 import { Chess } from 'chess.js';
 import type { GeneratorCallbacks, GeneratorNode, GeneratorSettings, GeneratorEndReason } from '../types/generator';
 import { normalizeGeneratorSettings, STUDY_SIZES } from '../types/generator';
-import { analyzePositionWithRetry, getTopMovesWithStockfish } from './analyzer';
+import { analyzePositionWithRetry, getTopMovesWithFallback } from './analyzer';
 import { getMostLikelyMoves } from '../utils/lichessApi';
 import type { LichessMove } from '../utils/lichessApi';
 import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils/generatorSeeds';
@@ -13,7 +13,7 @@ import { abortError, abortableDelay } from '../utils/generatorCancellation';
 import { abandonsCastling, preservesCastling, CASTLING_PREFERENCE_MARGIN } from '../utils/castlingPreference';
 import { sacrificeLimits } from '../utils/sacrificeLimits';
 
-const localDependencies = { analyze: analyzePositionWithRetry, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
+const localDependencies = { analyze: analyzePositionWithRetry, topMoves: getTopMovesWithFallback, replies: getMostLikelyMoves };
 const dependencies = { ...localDependencies, ...createGeneratorCloudAnalysis(localDependencies) };
 type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; source?: 'lichess-cloud' | 'local'; stats?: LichessMove; strongestDefense?: boolean; reason: string };
 const positionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
@@ -183,9 +183,11 @@ export async function buildTree(
       if (move && abandonsCastling(fen, { uci, fen: board.fen() })) top = await topMoves(fen, searchDepth, 4);
     }
     check();
-    if (!top.length || top.some(move => move.depth < searchDepth || move.eval == null)) {
-      throw new Error('Engine did not return a verified best move.');
+    const best = top[0];
+    if (!best || best.depth < searchDepth || best.eval == null) {
+      throw new Error(`Engine candidate search failed: requested depth ${searchDepth}, best line depth ${best?.depth ?? 0}, score ${best?.eval ?? 'missing'}.`);
     }
+    top = top.filter(move => move.depth >= searchDepth && move.eval != null);
     const strongest = top[0];
     if (ourTurn) {
       let rare: string[] = [];

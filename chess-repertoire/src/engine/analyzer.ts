@@ -598,6 +598,7 @@ export function uciToSan(fen: string, uci: string): string | null {
  * Result from getTopMoves MultiPV analysis.
  */
 export interface TopMoveResult {
+  fallbackFromDepth?: number;
   uci: string;
   eval: number | null; // pawns from White's perspective
   depth: number;
@@ -647,6 +648,26 @@ export function getTopMoves(
     if (cloudResults && cloudResults.length >= numMoves && cloudResults.every(result => result.depth >= depth)) return cloudResults;
     return getTopMovesWithStockfish(worker, fen, depth, numMoves, timeoutMs);
   });
+}
+
+/** Candidate discovery can recover with a verified single best move. */
+export async function getTopMovesWithFallback(
+  worker: Worker, fen: string, depth: number, numMoves = 3,
+  timeoutMs = 90000, signal?: AbortSignal,
+): Promise<TopMoveResult[]> {
+  try {
+    const rows = numMoves <= 1 ? [] : await getTopMovesWithStockfish(worker, fen, depth, numMoves, timeoutMs, signal);
+    if (rows[0]?.depth >= depth && rows[0].eval != null) {
+      return rows.filter(row => row.depth >= depth && row.eval != null);
+    }
+  } catch (error) {
+    if (signal?.aborted || !(error instanceof Error) ||
+      !/timed out|no usable/.test(error.message)) throw error;
+  }
+  // Keep the best-move safety requirement even if wide MultiPV discovery fails.
+  const result = await analyzePositionWithRetry(worker, fen, depth, signal);
+  return [{ uci: result.bestMoveUci, eval: result.score / 100, depth: result.depth,
+    fallbackFromDepth: result.fallbackFromDepth }];
 }
 
 export function getTopMovesWithStockfish(
@@ -742,7 +763,9 @@ export function getTopMovesWithStockfish(
           }
 
           const d = depthMatch ? parseInt(depthMatch[1], 10) : 0;
-          pvMap[pvIdx] = { uci, eval: evalScore, depth: d };
+          if (evalScore != null && d >= (pvMap[pvIdx]?.depth ?? 0)) {
+            pvMap[pvIdx] = { uci, eval: evalScore, depth: d };
+          }
         }
       }
 

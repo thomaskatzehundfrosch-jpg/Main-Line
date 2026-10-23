@@ -106,7 +106,8 @@ export async function buildTree(
     if (chess.isGameOver()) return { score: 0, depth: settings.sfDepth };
     if (!evalCache.has(fen)) {
       evalCache.set(fen, services.analyze(worker!, fen, settings.sfDepth, signal).then(result => {
-        if (result.depth < settings.sfDepth || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
+        const fallback = settings.sfDepth === 25 && result.fallbackFromDepth === 25 && result.source === 'local' && result.depth >= 22;
+        if ((result.depth < settings.sfDepth && !fallback) || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
         return { score: result.score / 100, depth: result.depth };
       }).catch(error => { evalCache.delete(fen); throw error; }));
     }
@@ -161,9 +162,12 @@ export async function buildTree(
       if (move && abandonsCastling(fen, { uci, fen: board.fen() })) top = await services.topMoves(worker!, fen, settings.sfDepth, 4, 90000, signal);
     }
     check();
-    if (!top.length || top.some(move => move.depth < settings.sfDepth || move.eval == null)) {
-      throw new Error('Engine did not return a verified best move.');
+    const usable = (move: typeof top[number]) => move.eval != null &&
+      (move.depth >= settings.sfDepth || (settings.sfDepth === 25 && move.fallbackFromDepth === 25 && move.depth >= 22));
+    if (!top[0] || !usable(top[0])) {
+      throw new Error(`Engine candidate search failed: requested depth ${settings.sfDepth}, best line depth ${top[0]?.depth ?? 0}.`);
     }
+    top = top.filter(usable);
     const strongest = top[0];
     if (ourTurn) {
       const pool = [...new Set([...top.map(m => m.uci), ...popular.slice(0, 3).map(m => m.uci)])];
