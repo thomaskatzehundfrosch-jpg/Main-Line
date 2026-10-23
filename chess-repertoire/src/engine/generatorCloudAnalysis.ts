@@ -69,8 +69,10 @@ export function createGeneratorCloudAnalysis(local: LocalEngine, fetcher: typeof
       signal?.removeEventListener('abort', abort);
     }
   }
-  return {
-    verify: local.analyze,
+  const gateway = {
+    async verify(worker: Worker, fen: string, depth: number, signal?: AbortSignal): Promise<PositionEval> {
+      return gateway.analyze(worker, fen, depth, signal);
+    },
     async analyze(worker: Worker, fen: string, depth: number, signal?: AbortSignal): Promise<PositionEval> {
       const cloud = await query(fen, 1, depth, signal);
       if (signal?.aborted) throw abortError();
@@ -86,4 +88,5 @@ export function createGeneratorCloudAnalysis(local: LocalEngine, fetcher: typeof
       return cloud.rows.map(row => ({ uci: row.uci, eval: row.cp != null ? row.cp / 100 : row.mate! > 0 ? 100 : -100, depth: cloud.depth }));
     },
   };
+  return gateway;
 }

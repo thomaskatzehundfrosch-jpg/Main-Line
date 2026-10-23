@@ -844,17 +844,17 @@ for (const color of ['white', 'black']) {
   });
 }
 
-test('final verification bypasses cloud hits and uses the local engine', async () => {
+test('final verification uses sufficiently deep cloud hits without local analysis', async () => {
   let calls = 0;
   const gateway = createGeneratorCloudAnalysis(services({ analyze: async (_w, fen, depth) => {
     calls++; return { fen, depth, score: 82, source: 'local' };
   } }), async () => new Response(JSON.stringify({ depth: 38, pvs: [{ moves: 'e2e4', cp: 95 }] })));
   assert.equal((await gateway.analyze(dummyWorker, new Chess().fen(), 25)).score, 95);
-  assert.equal((await gateway.verify(dummyWorker, new Chess().fen(), 25)).score, 82);
-  assert.equal(calls, 1);
+  assert.equal((await gateway.verify(dummyWorker, new Chess().fen(), 25)).score, 95);
+  assert.equal(calls, 0);
 });
 
-test('timed-out position search retries once on the same worker and never downgrades depth', async () => {
+test('timed-out depth-25 search falls back once to local depth 22', async () => {
   const { analyzePositionWithRetry } = require('../src/engine/analyzer.ts');
   const previousWindow = global.window, timers = [], handlers = new Set(), commands = [], warnings = [];
   global.window = { setTimeout: (fn, ms) => { timers.push({ fn, ms }); return 0; } };
@@ -869,11 +869,14 @@ test('timed-out position search retries once on the same worker and never downgr
     send('readyok'); send('info depth 24 score cp 82 pv e2e4');
     timers[0].fn();
     await new Promise(setImmediate);
-    assert.equal(timers[1].ms, 360000);
+    assert.equal(timers[1].ms, 180000);
     assert.equal(warnings.length, 1);
-    send('readyok'); send('info depth 25 score cp 82 pv e2e4'); send('bestmove e2e4');
-    assert.equal((await pending).depth, 25);
-    assert.equal(commands.filter(command => command === 'go depth 25').length, 2);
+    send('readyok'); send('info depth 22 score cp 82 pv e2e4'); send('bestmove e2e4');
+    const result = await pending;
+    assert.equal(result.depth, 22);
+    assert.equal(result.fallbackFromDepth, 25);
+    assert.equal(commands.filter(command => command === 'go depth 25').length, 1);
+    assert.equal(commands.filter(command => command === 'go depth 22').length, 1);
     assert.equal(handlers.size, 0);
     const failed = analyzePositionWithRetry(worker, new Chess().fen(), 25);
     const rejection = assert.rejects(failed, /timed out/);
@@ -933,3 +936,22 @@ for (const generatorMode of ['opening-lab', 'legacy']) for (const color of ['whi
     assert.match(chosen.reason, /Protecting an advantage/);
   });
 }
+
+test('generation accepts explicit local depth-22 fallback for requested depth 25', async () => {
+  const root = await buildTree(null, { ...defaults, sfDepth: 25 }, {}, { current: false }, dummyWorker,
+    services({ analyze: async (_w, fen, depth) => ({ fen, score: 0,
+      depth: depth === 25 ? 22 : depth, source: 'local',
+      ...(depth === 25 ? { fallbackFromDepth: 25 } : {}),
+      bestMoveUci: uci(new Chess(fen).moves({ verbose: true })[0]),
+    }) }));
+  assert.ok(root.children.length);
+  assert.equal(root.children[0].stockfish.depth, 22);
+  assert.match(root.children[0].reason, /verified at depth 22/);
+  assert.ok(!walk(root).some(node => node.endReason === 'analysis-failed'));
+});
+
+test('generation rejects unmarked insufficient-depth results', async () => {
+  const root = await buildTree(null, { ...defaults, sfDepth: 25 }, {}, { current: false }, dummyWorker,
+    services({ analyze: async (_w, fen, depth) => ({ fen, score: 0, depth: depth === 25 ? 22 : depth, source: 'local' }) }));
+  assert.equal(root.endReason, 'analysis-failed');
+});

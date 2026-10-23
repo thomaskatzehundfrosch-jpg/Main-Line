@@ -5,7 +5,7 @@ import { replyEvidence, winLowerBound } from '../openingLab/evidence.js';
 import { Chess } from 'chess.js';
 import type { GeneratorCallbacks, GeneratorNode, GeneratorSettings, GeneratorEndReason } from '../types/generator';
 import { normalizeGeneratorSettings, STUDY_SIZES } from '../types/generator';
-import { analyzePositionWithStockfish, getTopMovesWithStockfish } from './analyzer';
+import { analyzePositionWithRetry, getTopMovesWithStockfish } from './analyzer';
 import { getMostLikelyMoves } from '../utils/lichessApi';
 import type { LichessMove } from '../utils/lichessApi';
 import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils/generatorSeeds';
@@ -13,7 +13,7 @@ import { abortError, abortableDelay } from '../utils/generatorCancellation';
 import { abandonsCastling, preservesCastling, CASTLING_PREFERENCE_MARGIN } from '../utils/castlingPreference';
 import { sacrificeLimits } from '../utils/sacrificeLimits';
 
-const localDependencies = { analyze: analyzePositionWithStockfish, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
+const localDependencies = { analyze: analyzePositionWithRetry, topMoves: getTopMovesWithStockfish, replies: getMostLikelyMoves };
 const dependencies = { ...localDependencies, ...createGeneratorCloudAnalysis(localDependencies) };
 type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; source?: 'lichess-cloud' | 'local'; stats?: LichessMove; strongestDefense?: boolean; reason: string };
 const positionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');
@@ -124,7 +124,9 @@ export async function buildTree(
     const key = JSON.stringify([fen, depth, final && 'verify' in analysisServices]);
     if (!evalCache.has(key)) {
       evalCache.set(key, (('verify' in analysisServices && final && analysisServices.verify) || analysisServices.analyze)(worker!, fen, depth, signal).then(result => {
-        if (result.depth < depth || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
+        const fallback = depth === 25 && result.fallbackFromDepth === 25 && result.source === 'local' && result.depth >= 22;
+        if ((result.depth < depth && !fallback) || !Number.isFinite(result.score)) throw new Error('Engine did not reach the requested analysis quality.');
+        if (fallback) log('warning', `Depth-25 search timed out; using local depth ${result.depth} for this position.`);
         return { score: result.score / 100, depth: result.depth, source: result.source ?? 'local' as const, bestMoveUci: result.bestMoveUci };
       }).catch(error => { evalCache.delete(key); throw error; }));
     }

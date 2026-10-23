@@ -38,6 +38,7 @@ function classifyMistakeCustom(evalDrop: number, thresholds: CustomThresholds): 
  */
 export interface PositionEval {
   source?: 'lichess-cloud' | 'local';
+  fallbackFromDepth?: number;
   fen: string;
   score: number; // centipawns from White's perspective
   isMate: boolean;
@@ -122,7 +123,7 @@ export function analyzePosition(
   });
 }
 
-/** Retry one timed-out search on the same worker, preserving its search hash. */
+/** Recover timed-out searches on the same worker, preserving its search hash. */
 export async function analyzePositionWithRetry(
   worker: Worker, fen: string, depth: number, signal?: AbortSignal,
   onRetry?: (message: string) => void,
@@ -130,6 +131,12 @@ export async function analyzePositionWithRetry(
   try { return await analyzePositionWithStockfish(worker, fen, depth, signal); }
   catch (error) {
     if (signal?.aborted || !(error instanceof Error) || !error.message.startsWith('Stockfish position analysis timed out')) throw error;
+    if (depth === 25) {
+      onRetry?.(`${error.message} Falling back to local depth 22, retaining the engine search hash.`);
+      const result = await analyzePositionWithStockfish(worker, fen, 22, signal);
+      if (result.depth < 22) throw new Error('Stockfish fallback did not reach depth 22.');
+      return { ...result, source: 'local', fallbackFromDepth: 25 };
+    }
     const retryBudget = Math.min(360000, positionAnalysisTimeout(depth) * 2);
     onRetry?.(`${error.message} Retrying once at the same depth with ${retryBudget / 1000}s, retaining the engine search hash.`);
     return analyzePositionWithStockfish(worker, fen, depth, signal, retryBudget);
