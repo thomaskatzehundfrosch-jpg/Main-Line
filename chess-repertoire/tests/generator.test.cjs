@@ -734,7 +734,9 @@ test('deep position searches receive a bounded budget and report actual progress
     send('info depth 23 score cp 42 pv e2e4');
     timeout();
     await assert.rejects(pending, /Requested depth 25; reached depth 23/);
-    assert.equal(handlers.size, 0, 'Timed-out search releases listeners');
+    assert.equal(handlers.size, 1, 'Only the stop acknowledgement tracker survives a timeout');
+    send('bestmove e2e4');
+    assert.equal(handlers.size, 0, 'Stop acknowledgement releases the final tracker');
   } finally { global.window = previousWindow; }
 });
 
@@ -871,6 +873,9 @@ test('timed-out depth-25 search falls back once to local depth 22', async () => 
     await new Promise(setImmediate);
     assert.equal(timers[1].ms, 180000);
     assert.equal(warnings.length, 1);
+    send('readyok');
+    assert.equal(commands.filter(command => command === 'go depth 22').length, 0, 'readyok cannot acknowledge stop');
+    send('bestmove e2e4'); // previous depth-25 search finally stops
     send('readyok'); send('info depth 22 score cp 82 pv e2e4'); send('bestmove e2e4');
     const result = await pending;
     assert.equal(result.depth, 22);
@@ -880,7 +885,10 @@ test('timed-out depth-25 search falls back once to local depth 22', async () => 
     assert.equal(handlers.size, 0);
     const failed = analyzePositionWithRetry(worker, new Chess().fen(), 25);
     const rejection = assert.rejects(failed, /timed out/);
-    timers[2].fn(); await new Promise(setImmediate); timers[3].fn();
+    send('readyok');
+    timers[2].fn(); await new Promise(setImmediate);
+    send('bestmove e2e4'); send('readyok'); timers[3].fn();
+    send('bestmove e2e4');
     await rejection;
     assert.equal(timers.length, 4, 'No unlimited retries');
   } finally { global.window = previousWindow; }

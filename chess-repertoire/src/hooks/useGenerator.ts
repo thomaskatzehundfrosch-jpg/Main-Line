@@ -1,3 +1,4 @@
+import { setEngineDiagnostics } from '../engine/uciSearch';
 /**
  * React hook wrapping the generator tree builder with React state management.
  * Also supports manual tree building by playing moves on the board.
@@ -220,15 +221,26 @@ export function useGenerator(): UseGeneratorReturn {
         const worker = sfWorker ?? await createAnalysisWorker(1);
         run.worker = worker;
         if (!isCurrent() || run.stop.current) { worker.terminate(); throw new DOMException('Generation stopped', 'AbortError'); }
-        const search = createRecyclingWorkerSession(worker, () => createAnalysisWorker(1), next => { run.worker = next; }, controller.signal);
+
         let searchId = 0;
         const engineLog = (level: 'info' | 'warning', message: string) => {
           if (isCurrent()) addLogEntry({ id: `engine_${Date.now()}_${++searchId}`, timestamp: new Date().toLocaleTimeString(), level, message, context: null });
         };
+        const attachDiagnostics = (current: Worker | null, reason?: string) => {
+          run.worker = current;
+          if (!current) engineLog(reason === 'failed' ? 'warning' : 'info', reason === 'isolation'
+            ? 'Preparing a clean Stockfish worker for full-depth verification.'
+            : 'Stockfish worker released; the next local search will use a fresh worker.');
+          if (current) setEngineDiagnostics(current, metrics => engineLog(metrics.outcome === 'complete' ? 'info' : 'warning',
+            `Stockfish ${metrics.outcome}: requested depth ${metrics.requestedDepth}, reached ${metrics.depth}, MultiPV ${metrics.multiPV}; engine ${(metrics.engineTimeMs / 1000).toFixed(2)}s, wall ${(metrics.wallTimeMs / 1000).toFixed(2)}s, nodes ${metrics.nodes}, nps ${metrics.nps}. FEN: ${metrics.fen}`));
+        };
+        attachDiagnostics(worker);
+        engineLog('info', 'Generation owns a dedicated single-thread Stockfish worker; the interactive engine is suspended.');
+        const search = createRecyclingWorkerSession(worker, () => createAnalysisWorker(1), attachDiagnostics, controller.signal);
         const measured = async <T,>(fen: string, depth: number, lines: number, task: () => Promise<T>): Promise<T> => {
           const started = Date.now();
           const label = `Local Stockfish: depth ${depth}, ${lines} line${lines === 1 ? '' : 's'}, move ${fen.split(' ')[5]} (${fen.split(' ')[1] === 'w' ? 'White' : 'Black'} to move)`;
-          engineLog('info', `${label} — started.`);
+          engineLog('info', `${label} — started. FEN: ${fen}`);
           try {
             const result = await task();
             engineLog('info', `${label} — finished in ${((Date.now() - started) / 1000).toFixed(1)}s.`);
@@ -241,12 +253,12 @@ export function useGenerator(): UseGeneratorReturn {
         const local = {
           analyze: (_worker: Worker, fen: string, depth: number, signal?: AbortSignal) =>
             measured(fen, depth, 1, () => search(current => analyzePositionWithRetry(current, fen, depth, signal,
-              message => engineLog('warning', message)))),
+              message => engineLog('warning', message)), true, depth >= 22)),
           topMoves: (_worker: Worker, fen: string, depth: number, count = 3, timeout = 90000, signal?: AbortSignal) =>
             measured(fen, depth, count, () => search(current => getTopMovesWithFallback(current, fen, depth, count, timeout, signal,
               message => engineLog('warning', message)))),
         };
-        const analysis = createGeneratorCloudAnalysis(local);
+        const analysis = createGeneratorCloudAnalysis(local, undefined, undefined, message => engineLog('info', message));
         return buildTree(pgnSeeds, settings, {
         onNodeAdded: root => { if (isCurrent()) { setTree(root); checkpoint(root); } },
         onNewNode: node => { if (isCurrent()) setLatestNode(node); },

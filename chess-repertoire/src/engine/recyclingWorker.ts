@@ -1,8 +1,9 @@
+import { UnresponsiveEngineError } from './uciSearch';
 /** Reuse healthy workers; optional rotation happens only between awaited searches. */
 export function createRecyclingWorkerSession(
   initial: Worker,
   create: () => Promise<Worker>,
-  onWorker: (worker: Worker | null) => void,
+  onWorker: (worker: Worker | null, reason?: 'failed' | 'rotation' | 'isolation') => void,
   signal: AbortSignal,
   limits = { searches: Infinity, milliseconds: Infinity },
   now = Date.now,
@@ -11,12 +12,12 @@ export function createRecyclingWorkerSession(
   let searches = 0;
   let started = now();
   const check = () => { if (signal.aborted) throw new DOMException('Generation stopped', 'AbortError'); };
-  return async function search<T>(task: (worker: Worker) => Promise<T>): Promise<T> {
+  return async function search<T>(task: (worker: Worker) => Promise<T>, retryUnresponsive = true, fresh = false): Promise<T> {
     check();
-    if (worker && (searches >= limits.searches || now() - started >= limits.milliseconds)) {
+    if (worker && (fresh || searches >= limits.searches || now() - started >= limits.milliseconds)) {
       worker.terminate();
       worker = null;
-      onWorker(null);
+      onWorker(null, fresh ? 'isolation' : 'rotation');
     }
     if (!worker) {
       const replacement = await create();
@@ -32,7 +33,8 @@ export function createRecyclingWorkerSession(
       // A failed search may leave the WASM engine unhealthy; replace it before reuse.
       worker.terminate();
       worker = null;
-      onWorker(null);
+      onWorker(null, 'failed');
+      if (retryUnresponsive && error instanceof UnresponsiveEngineError && !signal.aborted) return search(task, false);
       throw error;
     }
   };

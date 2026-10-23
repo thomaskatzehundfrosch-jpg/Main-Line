@@ -13,7 +13,10 @@ import { abortError, abortableDelay } from '../utils/generatorCancellation';
 import { abandonsCastling, preservesCastling, CASTLING_PREFERENCE_MARGIN } from '../utils/castlingPreference';
 import { sacrificeLimits } from '../utils/sacrificeLimits';
 
-const localDependencies = { analyze: analyzePositionWithRetry, topMoves: getTopMovesWithFallback, replies: getMostLikelyMoves };
+const localDependencies = {
+  analyze: (worker: Worker, fen: string, depth: number, signal?: AbortSignal) => analyzePositionWithRetry(worker, fen, depth, signal),
+  topMoves: getTopMovesWithFallback, replies: getMostLikelyMoves,
+};
 const dependencies = { ...localDependencies, ...createGeneratorCloudAnalysis(localDependencies) };
 type Candidate = { san: string; uci: string; fen: string; score: number; depth: number; source?: 'lichess-cloud' | 'local'; stats?: LichessMove; strongestDefense?: boolean; reason: string };
 const positionKey = (fen: string) => fen.split(' ').slice(0, 4).join(' ');

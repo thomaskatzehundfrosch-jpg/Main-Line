@@ -1,3 +1,4 @@
+import { synchronizeEngineSearch, trackEngineSearch } from './uciSearch';
 import { STOCKFISH_WORKER_URL } from './stockfishConfig.js';
 import { Chess } from 'chess.js';
 import type { ImportedGame, MistakeRecord, MistakeTier } from '../types/game';
@@ -107,10 +108,8 @@ export type CancellationCheck = () => boolean;
  * Analyze a single position using the Stockfish worker.
  * Returns a promise that resolves when the engine sends 'bestmove'.
  *
- * Sends 'stop' + 'isready' first so that any bestmove from a previous search
- * (e.g. a timed-out MultiPV call that was never halted) is discarded before
- * we start listening for our own result.  This prevents an off-by-one cascade
- * where every call resolves with the previous position's evaluation.
+ * Waits for the previous search's bestmove before the readiness handshake.
+ * readyok alone does not mean a stopped search has finished.
  */
 export function analyzePosition(
   worker: Worker,
@@ -157,12 +156,14 @@ export function analyzePositionWithStockfish(
     let mateIn: number | null = null;
     let bestMoveUci = '';
     let bestDepth = 0;
+    let finishMetrics: ((outcome: 'complete' | 'failed' | 'cancelled') => void) | undefined;
+    let cancelSync = () => {};
     let settled = false;
 
     const cleanup = () => {
       clearTimeout(timeoutId);
+      cancelSync();
       signal?.removeEventListener('abort', abortHandler);
-      worker.removeEventListener('message', syncHandler);
       worker.removeEventListener('message', analysisHandler);
       worker.removeEventListener('error', errorHandler);
     };
@@ -171,6 +172,7 @@ export function analyzePositionWithStockfish(
       if (settled) return;
       settled = true;
       cleanup();
+      finishMetrics?.('complete');
       resolve(result);
     };
 
@@ -178,6 +180,7 @@ export function analyzePositionWithStockfish(
       if (settled) return;
       settled = true;
       cleanup();
+      finishMetrics?.(error.name === 'AbortError' ? 'cancelled' : 'failed');
       reject(error);
     };
 
@@ -285,24 +288,14 @@ export function analyzePositionWithStockfish(
       worker.addEventListener('message', analysisHandler);
       worker.postMessage('setoption name MultiPV value 1');
       worker.postMessage(`position fen ${fen}`);
+      finishMetrics = trackEngineSearch(worker, fen, depth, 1);
       worker.postMessage(`go depth ${depth}`);
     }
 
-    // Phase 1: stop any running search, then wait for readyok before starting.
-    // Any stale 'bestmove' emitted by the stop fires with no handler and is
-    // simply discarded — preventing it from being captured by our real handler.
-    const syncHandler = (e: MessageEvent<string>) => {
-      if (settled) return;
-      if (e.data === 'readyok') {
-        worker.removeEventListener('message', syncHandler);
-        startAnalysis();
-      }
-    };
+    // The stop barrier must complete before isready is sent.
     signal?.addEventListener('abort', abortHandler, { once: true });
     worker.addEventListener('error', errorHandler);
-    worker.addEventListener('message', syncHandler);
-    worker.postMessage('stop');
-    worker.postMessage('isready');
+    cancelSync = synchronizeEngineSearch(worker, () => { if (!settled) startAnalysis(); }, rejectOnce);
   });
 }
 
@@ -693,11 +686,13 @@ export function getTopMovesWithStockfish(
     if (signal?.aborted) { reject(new DOMException('Generation stopped', 'AbortError')); return; }
     let settled = false;
     let bestMoveUci = '';
+    let finishMetrics: ((outcome: 'complete' | 'failed' | 'cancelled') => void) | undefined;
+    let cancelSync = () => {};
 
     const cleanup = () => {
       clearTimeout(timeout);
+      cancelSync();
       signal?.removeEventListener('abort', abortHandler);
-      worker.removeEventListener('message', syncHandler);
       worker.removeEventListener('message', optionReadyHandler);
       worker.removeEventListener('message', handler);
       worker.removeEventListener('error', errorHandler);
@@ -707,6 +702,7 @@ export function getTopMovesWithStockfish(
       if (settled) return;
       settled = true;
       cleanup();
+      finishMetrics?.('complete');
       resolve(results);
     };
 
@@ -714,6 +710,7 @@ export function getTopMovesWithStockfish(
       if (settled) return;
       settled = true;
       cleanup();
+      finishMetrics?.(error.name === 'AbortError' ? 'cancelled' : 'failed');
       reject(error);
     };
 
@@ -727,12 +724,8 @@ export function getTopMovesWithStockfish(
     };
 
     const timeout = setTimeout(() => {
-      // Halt the engine so it is not left running after the timeout.
-      // The 'bestmove' it emits in response to 'stop' fires with no handler
-      // (we just removed it) and is discarded — it will not pollute the next
-      // analyzePosition call, which now syncs via isready/readyok anyway.
+      // The tracker retains the pending bestmove for the next search's stop barrier.
       worker.postMessage('stop');
-      worker.postMessage('setoption name MultiPV value 1');
       rejectOnce(new Error(`Stockfish MultiPV timed out after ${timeoutMs}ms: requested depth ${depth}, ${numMoves} lines; received ${Object.values(pvMap).map(row => `${row.uci} depth ${row.depth}`).join('; ') || 'no scored lines'}.`));
     }, timeoutMs);
 
@@ -816,22 +809,13 @@ export function getTopMovesWithStockfish(
         worker.removeEventListener('message', optionReadyHandler);
         // Same engine session: preserve hash entries from related positions.
         worker.postMessage(`position fen ${fen}`);
+        finishMetrics = trackEngineSearch(worker, fen, depth, numMoves);
         worker.postMessage(`go depth ${depth}`);
       }
     }
 
-    const syncHandler = (e: MessageEvent<string>) => {
-      if (settled) return;
-      if (e.data === 'readyok') {
-        worker.removeEventListener('message', syncHandler);
-        startAnalysis();
-      }
-    };
-
     signal?.addEventListener('abort', abortHandler, { once: true });
     worker.addEventListener('error', errorHandler);
-    worker.addEventListener('message', syncHandler);
-    worker.postMessage('stop');
-    worker.postMessage('isready');
+    cancelSync = synchronizeEngineSearch(worker, () => { if (!settled) startAnalysis(); }, rejectOnce);
   });
 }

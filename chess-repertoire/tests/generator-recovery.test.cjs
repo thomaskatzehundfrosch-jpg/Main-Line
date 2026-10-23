@@ -81,3 +81,13 @@ test('checkpoint round trips tree metadata and settings; corrupt or blocked stor
   assert.equal(readGeneratorCheckpoint(storage), null);
   assert.equal(saveGeneratorCheckpoint(tree, DEFAULT_GENERATOR_SETTINGS, { setItem() { throw Error('quota'); } }), null);
 });
+
+test('full-depth verification can request a clean worker before search begins', async () => {
+  const old = fake(), clean = fake();
+  const search = createRecyclingWorkerSession(old, async () => {
+    assert.equal(old.terminated, 1); return clean;
+  }, () => {}, new AbortController().signal);
+  await search(async worker => assert.equal(worker, old));
+  assert.equal(await search(async worker => worker, true, true), clean);
+  assert.equal(await search(async worker => worker), clean);
+});
