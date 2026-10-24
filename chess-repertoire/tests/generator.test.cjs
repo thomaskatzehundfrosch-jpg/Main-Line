@@ -93,6 +93,122 @@ test('budget exhaustion is partial, marked, and never destroys long seed lines',
   assert.ok(walk(root).some(n => n.endReason === 'budget'));
   assert.ok(progress.unfinished > 0);
 });
+
+// Use legal, varied positions so allocation is tested through the real tree
+// builder, including multi-reply costs and decay's continuation reservations.
+function proportionalServices(color, rates = [80, 20], overrides = {}) {
+  const legal = fen => new Chess(fen).moves({ verbose: true })
+    .sort((a, b) => Number(b.piece === 'p') - Number(a.piece === 'p'));
+  return services({
+    topMoves: async (_w, fen, depth, count) => {
+      const moves = legal(fen);
+      // The engine's strongest defense deliberately differs from the popular move.
+      return [moves[1], moves[0], ...moves.slice(2)].filter(Boolean).slice(0, count)
+        .map(move => ({ uci: uci(move), eval: 0, depth }));
+    },
+    replies: async fen => new Chess(fen).turn() !== (color === 'white' ? 'w' : 'b')
+      ? legal(fen).slice(0, rates.length).map((move, i) => ({
+        san: move.san, uci: uci(move), totalGames: 1000, playRate: rates[i],
+        winRate: 50, lossRate: 50, drawRate: 0, averageRating: null,
+      })) : [],
+    ...overrides,
+  });
+}
+
+for (const generatorMode of ['opening-lab', 'legacy']) {
+  for (const branchDecay of ['off', 'gentle', 'balanced']) {
+    test(`${generatorMode}/${branchDecay}: move budget follows 80/20 frequency without starving alternatives`, async () => {
+      for (const color of ['white', 'black']) {
+        const generated = [];
+        const root = await buildTree(color === 'white' ? [['e4']] : null,
+          { ...defaults, generatorMode, color, branchDecay, analysisMode: 'lichess+stockfish',
+            maxMoveNumber: 15, adaptiveOpponentDepth: false, evaluationFloorEnabled: false },
+          { onNewNode: node => generated.push(node) }, { current: false }, dummyWorker, proportionalServices(color));
+        const parent = color === 'white' ? root.children[0] : root;
+        const common = parent.children.find(node => node.lichess.playRate === 80);
+        const other = parent.children.find(node => node.lichess.playRate === 20);
+        const commonMoves = walk(common).length, otherMoves = walk(other).length;
+        assert.ok(Math.abs(commonMoves / (commonMoves + otherMoves) - .8) <= .04,
+          `${color}: 80% reply received ${commonMoves} moves; 20% reply received ${otherMoves}`);
+        assert.ok(other.children.length, 'less common defense still gets a continuation');
+        assert.ok(walk(root).length - 1 <= 150);
+        // Once replies exist, the common branch receives the first continuation.
+        assert.equal(generated.find(node => node.depth === parent.depth + 2).fen, common.children[0].fen);
+        if (branchDecay !== 'off') assert.ok(!walk(root).some(node => node.endReason === 'budget'));
+      }
+    });
+  }
+
+  test(`${generatorMode}: existing seed forks get frequency shares instead of input-order shares`, async () => {
+    for (const fill of [false, true]) {
+      const root = await buildTree(fill ? [['a3']] : [['a4'], ['a3']],
+        { ...defaults, generatorMode, color: 'black', branchDecay: 'balanced', analysisMode: 'lichess+stockfish',
+          fillBranchesFromMove: fill ? 1 : undefined,
+          maxMoveNumber: 15, adaptiveOpponentDepth: false, trustSuppliedMoves: true, evaluationFloorEnabled: false },
+        {}, { current: false }, dummyWorker, proportionalServices('black'));
+      const common = root.children.find(node => node.san === 'a3');
+      const other = root.children.find(node => node.san === 'a4');
+      assert.equal(common.lichess.playRate, 80);
+      assert.ok(Math.abs(walk(common).length / (walk(root).length - 1) - .8) <= .04);
+      assert.ok(other.children.length);
+    }
+  });
+
+  test(`${generatorMode}: resuming retains frequency weights and accounts for previous moves`, async () => {
+    const settings = { ...defaults, generatorMode, color: 'black', branchDecay: 'balanced',
+      analysisMode: 'lichess+stockfish', maxMoveNumber: 15, adaptiveOpponentDepth: false, evaluationFloorEnabled: false };
+    const stop = { current: false };
+    let added = 0;
+    const partial = await buildTree(null, settings,
+      { onNewNode: () => { if (++added >= 50) stop.current = true; } }, stop, dummyWorker, proportionalServices('black'));
+    const snapshot = JSON.stringify(partial);
+    const resumed = await buildTree(null, settings, {}, { current: false }, dummyWorker, proportionalServices('black'), partial);
+    const common = resumed.children.find(node => node.lichess.playRate === 80);
+    assert.ok(Math.abs(walk(common).length / (walk(resumed).length - 1) - .8) <= .04);
+    assert.equal(JSON.stringify(partial), snapshot, 'saved checkpoint stays unchanged');
+    assert.ok(walk(resumed).length - 1 <= 150);
+  });
+
+  test(`${generatorMode}: nested forks receive proportional shares within their parent budget`, async () => {
+    const root = await buildTree(null,
+      { ...defaults, generatorMode, color: 'black', analysisMode: 'lichess+stockfish',
+        studySize: 'standard', maxMoveNumber: 15, adaptiveOpponentDepth: false, evaluationFloorEnabled: false },
+      {}, { current: false }, dummyWorker, proportionalServices('black', [60, 30, 10]));
+    const common = root.children.find(node => node.lichess.playRate === 60);
+    for (const parent of [root, common.children[0]]) {
+      const total = parent.children.reduce((sum, node) => sum + walk(node).length, 0);
+      for (const child of parent.children) {
+        assert.ok(Math.abs(walk(child).length / total - child.lichess.playRate / 100) <= .04);
+      }
+    }
+  });
+
+  test(`${generatorMode}: unavailable frequencies share the budget evenly`, async () => {
+    const root = await buildTree(null,
+      { ...defaults, generatorMode, color: 'black', maxMoveNumber: 15, evaluationFloorEnabled: false },
+      {}, { current: false }, dummyWorker, proportionalServices('black', [], { replies: async () => [] }));
+    const counts = root.children.map(child => walk(child).length);
+    assert.ok(Math.max(...counts) - Math.min(...counts) <= 3, counts.join('/'));
+  });
+
+  test(`${generatorMode}: a failed branch returns its unused share to alternatives`, async () => {
+    const base = proportionalServices('black');
+    const failed = new Chess(); failed.move('a3');
+    const root = await buildTree(null,
+      { ...defaults, generatorMode, color: 'black', branchDecay: 'balanced', analysisMode: 'lichess+stockfish',
+        maxMoveNumber: 15, adaptiveOpponentDepth: false, evaluationFloorEnabled: false },
+      {}, { current: false }, dummyWorker, { ...base,
+        topMoves: async (...args) => {
+          if (args[1] === failed.fen()) throw new Error('analysis unavailable');
+          return base.topMoves(...args);
+        },
+      });
+    assert.equal(root.children.find(node => node.san === 'a3').endReason, 'analysis-failed');
+    assert.ok(walk(root.children.find(node => node.san === 'a4')).length >= 140);
+    assert.ok(walk(root).length - 1 <= 150);
+  });
+}
+
 test('engine failure leaves an explained unfinished position instead of complete', async () => {
   let progress;
   const root = await buildTree(null, defaults, { onProgress: p => progress = p }, { current: false }, dummyWorker,

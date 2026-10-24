@@ -116,7 +116,7 @@ export const GeneratorSettingsPanel: React.FC<Props> = ({ settings, setSettings,
       <p className="text-[11px] text-text-muted">{settings.analysisMode === 'stockfish'
         ? `Up to ${preset.maxReplies} engine replies per position.`
         : `Aim to cover ${Math.round(preset.coverage * 100)}% of recorded replies at each position, including the strongest defense; normally up to ${preset.maxReplies} replies. Moves meeting your frequency threshold are included beyond this limit unless branch decay or its budget reservation narrows the position.`}
-        {' '}Budget: {preset.maxNodes} moves. Limited data or budget can leave gaps.</p>
+        {' '}Budget: {preset.maxNodes} moves.{settings.analysisMode !== 'stockfish' && ' Continuations share this budget in proportion to opponent move frequency, while keeping alternatives covered.'} Limited data or budget can leave gaps.</p>
       {settings.analysisMode !== 'stockfish' && <div className="space-y-2">
         <label className={labelClass}>Include opponent moves played at least (%)
           <input className={inputClass} type="number" min="1" max="100" step="1" value={settings.opponentMinPlayRate}

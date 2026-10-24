@@ -1,7 +1,7 @@
 import { createGeneratorCloudAnalysis } from './generatorCloudAnalysis';
 import { buildTree as buildLegacyTree } from './legacyGeneratorTreeBuilder';
 import { replyEvidence, winLowerBound } from '../openingLab/evidence.js';
-/** Preserve supplied moves, then expand a breadth-first frontier of continuations. */
+/** Preserve supplied moves, then share continuation work by opponent frequency. */
 import { Chess } from 'chess.js';
 import type { GeneratorCallbacks, GeneratorNode, GeneratorSettings, GeneratorEndReason } from '../types/generator';
 import { normalizeGeneratorSettings, STUDY_SIZES } from '../types/generator';
@@ -12,6 +12,8 @@ import { buildSeedTree, cloneGeneratorTree, countGeneratorNodes } from '../utils
 import { abortError, abortableDelay } from '../utils/generatorCancellation';
 import { abandonsCastling, preservesCastling, CASTLING_PREFERENCE_MARGIN } from '../utils/castlingPreference';
 import { sacrificeLimits } from '../utils/sacrificeLimits';
+import { chargeBudgetPath, compareBudgetPaths, continuationBudget, replyBudgetWeight } from './generatorBudget';
+import type { BudgetPath } from './generatorBudget';
 
 const localDependencies = {
   analyze: (worker: Worker, fen: string, depth: number, signal?: AbortSignal) => analyzePositionWithRetry(worker, fen, depth, signal),
@@ -445,18 +447,31 @@ export async function buildTree(
     return result;
   }
 
-  type Pending = { node: GeneratorNode; likelihood: number; pathProbability: number | null; opponentTurns: number; targetDepth: number; ancestors: Set<string> };
+  type Pending = { node: GeneratorNode; budgetPath: BudgetPath; pathProbability: number | null; opponentTurns: number; targetDepth: number; ancestors: Set<string> };
   const queue: Pending[] = [];
   const seedNodes: Array<{ node: GeneratorNode; parent: GeneratorNode }> = [];
-  function collect(node: GeneratorNode, ancestors = new Set<string>()) {
+  const budgetPaths = new Map<GeneratorNode, BudgetPath>();
+  const existingForks: GeneratorNode[] = [];
+  function collect(node: GeneratorNode, ancestors = new Set<string>(), budgetPath: BudgetPath = []): number {
+    budgetPaths.set(node, budgetPath);
+    const opponentTurn = new Chess(node.fen).turn() !== (settings.color === 'white' ? 'w' : 'b');
+    if (opponentTurn && node.children.length > 1) existingForks.push(node);
     const next = new Set(ancestors).add(positionKey(node.fen));
     const revisitReplies = settings.fillBranchesFromMove !== undefined
       && new Chess(node.fen).turn() !== (settings.color === 'white' ? 'w' : 'b')
       && Number(node.fen.split(' ')[5]) >= settings.fillBranchesFromMove;
-    if (!node.children.length || revisitReplies) queue.push({ node, likelihood: 1, pathProbability: 1, opponentTurns: 0, targetDepth: settings.maxMoveNumber * 2, ancestors });
-    for (const child of node.children) { seedNodes.push({ node: child, parent: node }); collect(child, next); }
+    if (!node.children.length || revisitReplies) queue.push({ node, budgetPath, pathProbability: 1, opponentTurns: 0, targetDepth: settings.maxMoveNumber * 2, ancestors });
+    let moves = 0;
+    for (const child of node.children) {
+      seedNodes.push({ node: child, parent: node });
+      const branch = { weight: opponentTurn ? replyBudgetWeight(child.lichess?.playRate) : 1, moves: 0, children: [] as BudgetPath };
+      budgetPath[budgetPath.length - 1].children.push(branch);
+      branch.moves = 1 + collect(child, next, [...budgetPath, branch]);
+      moves += branch.moves;
+    }
+    return moves;
   }
-  collect(root);
+  collect(root, new Set<string>(), [{ weight: 1, moves: totalNodes, children: [] }]);
   let active: GeneratorNode | null = null;
   let stopped = false;
   publish();
@@ -490,12 +505,29 @@ export async function buildTree(
       publish();
     }
 
+    // Imported lines and resumed runs must share the same frequency weights as
+    // newly generated forks. A leaf's input order is not a popularity estimate.
+    for (const parent of existingForks) {
+      check();
+      if (totalNodes >= maxNodes || settings.analysisMode === 'stockfish') break;
+      if (parent.children.every(child => child.lichess?.playRate !== undefined)) continue;
+      progress('Loading opponent frequencies for existing branches…');
+      const replies = await popularReplies(parent.fen);
+      for (const child of parent.children) {
+        const stats = replies.find(reply => reply.uci === child.uci);
+        if (stats) child.lichess = { ...stats };
+        const path = budgetPaths.get(child)!;
+        path[path.length - 1].weight = replyBudgetWeight(child.lichess?.playRate);
+      }
+    }
     if (settings.trustSuppliedMoves) publish();
 
     while (queue.length) {
       check();
-      // Cover shallower positions first, prioritising likely paths at equal depth.
-      queue.sort((a, b) => a.node.depth - b.node.depth || b.likelihood - a.likelihood);
+      // Serve the branch with the least work relative to its frequency, at
+      // every fork. Raw likelihood would give one line the entire budget;
+      // breadth-first ordering would spend almost equally on rare replies.
+      queue.sort((a, b) => compareBudgetPaths(a.budgetPath, b.budgetPath));
       const item = queue.shift()!;
       active = item.node;
       active.endReason = undefined;
@@ -521,9 +553,16 @@ export async function buildTree(
         let replyLimit = Infinity;
         if (!ourTurn && settings.branchDecay !== 'off') {
           replyLimit = decayReplyLimit(settings.branchDecay, item.opponentTurns, item.pathProbability);
-          const reserved = queue.reduce((sum, pending) => sum + Math.max(0, pending.targetDepth + settings.tacticalExtension * 2 - pending.node.depth), 0);
+          const reservations = queue.map(pending => ({ path: pending.budgetPath,
+            moves: Math.max(0, pending.targetDepth + settings.tacticalExtension * 2 - pending.node.depth) }));
+          const reserved = reservations.reduce((sum, pending) => sum + pending.moves, 0);
           const costPerBranch = Math.max(1, hardDepth - active.depth);
-          const affordable = Math.max(1, Math.floor((maxNodes - totalNodes - reserved) / costPerBranch));
+          // Share capacity before opening more replies, so a rare branch cannot
+          // reserve the same subtree size as a much more common sibling.
+          const spare = continuationBudget(item.budgetPath, maxNodes,
+            [...reservations, { path: item.budgetPath, moves: costPerBranch }]);
+          const available = Math.min(maxNodes - totalNodes - reserved, spare + costPerBranch);
+          const affordable = Math.max(1, Math.floor((available + 1e-8) / costPerBranch));
           replyLimit = Math.min(replyLimit, affordable);
         }
         const moves = await choose(active.fen, ourTurn, active, replyLimit);
@@ -531,7 +570,14 @@ export async function buildTree(
         const added: Candidate[] = [];
         for (const move of moves) {
           // Existing branches were queued by collect; only create and queue missing replies.
-          if (active.children.some(child => child.uci === move.uci)) { added.push(move); continue; }
+          const existing = active.children.find(child => child.uci === move.uci);
+          if (existing) {
+            if (move.stats) existing.lichess = { ...move.stats };
+            const path = budgetPaths.get(existing)!;
+            path[path.length - 1].weight = ourTurn ? 1 : replyBudgetWeight(move.stats?.playRate);
+            added.push(move);
+            continue;
+          }
           if (totalNodes >= maxNodes) { active.endReason = 'budget'; break; }
           const node: GeneratorNode = {
             id: nextNodeId(), san: move.san, uci: move.uci, fen: move.fen,
@@ -550,7 +596,12 @@ export async function buildTree(
           const targetDepth = rareReply
             ? Math.min(item.targetDepth, Math.max(node.depth + 1, settings.maxMoveNumber * 2 - 4))
             : item.targetDepth;
-          queue.push({ node, targetDepth, likelihood: item.likelihood * (ourTurn ? 1 : probability ?? 1), pathProbability: ourTurn ? item.pathProbability : item.pathProbability === null || probability === null ? null : item.pathProbability * probability, opponentTurns: item.opponentTurns + (ourTurn ? 0 : 1), ancestors: new Set(item.ancestors).add(positionKey(active.fen)) });
+          const branch = { weight: ourTurn ? 1 : replyBudgetWeight(move.stats?.playRate), moves: 0, children: [] as BudgetPath };
+          item.budgetPath[item.budgetPath.length - 1].children.push(branch);
+          const budgetPath = [...item.budgetPath, branch];
+          budgetPaths.set(node, budgetPath);
+          chargeBudgetPath(budgetPath);
+          queue.push({ node, targetDepth, budgetPath, pathProbability: ourTurn ? item.pathProbability : item.pathProbability === null || probability === null ? null : item.pathProbability * probability, opponentTurns: item.opponentTurns + (ourTurn ? 0 : 1), ancestors: new Set(item.ancestors).add(positionKey(active.fen)) });
           callbacks.onNewNode?.({ ...node, children: [] });
         }
         if (active.responseCoverage !== undefined) {

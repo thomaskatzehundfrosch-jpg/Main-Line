@@ -8,7 +8,7 @@ A dark-themed, interactive chess opening repertoire builder with cloud sync, use
 
 | Service | Details |
 |---|---|
-| Supabase project URL | `https://nxperpauqoylswshsbei.supabase.co` |
+| Cloud auth + database | Firebase Authentication + Cloud Firestore (Spark) |
 | GitHub repo | `github.com/thomaskatzehundfrosch-jpg/Main-Line` |
 | Vercel project | `Main-Line` — Root Directory set to `chess-repertoire` |
 
@@ -28,36 +28,16 @@ Vercel auto-deploys within ~60 seconds. No manual steps needed.
 
 ## Auth + Cloud Sync
 
-- **Auth:** Supabase (email/password + Google OAuth). Sign In button lives in the TopBar.
-- **Not logged in:** data saves to localStorage only (works offline)
-- **On sign in:** local files push to Supabase, remote files fetched and merged
-- **While logged in:** every save, update, rename, and delete syncs to Supabase automatically
+Firebase setup and migration instructions are in [FIREBASE_SETUP.md](FIREBASE_SETUP.md).
+Local repertoires remain in browser storage and upload when signing into Firebase.
+Cloud payloads are split into 400 KB binary chunks and replaced atomically. Each
+repertoire currently supports up to 8 MB of serialized JSON per save, below the
+Firestore atomic request limit. Chunk payload indexing is disabled by the supplied
+index configuration. Fetch failures propagate to the sync error handler rather
+than being interpreted as an empty remote account.
 
-### Supabase Database (3 tables, all with Row Level Security)
-- `repertoire_files` — repertoire files stored as JSONB per user
-- `sr_cards` — spaced repetition cards per user
-- `sr_stats` — lifetime review stats per user
-
-To recreate the schema from scratch, run `supabase-schema.sql` in the Supabase SQL Editor.
-
-### Environment Variables
-Required in `.env` in the project root (never commit this file):
-```
-VITE_SUPABASE_URL=https://nxperpauqoylswshsbei.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon key>
-```
-The same two variables must also be added in the Vercel project dashboard under Environment Variables.
-
-### Key Auth/Sync Files
-- `src/lib/supabase.ts` — Supabase client (gracefully disabled if env vars missing)
-- `src/lib/supabaseSync.ts` — all cloud read/write helpers
-- `src/context/AuthContext.tsx` — auth state + signIn/signUp/signOut/Google
-- `src/components/Auth/AuthModal.tsx` — login/signup modal
-- `src/components/Auth/UserMenu.tsx` — avatar dropdown + sign out
-- `src/context/FileContext.tsx` — repertoire files with Supabase sync baked in
-
-### Known Issues
-Two pre-existing TypeScript errors in `usePgnParser.ts` and `openingNames.ts` — don't affect runtime behaviour. Build command is `vite build` (not `tsc -b && vite build`) to skip the type check on deploy.
+Generated moves no longer add analysis comments to imported trees or exported PGN.
+Existing personal notes are preserved when extending a line.
 
 ---
 
@@ -83,9 +63,9 @@ chmod +x setup-stockfish.sh
 ./setup-stockfish.sh
 ```
 
-This installs the pinned `stockfish@19.0.1` package and copies its Stockfish 19 lite single-threaded JavaScript/WASM pair and GPL license into `public/stockfish/`. This small browser build works without cross-origin isolation. It uses a reduced neural network; it is not the full-network Stockfish build.
+This installs the pinned `stockfish@19.0.1` package and copies its Stockfish 19 full-network single-threaded JavaScript/WASM pair and GPL license into `public/stockfish/`. This build uses the full neural network, is approximately 99 MB, and works without cross-origin isolation. All local board, generator, and Opening Lab analysis uses this same build. Lichess cloud results remain available when they satisfy the requested analysis quality; their engine version is unspecified.
 
-The application loads `/stockfish/stockfish-19-lite-single.js?v=19.0.1`; the matching `.wasm` file sits alongside it. Opening Lab engine caches include the WASM SHA-256 so previous engine results are not reused after this upgrade.
+The application loads `/stockfish/stockfish-19-single.js?v=19.0.1`; the matching `.wasm` file sits alongside it. Opening Lab engine caches include the WASM SHA-256 so previous engine results are not reused after this upgrade.
 
 Upstream source and build instructions: [Stockfish.js v19.0.1](https://github.com/nmrugg/stockfish.js/tree/v19.0.1). The distributed package includes the engine source.
 
@@ -110,6 +90,8 @@ React 18, TypeScript, Vite, Tailwind CSS, chess.js, react-chessboard, D3.js, Sto
 Choose your side, opponent profile, study size and target move number. Play starting moves on the board or load a PGN into the same editable move tree, then choose **Generate continuations**. Existing moves (including alternatives) are preserved; questionable starting moves receive warnings. Generation adds one recommendation for your side at each leaf, and common opponent replies plus the strongest engine defense. Common mistakes are retained so their punishment can be studied.
 
 Compact / Standard / Broad aim for 70% / 85% / 95% local database reply coverage, with budgets of 150 / 500 / 1200 moves and normally up to 3 / 5 / 8 replies per opponent position. Opponent replies meeting the configurable play-frequency threshold (default 10%) and minimum game count override these reply and coverage limits, regardless of evaluation; the total move budget still applies. The strongest engine defense is always selected. With **Shorten rare opponent branches** enabled, additional replies below the frequency threshold end up to two moves earlier. This reduction does not compound down the branch, and missing human data does not trigger it. Coverage uses the full database position count; it is not an estimate of whole-repertoire coverage. Limited samples, reply limits and database failures are reported. The engine-only profile has no human coverage estimate.
+
+Continuation work is shared proportionally at every opponent fork: an 80% reply receives roughly four times the move budget of a 20% reply, rather than giving every line equal depth or spending everything on the most likely line. Each generated move counts toward every ancestor branch, so nested forks retain their parent’s share. Supplied and resumed branches use the same frequency weights. Unrecorded engine defenses retain a small share; positions without human frequencies share equally. With decay enabled, reservations follow these shares while retaining enough budget for existing continuations. Target depth, terminal positions and analysis failures can limit a branch; its unused share is available to other active branches. Integer moves and minimum continuation requirements can make the final split approximate.
 
 Advanced preferences control one local Stockfish depth, allowed loss against the best verified candidate, bounded tactical extensions and optional avoidance of immediate queen exchanges. Historical style and trickiness scores are no longer used to select moves. Starting moves are never removed for failing an evaluation threshold. PGNs with nonstandard starting FENs are rejected explicitly.
 
