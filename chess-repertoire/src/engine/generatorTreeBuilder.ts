@@ -238,7 +238,7 @@ export async function buildTree(
         const baselineScore = baseline ? scoreFor(baseline.score, settings.color) : undefined;
         const alreadyBelowFloor = settings.evaluationFloorEnabled && scoreFor(rootEvaluation.score, settings.color) < settings.evaluationFloor - 1e-8;
         const rootAdvantage = scoreFor(rootEvaluation.score, settings.color) >= 1;
-        if (baseline && (rootAdvantage || baselineScore! >= 1 || alreadyBelowFloor)) {
+        if (baseline && !settings.avoidQueenTrades && (rootAdvantage || baselineScore! >= 1 || alreadyBelowFloor)) {
           verified.push(baseline);
         } else {
           if (baseline) verified.push(baseline);
@@ -259,7 +259,7 @@ export async function buildTree(
               // Keep the accepted practical move first for the common selection below.
               verified.splice(0, verified.length, result, ...verified.filter(other => other.uci !== result.uci));
               kingChoice = undefined;
-              break;
+              if (!settings.avoidQueenTrades) break;
             } catch (error) {
               check();
               log('warning', `Could not verify ${move.san} at depth ${settings.sfDepth}: ${error instanceof Error ? error.message : String(error)}; checking the next candidate.`);
@@ -290,7 +290,17 @@ export async function buildTree(
             scoreFor(move.score, settings.color) + CASTLING_PREFERENCE_MARGIN + 1e-8 >= scoreFor(chosen.score, settings.color));
           if (alternative) chosen = { ...alternative, reason: 'Preserves castling options or castles instead of an uncastled king move (within 0.30 pawns at verified depth)' };
         }
-        const reason = protectAdvantage ? 'Protecting an advantage of at least +1: strongest full-depth verified candidate; practical bonuses disabled'
+        // Apply this after verification and castling preferences. A shallow
+        // fallback or a later preference must not reintroduce a queen exchange.
+        if (settings.avoidQueenTrades && allowsImmediateQueenTrade(fen, chosen.san)) {
+          const alternatives = sound.filter(move => !allowsImmediateQueenTrade(fen, move.san) &&
+            (!(protectAdvantage || belowFloor) || scoreFor(move.score, settings.color) + 1e-8 >= reference));
+          const alternative = alternatives.reduce<Candidate | undefined>((best, move) =>
+            !best || scoreFor(move.score, settings.color) > scoreFor(best.score, settings.color) ? move : best, undefined);
+          if (alternative) chosen = { ...alternative, reason: 'Avoids an immediate queen exchange within verified evaluation limits' };
+        }
+        const reason = chosen.reason === 'Avoids an immediate queen exchange within verified evaluation limits' ? chosen.reason
+          : protectAdvantage ? 'Protecting an advantage of at least +1: strongest full-depth verified candidate; practical bonuses disabled'
           : belowFloor ? 'Below evaluation floor; strongest verified continuation without a practical bonus'
           : chosen.reason || 'Next ranked candidate after deeper verification';
         const evidence = winEvidence(chosen);
@@ -447,7 +457,7 @@ export async function buildTree(
     return result;
   }
 
-  type Pending = { node: GeneratorNode; budgetPath: BudgetPath; pathProbability: number | null; opponentTurns: number; targetDepth: number; ancestors: Set<string> };
+  type Pending = { node: GeneratorNode; budgetPath: BudgetPath; pathProbability: number | null; opponentTurns: number; targetDepth: number; ancestors: Set<string>; retries?: number };
   const queue: Pending[] = [];
   const seedNodes: Array<{ node: GeneratorNode; parent: GeneratorNode }> = [];
   const budgetPaths = new Map<GeneratorNode, BudgetPath>();
@@ -548,6 +558,7 @@ export async function buildTree(
       }
       if (totalNodes >= maxNodes) { active.endReason = 'budget'; continue; }
       progress(`Choosing a continuation at move ${chess.fen().split(' ')[5]}…`);
+      const coverageCheckpoint = coverages.length;
       try {
         const ourTurn = chess.turn() === (settings.color === 'white' ? 'w' : 'b');
         let replyLimit = Infinity;
@@ -611,6 +622,15 @@ export async function buildTree(
         }
       } catch (error) {
         check();
+        if ((item.retries ?? 0) < 1) {
+          // Keep the same budget path: a transient failure must not surrender
+          // this branch's frequency share to its siblings.
+          coverages.length = coverageCheckpoint;
+          queue.push({ ...item, retries: (item.retries ?? 0) + 1 });
+          log('warning', `Retrying ${active.fullMoveNumber}${active.isOurMove === (settings.color === 'white') ? '.' : '...'} ${active.san ?? 'starting position'} after analysis failed: ${error instanceof Error ? error.message : String(error)}`);
+          publish();
+          continue;
+        }
         active.endReason = 'analysis-failed';
         if (active.responseCoverage !== undefined) {
           active.responseCoverage = 0;
@@ -639,6 +659,31 @@ export async function buildTree(
     node.children.forEach(count);
   };
   count(root);
+  const reportAllocation = (parent: GeneratorNode) => {
+    const opponentTurn = new Chess(parent.fen).turn() !== (settings.color === 'white' ? 'w' : 'b');
+    if (opponentTurn && parent.children.length > 1) {
+      const size = (node: GeneratorNode): number => 1 + node.children.reduce((sum, child) => sum + size(child), 0);
+      const total = parent.children.reduce((sum, child) => sum + size(child), 0);
+      const weight = parent.children.reduce((sum, child) => sum + replyBudgetWeight(child.lichess?.playRate), 0);
+      for (const child of parent.children) {
+        const actual = size(child);
+        const expected = total * replyBudgetWeight(child.lichess?.playRate) / weight;
+        if (expected - actual < Math.max(5, expected * 0.25)) continue;
+        const reasons = new Map<string, number>();
+        const gather = (node: GeneratorNode) => {
+          if (!node.children.length) {
+            const reason = node.endReason ?? 'unfinished';
+            reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+          }
+          node.children.forEach(gather);
+        };
+        gather(child);
+        log('warning', `Branch ${child.fullMoveNumber}${settings.color === 'black' ? '.' : '...'} ${child.san}: ${actual} positions; frequency share approximately ${Math.round(expected)}. Stops: ${Array.from(reasons, ([reason, count]) => `${reason} (${count})`).join(', ')}. Unused capacity went to other branches.`);
+      }
+    }
+    parent.children.forEach(reportAllocation);
+  };
+  reportAllocation(root);
   const outcome = stopped ? 'stopped' : (unfinished || coverageGaps) ? 'partial' : 'complete';
   const status = stopped ? `Stopped — ${unfinished} unfinished positions`
     : unfinished ? `Partial repertoire — ${unfinished} unfinished positions`

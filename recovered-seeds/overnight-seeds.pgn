@@ -1,0 +1,76 @@
+[Event "okelly after nc3"]
+[Site "mainline.lol"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Variation "1"]
+
+1. e4 c5 2. Nc3 a6 *
+
+[Event "schiess benoni london"]
+[Site "mainline.lol"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Variation "1"]
+
+1. d4 c5 2. c3 cxd4 *
+
+[Event "schiess benoni london"]
+[Site "mainline.lol"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Variation "2"]
+
+1. d4 c5 2. e3 cxd4 3. exd4 *
+
+[Event "benoni gambit takes"]
+[Site "mainline.lol"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Variation "1"]
+
+1. d4 c5 2. dxc5 e6 *
+
+[Event "2knights"]
+[Site "mainline.lol"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Variation "1"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 4. d4 exd4 5. O-O Nxe4 *
+
+[Event "2knights"]
+[Site "mainline.lol"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Variation "2"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 4. d4 exd4 5. O-O Bc5 *
+
+[Event "2knights"]
+[Site "mainline.lol"]
+[Date "????.??.??"]
+[Round "?"]
+[White "?"]
+[Black "?"]
+[Result "*"]
+[Variation "3"]
+
+1. e4 e5 2. Nf3 Nc6 3. Bc4 Nf6 4. d4 exd4 5. O-O d6 *

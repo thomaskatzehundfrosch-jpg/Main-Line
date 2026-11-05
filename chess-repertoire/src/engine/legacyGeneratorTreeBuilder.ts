@@ -184,13 +184,21 @@ export async function buildTree(
         tricky ? settings.trickinessMaxLoss : settings.maxEvalLoss, tricky ? settings.trickinessMinLoss : 0);
       let permitted = checked.filter(move => current - scoreFor(move.score, settings.color) <= maximumLoss + 1e-8);
       if (!permitted.length) throw new Error(`No verified candidate stays within the ${maximumLoss.toFixed(2)} pawn loss limit from the current evaluation (${current.toFixed(2)} from your side).`);
+      const preferToKeepQueens = (chosen: Candidate, objectiveOnly = false): Candidate => {
+        if (!settings.avoidQueenTrades || !allowsImmediateQueenTrade(fen, chosen.san)) return chosen;
+        const alternative = permitted.filter(move => !allowsImmediateQueenTrade(fen, move.san) &&
+          (!objectiveOnly || scoreFor(move.score, settings.color) + 1e-8 >= current))
+          .sort((a, b) => scoreFor(b.score, settings.color) - scoreFor(a.score, settings.color))[0];
+        return alternative ? { ...alternative, reason: 'Avoids an immediate queen exchange within verified evaluation limits' } : chosen;
+      };
       if (settings.evaluationFloorEnabled) {
         if (rootReference < settings.evaluationFloor - 1e-8) {
           // Already below the floor: no practical or popularity bonus, only the best defense.
           const chosen = permitted.reduce((a, b) => scoreFor(a.score, settings.color) >= scoreFor(b.score, settings.color) ? a : b);
           chosen.reason = `Current evaluation ${current.toFixed(2)} is below your ${settings.evaluationFloor.toFixed(2)} floor; strongest verified continuation selected without deliberate sacrifice`;
-          choiceCache.set(key, [chosen]);
-          return [chosen];
+          const preferred = preferToKeepQueens(chosen, true);
+          choiceCache.set(key, [preferred]);
+          return [preferred];
         }
         permitted = permitted.filter(move => scoreFor(move.score, settings.color) + 1e-8 >= settings.evaluationFloor);
         if (!permitted.length) throw new Error(`No verified candidate meets your evaluation floor (${settings.evaluationFloor.toFixed(2)} from your side) within the per-move loss limit.`);
@@ -199,8 +207,9 @@ export async function buildTree(
       if (rootReference >= 1 || current >= 1) {
         const chosen = permitted.reduce((a, b) => scoreFor(b.score, settings.color) > scoreFor(a.score, settings.color) ? b : a);
         chosen.reason = 'Protecting an advantage of at least +1: strongest full-depth verified candidate; practical bonuses disabled';
-        choiceCache.set(key, [chosen]);
-        return [chosen];
+        const preferred = preferToKeepQueens(chosen, true);
+        choiceCache.set(key, [preferred]);
+        return [preferred];
       }
       const preferCastlingRights = (chosen: Candidate) => {
         if (!abandonsCastling(fen, chosen)) return chosen;
@@ -251,7 +260,7 @@ export async function buildTree(
           }
         }
         chosen.reason = explanation;
-        const preferred = preferCastlingRights(chosen);
+        const preferred = preferToKeepQueens(preferCastlingRights(chosen));
         choiceCache.set(key, [preferred]);
         return [preferred];
       }
@@ -267,7 +276,7 @@ export async function buildTree(
       chosen.reason = chosen.stats
         ? `Common in your opponent profile; ${loss.toFixed(2)} pawns lost from the current evaluation`
         : 'Best verified candidate within your preferences';
-      const preferred = preferCastlingRights(chosen);
+      const preferred = preferToKeepQueens(preferCastlingRights(chosen));
       choiceCache.set(key, [preferred]);
       return [preferred];
     }
@@ -323,7 +332,7 @@ export async function buildTree(
     return result;
   }
 
-  type Pending = { node: GeneratorNode; budgetPath: BudgetPath; pathProbability: number | null; opponentTurns: number; targetDepth: number; ancestors: Set<string> };
+  type Pending = { node: GeneratorNode; budgetPath: BudgetPath; pathProbability: number | null; opponentTurns: number; targetDepth: number; ancestors: Set<string>; retries?: number };
   const queue: Pending[] = [];
   const seedNodes: Array<{ node: GeneratorNode; parent: GeneratorNode }> = [];
   const budgetPaths = new Map<GeneratorNode, BudgetPath>();
@@ -424,6 +433,7 @@ export async function buildTree(
       }
       if (totalNodes >= maxNodes) { active.endReason = 'budget'; continue; }
       progress(`Choosing a continuation at move ${chess.fen().split(' ')[5]}…`);
+      const coverageCheckpoint = coverages.length;
       try {
         const ourTurn = chess.turn() === (settings.color === 'white' ? 'w' : 'b');
         let replyLimit = Infinity;
@@ -487,6 +497,15 @@ export async function buildTree(
         }
       } catch (error) {
         check();
+        if ((item.retries ?? 0) < 1) {
+          // Keep the same budget path: a transient failure must not surrender
+          // this branch's frequency share to its siblings.
+          coverages.length = coverageCheckpoint;
+          queue.push({ ...item, retries: (item.retries ?? 0) + 1 });
+          log('warning', `Retrying ${active.fullMoveNumber}${active.isOurMove === (settings.color === 'white') ? '.' : '...'} ${active.san ?? 'starting position'} after analysis failed: ${error instanceof Error ? error.message : String(error)}`);
+          publish();
+          continue;
+        }
         active.endReason = 'analysis-failed';
         if (active.responseCoverage !== undefined) {
           active.responseCoverage = 0;
@@ -515,6 +534,31 @@ export async function buildTree(
     node.children.forEach(count);
   };
   count(root);
+  const reportAllocation = (parent: GeneratorNode) => {
+    const opponentTurn = new Chess(parent.fen).turn() !== (settings.color === 'white' ? 'w' : 'b');
+    if (opponentTurn && parent.children.length > 1) {
+      const size = (node: GeneratorNode): number => 1 + node.children.reduce((sum, child) => sum + size(child), 0);
+      const total = parent.children.reduce((sum, child) => sum + size(child), 0);
+      const weight = parent.children.reduce((sum, child) => sum + replyBudgetWeight(child.lichess?.playRate), 0);
+      for (const child of parent.children) {
+        const actual = size(child);
+        const expected = total * replyBudgetWeight(child.lichess?.playRate) / weight;
+        if (expected - actual < Math.max(5, expected * 0.25)) continue;
+        const reasons = new Map<string, number>();
+        const gather = (node: GeneratorNode) => {
+          if (!node.children.length) {
+            const reason = node.endReason ?? 'unfinished';
+            reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
+          }
+          node.children.forEach(gather);
+        };
+        gather(child);
+        log('warning', `Branch ${child.fullMoveNumber}${settings.color === 'black' ? '.' : '...'} ${child.san}: ${actual} positions; frequency share approximately ${Math.round(expected)}. Stops: ${Array.from(reasons, ([reason, count]) => `${reason} (${count})`).join(', ')}. Unused capacity went to other branches.`);
+      }
+    }
+    parent.children.forEach(reportAllocation);
+  };
+  reportAllocation(root);
   const outcome = stopped ? 'stopped' : (unfinished || coverageGaps) ? 'partial' : 'complete';
   const status = stopped ? `Stopped — ${unfinished} unfinished positions`
     : unfinished ? `Partial repertoire — ${unfinished} unfinished positions`

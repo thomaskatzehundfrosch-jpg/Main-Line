@@ -1780,7 +1780,7 @@ export const App: React.FC = () => {
               <BoardControls
                 onStart={navigateToStart}
                 onBack={navigateBack}
-                onForward={navigateForward}
+                onForward={() => navigateForward()}
                 onEnd={navigateToEnd}
                 onFlip={flipBoard}
                 canGoBack={currentPath.length > 1}
@@ -1870,6 +1870,7 @@ export const App: React.FC = () => {
                   <EnginePanel
                     lines={engine.lines}
                     isThinking={engine.isThinking}
+                    isLoading={!engine.workerReady}
                     enabled={engine.enabled}
                     depth={engine.depth}
                     multiPV={engine.multiPV}
@@ -2069,7 +2070,7 @@ export const App: React.FC = () => {
               <BoardControls
                 onStart={navigateToStart}
                 onBack={navigateBack}
-                onForward={navigateForward}
+                onForward={() => navigateForward()}
                 onEnd={navigateToEnd}
                 onFlip={flipBoard}
                 canGoBack={currentPath.length > 1}
@@ -2303,6 +2304,7 @@ export const App: React.FC = () => {
                   <EnginePanel
                     lines={engine.lines}
                     isThinking={engine.isThinking}
+                    isLoading={!engine.workerReady}
                     enabled={engine.enabled}
                     depth={engine.depth}
                     multiPV={engine.multiPV}

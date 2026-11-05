@@ -1,10 +1,12 @@
 import React from 'react';
+import { Loader2 } from 'lucide-react';
 import { EngineLine } from '../../types';
 import { formatPVElements } from '../../utils/figurineNotation';
 
 interface EnginePanelProps {
   lines: EngineLine[];
   isThinking: boolean;
+  isLoading?: boolean;
   enabled: boolean;
   depth: number;
   multiPV: number;
@@ -19,6 +21,7 @@ interface EnginePanelProps {
 export const EnginePanel: React.FC<EnginePanelProps> = ({
   lines,
   isThinking,
+  isLoading = false,
   enabled,
   depth,
   multiPV,
@@ -120,7 +123,7 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({
             title={enabled ? 'Disable engine' : 'Enable engine'}
           />
           <span>ENGINE</span>
-          {isThinking && <ThinkingDots />}
+          {enabled && isLoading ? <Loader2 size={14} className="animate-spin" aria-label="Loading engine" /> : isThinking && <ThinkingDots />}
           {enabled && lines.length > 0 && (
             <span className="text-[10px] text-text-muted font-normal normal-case tracking-normal">
               d{lines[0].depth}
@@ -176,6 +179,11 @@ export const EnginePanel: React.FC<EnginePanelProps> = ({
         {!enabled ? (
           <div className="text-center text-text-muted py-4">
             Engine disabled
+          </div>
+        ) : isLoading ? (
+          <div role="status" className="flex items-center justify-center gap-2 text-text-muted py-4">
+            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+            Loading engine…
           </div>
         ) : lines.length === 0 && !isThinking ? (
           <div className="text-center text-text-muted py-4">

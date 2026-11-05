@@ -1,0 +1,92 @@
+{
+  "source": "142126.ldb",
+  "sequence": 1087773,
+  "type": "queue",
+  "jobs": [
+    {
+      "name": "okelly after nc3",
+      "seeds": [
+        [
+          "e4",
+          "c5",
+          "Nc3",
+          "a6"
+        ]
+      ],
+      "status": "paused"
+    },
+    {
+      "name": "schiess benoni london",
+      "seeds": [
+        [
+          "d4",
+          "c5",
+          "c3",
+          "cxd4"
+        ],
+        [
+          "d4",
+          "c5",
+          "e3",
+          "cxd4",
+          "exd4"
+        ]
+      ],
+      "status": "queued"
+    },
+    {
+      "name": "benoni gambit takes",
+      "seeds": [
+        [
+          "d4",
+          "c5",
+          "dxc5",
+          "e6"
+        ]
+      ],
+      "status": "queued"
+    },
+    {
+      "name": "2knights",
+      "seeds": [
+        [
+          "e4",
+          "e5",
+          "Nf3",
+          "Nc6",
+          "Bc4",
+          "Nf6",
+          "d4",
+          "exd4",
+          "O-O",
+          "Nxe4"
+        ],
+        [
+          "e4",
+          "e5",
+          "Nf3",
+          "Nc6",
+          "Bc4",
+          "Nf6",
+          "d4",
+          "exd4",
+          "O-O",
+          "Bc5"
+        ],
+        [
+          "e4",
+          "e5",
+          "Nf3",
+          "Nc6",
+          "Bc4",
+          "Nf6",
+          "d4",
+          "exd4",
+          "O-O",
+          "d6"
+        ]
+      ],
+      "status": "queued"
+    }
+  ]
+}

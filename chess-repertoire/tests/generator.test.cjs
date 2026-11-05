@@ -191,13 +191,35 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
     assert.ok(Math.max(...counts) - Math.min(...counts) <= 3, counts.join('/'));
   });
 
+  test(`${generatorMode}: a transient analysis failure retains its frequency share`, async () => {
+    const base = proportionalServices('black', [84, 8, 8]);
+    const failed = new Chess(); failed.move('a4');
+    let failures = 0;
+    const root = await buildTree(null,
+      { ...defaults, generatorMode, color: 'black', branchDecay: 'balanced', analysisMode: 'lichess+stockfish',
+        studySize: 'standard', maxMoveNumber: 15, adaptiveOpponentDepth: false, evaluationFloorEnabled: false },
+      {}, { current: false }, dummyWorker, { ...base,
+        topMoves: async (...args) => {
+          if (args[1] === failed.fen() && failures++ === 0) throw new Error('temporary timeout');
+          return base.topMoves(...args);
+        },
+      });
+    const branch = root.children.find(node => node.san === 'a4');
+    assert.ok(failures >= 2, 'failed position is retried');
+    assert.notEqual(branch.endReason, 'analysis-failed');
+    const total = walk(root).length - 1;
+    assert.ok(Math.abs(walk(branch).length / total - .08) < .025,
+      `8% branch received ${walk(branch).length} of ${total} positions`);
+  });
+
   test(`${generatorMode}: a failed branch returns its unused share to alternatives`, async () => {
+    const logs = [];
     const base = proportionalServices('black');
     const failed = new Chess(); failed.move('a3');
     const root = await buildTree(null,
       { ...defaults, generatorMode, color: 'black', branchDecay: 'balanced', analysisMode: 'lichess+stockfish',
         maxMoveNumber: 15, adaptiveOpponentDepth: false, evaluationFloorEnabled: false },
-      {}, { current: false }, dummyWorker, { ...base,
+      { onLog: entry => logs.push(entry.message) }, { current: false }, dummyWorker, { ...base,
         topMoves: async (...args) => {
           if (args[1] === failed.fen()) throw new Error('analysis unavailable');
           return base.topMoves(...args);
@@ -206,6 +228,7 @@ for (const generatorMode of ['opening-lab', 'legacy']) {
     assert.equal(root.children.find(node => node.san === 'a3').endReason, 'analysis-failed');
     assert.ok(walk(root.children.find(node => node.san === 'a4')).length >= 140);
     assert.ok(walk(root).length - 1 <= 150);
+    assert.ok(logs.some(message => message.includes('Branch 1. a3:') && message.includes('analysis-failed')), 'shortfall includes the branch and stop reason');
   });
 }
 
@@ -1117,3 +1140,51 @@ test('candidate discovery retains deep scored PVs and drops shallow secondary li
   assert.equal(rows[0].depth, 18);
   assert.equal(rows[0].eval, .25);
 });
+
+for (const generatorMode of ['opening-lab', 'legacy']) {
+  test(`${generatorMode}: queen preference survives trickiness and final verification for either color`, async () => {
+    for (const color of ['white', 'black']) for (const trickiness of ['off', 'balanced', 'high']) {
+      const seed = ['e4', 'd6', 'd4', 'e5', 'dxe5', 'dxe5'];
+      if (color === 'black') seed.push('a3');
+      const board = new Chess(); seed.forEach(san => board.move(san));
+      const startFen = board.fen();
+      const trade = color === 'white' ? 'Qxd8+' : 'Qxd1+';
+      const keep = color === 'white' ? 'Qe2' : 'Qe7';
+      const afterKeep = new Chess(startFen); afterKeep.move(keep);
+      const tradeBoard = new Chess(startFen); const tradeUci = uci(tradeBoard.move(trade));
+      for (const scenario of [
+        { label: 'disabled', enabled: false, reference: 0, alternative: 0, expected: trade },
+        { label: 'equal', enabled: true, reference: 0, alternative: 0, expected: keep },
+        { label: 'allowed loss', enabled: true, reference: 0, alternative: -.3, expected: keep },
+        { label: 'excessive loss', enabled: true, reference: 0, alternative: -.9, expected: trade },
+        { label: 'floor', enabled: true, reference: 0, alternative: -.3, floor: -.2, expected: trade },
+        { label: 'winning tie', enabled: true, reference: 1.1, alternative: 1.1, expected: keep },
+        { label: 'protect advantage', enabled: true, reference: 1.1, alternative: 1, expected: trade },
+        { label: 'below floor tie', enabled: true, reference: -.8, alternative: -.8, floor: -.5, expected: keep },
+        { label: 'below floor strongest', enabled: true, reference: -.8, alternative: -.9, floor: -.5, expected: trade },
+      ]) {
+        const sign = color === 'white' ? 1 : -1;
+        const root = await buildTree([seed], { ...defaults, generatorMode, color, trickiness,
+          avoidQueenTrades: scenario.enabled, analysisMode: 'lichess+stockfish',
+          maxMoveNumber: 4, sfDepth: 25, trustSuppliedMoves: true,
+          evaluationFloorEnabled: scenario.floor !== undefined, evaluationFloor: scenario.floor ?? -.5,
+        }, {}, { current: false }, dummyWorker, services({
+          analyze: async (_w, fen, depth) => ({
+            // Shallow discovery rates both moves equally. The final depth must
+            // reject a queen-preserving move if it violates the safety limits.
+            score: sign * 100 * (fen === afterKeep.fen() && (depth === 25 || generatorMode === 'legacy') ? scenario.alternative : scenario.reference),
+            depth, bestMoveUci: fen === startFen ? tradeUci : '',
+          }),
+          topMoves: async (_w, fen, depth, count) => {
+            const chess = new Chess(fen);
+            const moves = fen === startFen ? [trade, keep].map(san => { const copy = new Chess(fen); return copy.move(san); }) : chess.moves({ verbose: true });
+            return moves.slice(0, count).map(move => ({ uci: uci(move), eval: sign * scenario.reference, depth }));
+          },
+        }));
+        let leaf = root; seed.forEach(san => { leaf = leaf.children.find(node => node.san === san); });
+        assert.equal(leaf.children[0]?.san, scenario.expected, `${color}/${trickiness}/${scenario.label}`);
+        assert.equal(leaf.children[0]?.stockfish.depth, 25);
+      }
+    }
+  });
+}
