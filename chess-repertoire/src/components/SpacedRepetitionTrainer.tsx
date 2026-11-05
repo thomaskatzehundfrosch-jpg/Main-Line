@@ -65,10 +65,13 @@ interface LinePriorityInfo {
   likelihood: number | null;
   gameCount: number;
   moves: string[];
+  lastReviewed?: number | null;
+  repetitions?: number;
+  dueDate?: number;
 }
 
-function cardKey(card: Pick<Card, 'front' | 'back'>): string {
-  return `${card.front}|||${card.back}`;
+function cardKey(card: Pick<Card, 'front' | 'back' | 'lineStartFen' | 'moveHistorySan' | 'trainingScope'>): string {
+  return `${card.trainingScope ?? ''}|||${card.lineStartFen ?? ''}|||${(card.moveHistorySan ?? []).join(' ')}|||${card.front}|||${card.back}`;
 }
 
 function compareCards(a: Card, b: Card): number {
@@ -179,7 +182,7 @@ function getLinePriorityInfo(root: RepertoireFile['tree'], card: Card): LinePrio
 }
 
 function buildLinePriorityInfos(file: RepertoireFile, cards: Card[]): LinePriorityInfo[] {
-  return collapseToDeepestLines(cards).map((card) => getLinePriorityInfo(file.tree, card));
+  return collapseToDeepestLines(cards).map((card) => ({ ...getLinePriorityInfo(file.tree, card), lastReviewed: card.lastReviewed, repetitions: card.repetitions, dueDate: card.dueDate }));
 }
 
 function linePreview(moves: string[]): string {
@@ -214,7 +217,7 @@ function uciToSan(fen: string, uci: string): string {
 }
 
 function buildCardsForSelection(file: RepertoireFile, drillColor: DrillColor, existingCards: Card[]): Card[] {
-  const existingByKey = new Map(existingCards.map((card) => [cardKey(card), card] as const));
+  const existingByKey = new Map(existingCards.filter((card) => card.trainingScope === `${file.id}:${drillColor}` || (!card.trainingScope && card.lineName === file.name && card.drillColor === (drillColor === 'both' ? undefined : drillColor))).map((card) => [cardKey(card), card] as const));
   const result: Card[] = [];
 
   const walk = (node: RepertoireFile['tree'], parentFen: string | null, path: string[]) => {
@@ -232,8 +235,8 @@ function buildCardsForSelection(file: RepertoireFile, drillColor: DrillColor, ex
           const move = chess.move(node.move);
           if (move) {
             const uci = move.from + move.to + (move.promotion || '');
-            const key = `${parentFen}|||${uci}`;
-            const existing = existingByKey.get(key);
+            const key = cardKey({ trainingScope: `${file.id}:${drillColor}`, front: parentFen, back: uci, lineStartFen: file.tree.fen, moveHistorySan: currentPath });
+            const existing = existingByKey.get(key) ?? existingByKey.get(cardKey({ front: parentFen, back: uci, lineStartFen: file.tree.fen, moveHistorySan: currentPath }));
             result.push(existing
               ? {
                   ...existing,
@@ -264,6 +267,7 @@ function buildCardsForSelection(file: RepertoireFile, drillColor: DrillColor, ex
   };
 
   walk(file.tree, null, []);
+  for (const card of result) card.trainingScope = `${file.id}:${drillColor}`;
   result.sort(compareCards);
   return result;
 }
@@ -470,6 +474,11 @@ export const SpacedRepetitionTrainer: React.FC<{
   const engine = useEngine();
   const { settings } = useSettings();
 
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
+  const [progressFilter, setProgressFilter] = useState<'all' | 'new' | 'due'>('all');
+  const persistCards = (nextCards: Card[]) => {
+    try { saveCards(nextCards); } catch { setStorageWarning('Progress could not be saved. Free up browser storage to keep your results after closing this page.'); }
+  };
   const [selection, setSelection] = useState<TrainerSelection | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string>('');
   const [selectedColor, setSelectedColor] = useState<DrillColor>('white');
@@ -556,7 +565,7 @@ export const SpacedRepetitionTrainer: React.FC<{
       currentFile,
       buildCardsForSelection(currentFile, selectedColor, loadCards())
     );
-  }, [currentFile, selectedColor]);
+  }, [currentFile, selectedColor, cards]);
   const priorityCounts = useMemo(() => {
     const counts: Record<Exclude<LinePriorityCategory, 'all'>, number> = {
       likely: 0,
@@ -636,7 +645,6 @@ export const SpacedRepetitionTrainer: React.FC<{
     setCurrentPromptIndex(targetPromptIndex);
     setUserMove(null);
     setCardHadMistake(false);
-    setLineHadMistake(false);
     setShowSolution(false);
     setSelectedSquare(null);
     setLegalMoves([]);
@@ -678,11 +686,12 @@ export const SpacedRepetitionTrainer: React.FC<{
       : allLinesForSession.filter((card) =>
           linePriorityByKey.get(cardKey(card))?.category === nextSelection.priorityCategory
         );
-    const selectedLinesForSession = nextSelection.lineKey
+    const matchingLinesForSession = nextSelection.lineKey
       ? linesForSession.filter((card) => cardKey(card) === nextSelection.lineKey)
       : linesForSession;
+    const selectedLinesForSession = matchingLinesForSession.filter((card) => nextSelection.lineKey || progressFilter === 'all' || (progressFilter === 'new' ? !card.lastReviewed : !!card.lastReviewed && card.dueDate <= Date.now()));
     const mergedCards = mergeCards(storedCards, cardsForSelection);
-    saveCards(mergedCards);
+    persistCards(mergedCards);
 
     setSelection(nextSelection);
     setCards(cardsForSelection);
@@ -722,7 +731,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     }
 
     beginAutoplayToPrompt(firstCard, firstTarget.lineIndex, firstTarget.promptIndex, nextSelection.color);
-  }, [beginAutoplayToPrompt, files]);
+  }, [beginAutoplayToPrompt, files, progressFilter]);
 
   const leaveSession = useCallback(() => {
     setSelection(null);
@@ -906,7 +915,7 @@ export const SpacedRepetitionTrainer: React.FC<{
     const updatedCard = reviewCard(currentCard, lineCorrect ? 2 : 0);
     const updatedCards = cards.map((card) => (cardKey(card) === cardKey(updatedCard) ? updatedCard : card));
     setCards(updatedCards);
-    saveCards(mergeCards(loadCards(), [updatedCard]));
+    persistCards(mergeCards(loadCards(), [updatedCard]));
 
     const nextStats = {
       correct: stats.correct + (lineCorrect ? 1 : 0),
@@ -922,12 +931,14 @@ export const SpacedRepetitionTrainer: React.FC<{
     );
     if (!nextLineTarget) {
       setCompletedSessionStats(nextPromptStats);
+      try {
       const savedStats = saveSessionStats(
         nextPromptStats.correct,
         nextPromptStats.incorrect,
         selection ? { fileId: selection.fileId, color: selection.color } : undefined,
       );
       setLastSessionStats(savedStats.lastSession);
+      } catch { setStorageWarning('Session finished, but browser storage could not save your results.'); }
       setPhase('complete');
       return;
     }
@@ -938,6 +949,7 @@ export const SpacedRepetitionTrainer: React.FC<{
       return;
     }
 
+    setLineHadMistake(false);
     beginAutoplayToPrompt(nextCard, nextLineTarget.lineIndex, nextLineTarget.promptIndex, selection?.color ?? 'white');
   }, [beginAutoplayToPrompt, cardHadMistake, cards, currentCard, currentLineIndex, currentPromptIndex, expectedMove, lineHadMistake, promptFen, promptSteps, selection, sessionHistory, sessionLines, stats, userMove]);
 
@@ -1141,7 +1153,10 @@ export const SpacedRepetitionTrainer: React.FC<{
 
         <div className="flex-1 overflow-y-auto px-4 py-4 sm:p-6">
           <div className="mx-auto w-full max-w-2xl panel p-4 sm:p-6">
-            <h3 className="text-text-primary text-lg font-semibold">Start New Training Session</h3>
+            <h3 className="text-text-primary text-lg font-semibold">Train your repertoire</h3>
+            <p className="mt-2 text-sm text-text-muted">Learn one line at a time. Your results and review dates are saved in this browser.</p>
+            {storageWarning && <p role="alert" className="mt-3 text-sm text-accent-amber">{storageWarning}</p>}
+            <div className="mt-4 text-sm text-accent-teal">{priorityInfos.filter((info) => info.lastReviewed).length} / {priorityInfos.length} lines practiced · {priorityInfos.filter((info) => info.lastReviewed && (info.dueDate ?? 0) <= Date.now()).length} due for review</div>
             <div className="mt-5 grid gap-5 sm:mt-6 sm:gap-6">
               <div>
                 <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Repertoire</div>
@@ -1225,7 +1240,10 @@ export const SpacedRepetitionTrainer: React.FC<{
               </div>
 
               <div>
-                <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Line</div>
+                <div className="text-xs uppercase tracking-wide text-text-muted mb-2">Individual lines</div>
+                <div className="mb-3 flex gap-2">
+                  {(['all', 'new', 'due'] as const).map((filter) => <button key={filter} onClick={() => { setProgressFilter(filter); setSelectedLineKey('all'); }} aria-pressed={progressFilter === filter} className={`btn-secondary px-3 py-2 text-xs ${progressFilter === filter ? 'text-accent-teal border-accent-teal' : ''}`}>{filter === 'all' ? 'Practice all' : filter === 'new' ? 'Learn new' : 'Review due'}</button>)}
+                </div>
                 <div className="grid gap-2 max-h-64 overflow-y-auto pr-1">
                   <button
                     onClick={() => setSelectedLineKey('all')}
@@ -1254,12 +1272,13 @@ export const SpacedRepetitionTrainer: React.FC<{
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-xs font-semibold">Line {index + 1}</span>
                         <span className="shrink-0 text-[10px] font-mono text-text-muted">
-                          {categoryLabel(info.category)}
+                          {!info.lastReviewed ? 'New' : !info.repetitions ? 'Needs practice' : (info.dueDate ?? 0) <= Date.now() ? 'Review due' : 'Completed'}
                         </span>
                       </div>
                       <div className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-text-muted">
                         {linePreview(info.moves)}
                       </div>
+                      {info.lastReviewed && <div className="mt-2 text-[10px] text-accent-teal">Practiced {new Date(info.lastReviewed).toLocaleDateString()} · Review {new Date(info.dueDate ?? 0).toLocaleDateString()}</div>}
                     </button>
                   ))}
                 </div>
@@ -1280,7 +1299,7 @@ export const SpacedRepetitionTrainer: React.FC<{
                     priorityCategory: selectedPriority,
                     lineKey: selectedLineKey === 'all' ? null : selectedLineKey,
                   })}
-                  disabled={!currentFile || selectedLineCount === 0}
+                  disabled={!currentFile || selectedLineCount === 0 || (selectedLineKey === 'all' && !visibleLineInfos.some((info) => progressFilter === 'all' || (progressFilter === 'new' ? !info.lastReviewed : !!info.lastReviewed && (info.dueDate ?? 0) <= Date.now())))}
                   className="btn-primary flex w-full items-center justify-center gap-2 px-4 py-3 sm:w-auto sm:justify-start sm:py-2 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Start Training <ArrowRight className="w-4 h-4" />
@@ -1333,10 +1352,11 @@ export const SpacedRepetitionTrainer: React.FC<{
         </div>
       </div>
 
+      {storageWarning && <p role="alert" className="px-4 py-2 text-sm text-accent-amber">{storageWarning}</p>}
       <div className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-auto">
         <div
           ref={boardContainerRef}
-          className="w-full flex flex-col items-center px-2 py-2 sm:px-3 lg:flex-[2.8] lg:basis-0 lg:min-w-[820px] xl:min-w-[980px] 2xl:min-w-[1120px]"
+          className="w-full flex flex-col items-center px-2 py-2 sm:px-3 lg:flex-[2.8] lg:basis-0 min-w-0"
         >
           <div className="mx-auto flex w-fit max-w-full items-start justify-center">
             <div className="mr-1">

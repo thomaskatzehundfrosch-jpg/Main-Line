@@ -7,6 +7,7 @@
 
 export interface Card {
   id: string;
+  trainingScope?: string;
   front: string;              // FEN position
   back: string;               // Correct move in UCI notation (e.g. "e2e4")
   drillColor?: 'white' | 'black'; // Which side this card is meant to train
@@ -101,7 +102,7 @@ export function createCard(
   lineStartFen?: string,
 ): Card {
   return {
-    id: crypto.randomUUID(),
+    id: globalThis.crypto?.randomUUID?.() ?? `sr_${Date.now()}_${Math.random().toString(36).slice(2)}`,
     front: fen,
     back: moveUci,
     drillColor,
