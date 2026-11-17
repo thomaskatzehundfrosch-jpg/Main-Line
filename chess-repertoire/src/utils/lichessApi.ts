@@ -8,6 +8,8 @@ import { abortableDelay, abortError } from './generatorCancellation';
 import { getStoredToken } from './lichessAuth';
 import { normalizeExplorerUci } from './explorerMove.js';
 
+const EXPLORER_BASE_URL = 'https://explorer.lichess.org';
+
 /** Timestamp of last successful request start (for throttling). */
 let _lastRequestTime = 0;
 
@@ -45,10 +47,8 @@ export function buildLichessUrl(fen: string, settings: GeneratorSettings): strin
 
   if (settings.useMasters) {
     // Masters DB — no rating/speed filters, different endpoint
-    return `https://explorer.lichess.ovh/masters?${params.toString().replace(/\+/g, '%20')}`;
+    return `${EXPLORER_BASE_URL}/masters?${params.toString().replace(/\+/g, '%20')}`;
   }
-
-  const base = 'https://explorer.lichess.ovh/lichess';
 
   // Rating brackets — comma-separated (API no longer accepts repeated params)
   const ratingBrackets = [1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500];
@@ -62,7 +62,7 @@ export function buildLichessUrl(fen: string, settings: GeneratorSettings): strin
   const speeds = (settings.speeds || ['blitz', 'rapid', 'classical']).filter((s) => validSpeeds.has(s));
   params.set('speeds', (speeds.length ? speeds : ['blitz']).join(','));
 
-  return `${base}?${params.toString().replace(/\+/g, '%20')}`;
+  return `${EXPLORER_BASE_URL}/lichess?${params.toString().replace(/\+/g, '%20')}`;
 }
 
 /**

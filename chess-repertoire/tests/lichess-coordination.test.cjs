@@ -21,6 +21,35 @@ function client(fetch, waits, navigator) {
   return exports;
 }
 const evaluation = () => new Response(JSON.stringify({ depth: 20, pvs: [{ moves: 'e2e4', cp: 20 }] }));
+test('move statistics use the authenticated explorer endpoint with the selected filters', async () => {
+  const fen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+  const requests = [];
+  const api = client(async (url, init) => {
+    requests.push({ url: new URL(url), authorization: new Headers(init.headers).get('Authorization') });
+    return Response.json({ white: 40, draws: 20, black: 40, moves: [
+      { uci: 'c7c5', san: 'c5', white: 10, draws: 5, black: 15 },
+    ] });
+  }, []);
+  const settings = { color: 'white', ratingMin: 2000, ratingMax: 2500, speeds: ['blitz', 'rapid', 'classical'] };
+
+  const [move] = await api.getMostLikelyMoves(fen, { ...settings, useMasters: false }, () => {});
+  await api.getMostLikelyMoves(fen, { ...settings, useMasters: true }, () => {});
+
+  assert.deepEqual(requests.map(({ url }) => url.origin + url.pathname), [
+    'https://explorer.lichess.org/lichess', 'https://explorer.lichess.org/masters',
+  ]);
+  for (const { url, authorization } of requests) {
+    assert.equal(url.searchParams.get('fen'), fen);
+    assert.equal(authorization, 'Bearer test');
+  }
+  assert.equal(requests[0].url.searchParams.get('ratings'), '2000,2200,2500');
+  assert.equal(requests[0].url.searchParams.get('speeds'), 'blitz,rapid,classical');
+  assert.equal(requests[1].url.searchParams.has('ratings'), false);
+  assert.equal(requests[1].url.searchParams.has('speeds'), false);
+  assert.equal(move.san, 'c5');
+  assert.equal(move.totalGames, 30);
+  assert.equal(move.playRate, 30);
+});
 test('cloud requests are serialized until the entire body arrives', async () => {
   let release, started = 0;
   const api = client(async () => {
